@@ -3,6 +3,8 @@ import serial
 import time
 import threading
 import logging
+from dataclasses import dataclass
+from typing import Tuple
 from serial.tools import list_ports
 
 # --- LOGGING SETUP ---
@@ -22,6 +24,39 @@ def _default_port():
         if "arduino" in (p.description or "").lower() or "arduino" in (p.manufacturer or "").lower():
             return p.device
     return "COM5" if os.name == "nt" else "/dev/ttyACM0"
+
+
+@dataclass
+class JointTelemetry:
+    name: str
+    pos: float
+    pot: float
+    current: float
+    en: Tuple[int, int]   # (ENL, ENR)
+    pwm: Tuple[int, int]  # (Lpwm, Rpwm)
+    saf: int
+
+    @classmethod
+    def from_state(cls, name, idx, is_yaw, positions, pots, currents, flags, io):
+        pos = round(positions[idx], 3)
+        # Yaw joints don't use runaway flags anymore; keep pot field at 0 for yaw
+        pot_val = 0 if is_yaw else pots[idx - 2]
+        saf_flag = flags[idx if is_yaw else idx + 2]
+        return cls(
+            name=name,
+            pos=pos,
+            pot=pot_val,
+            current=currents[idx],
+            en=(io[idx][3], io[idx][2]),   # ENL, ENR
+            pwm=(io[idx][1], io[idx][0]),  # Lpwm, Rpwm
+            saf=saf_flag
+        )
+
+    def format_compact(self) -> str:
+        return (
+            f"{self.name}:{self.pos},{self.pot},{self.current},"
+            f"({self.en[0]},{self.en[1]}),({self.pwm[0]},{self.pwm[1]}),{self.saf}"
+        )
 
 
 class KrabbyMCUSDK:
@@ -167,49 +202,19 @@ class KrabbyMCUSDK:
         # Debug Log: Show Positions + Raw Pots for tuning
         now = time.time()
         if logger.isEnabledFor(logging.DEBUG) and (now - self._last_debug_log_ts) >= 0.25:
-            # Compact per-joint view: LHY/LHL/LKL/RHY/RHL/RKL
             flags = (self.flags + [0] * 8)[:8]  # pad if malformed
-            # Yaw tuple: pos,run,is,(ENL,ENR),(Lpwm,Rpwm),saf (Left first)
-            # Linear tuple: pos,pot,is,(ENL,ENR),(Lpwm,Rpwm),saf (Left first)
+
             joints = {
-                "LHY": (round(self.latest_positions[0], 3), flags[2], self.currents[0],
-                        (self.io[0][3], self.io[0][2]),  # ENL, ENR
-                        (self.io[0][1], self.io[0][0]),  # Lpwm, Rpwm
-                        flags[0]),
-                "RHY": (round(self.latest_positions[1], 3), flags[3], self.currents[1],
-                        (self.io[1][3], self.io[1][2]),
-                        (self.io[1][1], self.io[1][0]),
-                        flags[1]),
-                "LHL": (round(self.latest_positions[2], 3), self.latest_pots[0], self.currents[2],
-                        (self.io[2][3], self.io[2][2]),
-                        (self.io[2][1], self.io[2][0]),
-                        flags[4]),
-                "LKL": (round(self.latest_positions[3], 3), self.latest_pots[1], self.currents[3],
-                        (self.io[3][3], self.io[3][2]),
-                        (self.io[3][1], self.io[3][0]),
-                        flags[5]),
-                "RHL": (round(self.latest_positions[4], 3), self.latest_pots[2], self.currents[4],
-                        (self.io[4][3], self.io[4][2]),
-                        (self.io[4][1], self.io[4][0]),
-                        flags[6]),
-                "RKL": (round(self.latest_positions[5], 3), self.latest_pots[3], self.currents[5],
-                        (self.io[5][3], self.io[5][2]),
-                        (self.io[5][1], self.io[5][0]),
-                        flags[7]),
+                "LHY": JointTelemetry.from_state("LHY", 0, True, self.latest_positions, self.latest_pots, self.currents, flags, self.io),
+                "RHY": JointTelemetry.from_state("RHY", 1, True, self.latest_positions, self.latest_pots, self.currents, flags, self.io),
+                "LHL": JointTelemetry.from_state("LHL", 2, False, self.latest_positions, self.latest_pots, self.currents, flags, self.io),
+                "LKL": JointTelemetry.from_state("LKL", 3, False, self.latest_positions, self.latest_pots, self.currents, flags, self.io),
+                "RHL": JointTelemetry.from_state("RHL", 4, False, self.latest_positions, self.latest_pots, self.currents, flags, self.io),
+                "RKL": JointTelemetry.from_state("RKL", 5, False, self.latest_positions, self.latest_pots, self.currents, flags, self.io),
             }
-            # Build a compact string with no spaces after commas
-            def _pair(t):
-                return f"({t[0]},{t[1]})"
-            parts = []
-            for name, vals in joints.items():
-                # vals = (..., (ENL,ENR), (Lpwm,Rpwm), ...)
-                formatted = []
-                for v in vals:
-                    if isinstance(v, tuple):
-                        formatted.append(_pair(v))
-                    else:
-                        formatted.append(str(v))
-                parts.append(f"{name}:{','.join(formatted)}")
+
+            parts = [telemetry.format_compact() for telemetry in joints.values()]
+
             logger.debug("JOINTS %s", ";".join(parts))
             self._last_debug_log_ts = now
 
