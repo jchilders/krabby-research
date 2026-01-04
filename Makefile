@@ -48,6 +48,60 @@ $(error Docker CLI not found on PATH. Install Docker Desktop and restart your sh
 endif
 endif
 
+# Arduino flashing defaults (override with FQBN/PORT in env or CLI)
+FQBN ?=
+PORT ?=
+
+.PHONY: flash-task2
+flash-task2:
+ifeq ($(OS),Windows_NT)
+	@powershell -NoProfile -Command "\
+		$$cli = Join-Path (Resolve-Path '$(CURDIR)/../tools') 'arduino-cli.exe'; \
+		if (-not (Test-Path $$cli)) { Write-Error 'arduino-cli.exe not found in ../tools. Run make setup-tools first.'; exit 1 } ; \
+		$$ports = & $$cli board list --format json | ConvertFrom-Json; \
+		$$match = $$ports.detected_ports | Where-Object { $$_.matching_boards -and $$_.matching_boards.Count -gt 0 } | Select-Object -First 1; \
+		if (-not $$match) { Write-Error 'No boards detected. Plug in the Arduino and retry.'; exit 1 } ; \
+		$$b = $$match.matching_boards[0]; \
+		$$fqbn = $$b.fqbn; \
+		$$port = $$match.port.address; \
+		$$inc = Join-Path (Resolve-Path '$(CURDIR)') 'firmware/Task2_SixAxis/interfaces'; \
+		if (-not $$fqbn -or -not $$port) { Write-Error 'Could not determine FQBN/port from arduino-cli board list.'; exit 1 } ; \
+		Write-Host ('Using FQBN=' + $$fqbn + ' PORT=' + $$port); \
+		Write-Host 'Compiling...'; \
+		if (-not (& $$cli compile --fqbn $$fqbn --build-property compiler.cpp.extra_flags=-I$$inc firmware/Task2_SixAxis/Six_Axis_Controller)) { exit 1 }; \
+		Write-Host 'Uploading...'; \
+		if (-not (& $$cli upload --fqbn $$fqbn -p $$port firmware/Task2_SixAxis/Six_Axis_Controller)) { exit 1 }; \
+		Write-Host 'Upload complete.'"
+else
+	@echo "flash-task2: not implemented for this OS" && exit 1
+endif
+
+.PHONY: setup-tools
+setup-tools:
+ifeq ($(OS),Windows_NT)
+	@echo "Setting up arduino-cli in ../tools (Windows)..."
+	@powershell -NoProfile -Command "\
+	$$tools = Resolve-Path '$(CURDIR)/../tools'; \
+	New-Item -ItemType Directory -Force -Path $$tools | Out-Null; \
+	$$zip = Join-Path $$tools 'arduino-cli.zip'; \
+	$$exe = Join-Path $$tools 'arduino-cli.exe'; \
+	if (-Not (Test-Path $$exe)) { \
+		Write-Host 'Downloading arduino-cli...'; \
+		Invoke-WebRequest -Uri https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Windows_64bit.zip -OutFile $$zip; \
+		Expand-Archive -Path $$zip -DestinationPath $$tools -Force; \
+		$$found = Get-ChildItem -Path $$tools -Filter 'arduino-cli*.exe' | Select-Object -First 1; \
+		if ($$found) { Move-Item $$found.FullName $$exe -Force; } \
+		Remove-Item $$zip -Force; \
+	} else { Write-Host 'arduino-cli.exe already present at' $$exe; } \
+	$$old = [Environment]::GetEnvironmentVariable('Path','User'); \
+	if ($$old -notlike ('*' + $$tools + '*')) { \
+		[Environment]::SetEnvironmentVariable('Path', $$old + ';' + $$tools, 'User'); \
+		Write-Host 'Added to user PATH - open a new shell and restart VSCode to pick up changes.'; \
+	} else { Write-Host 'tools already on PATH - you may need to restart VSCode if its not in env:path.'; }"
+else
+	@echo "setup-tools: not implemented for this OS" && exit 1
+endif
+
 .PHONY: build-wheels
 build-wheels:
 	@echo "Building wheels for all packages..."
