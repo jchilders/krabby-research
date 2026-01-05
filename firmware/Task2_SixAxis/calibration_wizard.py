@@ -25,13 +25,21 @@ def calibration_wizard():
         print("Error: Could not connect to Arduino.")
         return
 
-    # Joint Mappings (Index in the 6-value array)
-    # [YawL, YawR, HipL, KneeL, HipR, KneeR]
-    joints = {
-        '1': ("Hip Left",  2),
-        '2': ("Knee Left", 3),
-        '3': ("Hip Right", 4),
-        '4': ("Knee Right", 5)
+    joint_key_by_choice = {
+        '1': ("Hip Left", "LHL"),
+        '2': ("Knee Left", "LKL"),
+        '3': ("Hip Right", "RHL"),
+        '4': ("Knee Right", "RKL"),
+    }
+    send_order = ["LHY", "RHY", "LHL", "LKL", "RHL", "RKL"]
+
+    neutral_cmds = {
+        "LHY": 0.0,
+        "RHY": 0.0,
+        "LHL": 0.5,
+        "LKL": 0.5,
+        "RHL": 0.5,
+        "RKL": 0.5,
     }
 
     try:
@@ -46,10 +54,10 @@ def calibration_wizard():
             choice = get_user_input("Select (1-4): ")
             if choice == 'q':
                 break
-            if choice not in joints:
+            if choice not in joint_key_by_choice:
                 continue
 
-            joint_name, idx = joints[choice]
+            joint_name, joint_key = joint_key_by_choice[choice]
             print(f"\n[Calibrating {joint_name}]")
             print("Controls:")
             print("  '+' or 'w' -> Extend (Pulse)")
@@ -57,11 +65,12 @@ def calibration_wizard():
             print("  'b'        -> Back to Menu")
 
             while True:
-                # 1. Read latest Pot Value
-                # Mappings in SDK pot array: [HipL, KneeL, HipR, KneeR]
-                # Map our joint selection (2,3,4,5) to pot index (0,1,2,3)
-                pot_idx = idx - 2
-                current_pot = mcu.latest_pots[pot_idx]
+                if mcu.last_error:
+                    print(f"\nReader error: {mcu.last_error}")
+                    return
+                # 1. Read latest Pot Value from telemetry map
+                jt = mcu.joints.get(joint_key)
+                current_pot = jt.pot if jt else 0
 
                 # 2. Ask for command
                 cmd = get_user_input(
@@ -71,36 +80,45 @@ def calibration_wizard():
                     break
 
                 # 3. Determine Pulse Direction
-                # Start from current positions so only the selected joint moves
-                # Positions order: [YawL, YawR, HipL, KneeL, HipR, KneeR]
-                cmds = list(mcu.latest_positions)
-                # Clamp to valid ranges in case feedback is stale
-                cmds[0] = max(-1.0, min(1.0, cmds[0]))
-                cmds[1] = max(-1.0, min(1.0, cmds[1]))
-                for j in range(2, 6):
-                    cmds[j] = max(0.0, min(1.0, cmds[j]))
+                # Build default commands keyed by joint name
+                cmds_by_joint = {
+                    "LHY": 0.0,
+                    "RHY": 0.0,
+                    "LHL": 0.5,
+                    "LKL": 0.5,
+                    "RHL": 0.5,
+                    "RKL": 0.5,
+                }
+                # Clamp from latest telemetry where available
+                for key in send_order:
+                    jt_current = mcu.joints.get(key)
+                    if not jt_current:
+                        continue
+                    if key in ("LHY", "RHY"):
+                        cmds_by_joint[key] = max(-1.0, min(1.0, jt_current.pos))
+                    else:
+                        cmds_by_joint[key] = max(0.0, min(1.0, jt_current.pos))
 
                 # Target gets 0.7 (extend) or 0.3 (retract)
-
                 if cmd in ['+', 'w']:
-                    cmds[idx] = 0.7  # Low speed extend
+                    cmds_by_joint[joint_key] = 0.7  # Low speed extend
                     print(f"  -> Extending {joint_name}...")
                 elif cmd in ['-', 's']:
-                    cmds[idx] = 0.3  # Low speed retract
+                    cmds_by_joint[joint_key] = 0.3  # Low speed retract
                     print(f"  -> Retracting {joint_name}...")
                 else:
                     continue
 
                 # 4. EXECUTE PULSE (The Safety Feature)
                 # Move for only 0.2 seconds, then STOP.
-                mcu.send_command(*cmds)
+                mcu.send_command(cmds_by_joint)
                 time.sleep(5)
-                mcu.send_command(0, 0, 0.5, 0.5, 0.5, 0.5)  # Hard Stop
+                mcu.send_command(neutral_cmds)  # Hard Stop
                 time.sleep(0.1)  # Wait for comms to update pot value
 
     except KeyboardInterrupt:
         print("\nStopping...")
-        mcu.send_command(0, 0, 0.5, 0.5, 0.5, 0.5)
+        mcu.send_command(neutral_cmds)
     finally:
         mcu.close()
 
@@ -115,7 +133,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.debug:
-        # Show underlying MCU SDK debug (POS/POT) plus any safety/runaway alerts
+        # Elevate root + our loggers so debug actually emits
+        root = logging.getLogger()
+        root.setLevel(logging.DEBUG)
+        for h in root.handlers:
+            h.setLevel(logging.DEBUG)
         logging.getLogger("KrabbySDK").setLevel(logging.DEBUG)
         logger.setLevel(logging.DEBUG)
 

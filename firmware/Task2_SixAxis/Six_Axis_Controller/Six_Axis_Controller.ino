@@ -1,669 +1,70 @@
 /*
- * Krabby-Uno Task 2: Six-Axis Leg Controller
- * Supports: 2x Yaw Motors (Encoder) + 4x Linear Actuators (Potentiometer)
+ * Krabby-Uno Task 2: Six-Axis Leg Controller (all linear actuators)
+ * Joint IDs: LHY, RHY, LHL, LKL, RHL, RKL
  */
 
 #include <Arduino.h>
+#include "joint_telemetry.h"
+#include "command.h"
+#include "actuator_manager.h"
 
 // --- CONFIGURATION ---
 const int TELEMETRY_INTERVAL_MS = 50; // 20Hz update
 
-// [TUNING PARAMETER 1] Stall Safety
-// 600 ~= 3.0V from Current Sense. Adjust if false triggers occur.
-const int CURRENT_TRIP_THRESHOLD = 1023;
-
-// --- MOTION PROFILE ---
-// [TUNING PARAMETER 2] Acceleration Step
+// Motion profile
 const int PWM_RAMP_STEP = 5;
-// [TUNING PARAMETER 3] Acceleration Speed
 const int RAMP_INTERVAL_MS = 10;
+const int PWM_DEADBAND = 20;
+const int PWM_ERROR_DEADBAND = 10;
 
 unsigned long lastTelemetry = 0;
 
 // ==========================================
-// CLASS 1: YAW MOTOR (Encoder Based)
-// Formerly "JointMotor" in Dual_Yaw_v2
+// INSTANTIATION (6 LINEAR ACTUATORS)
 // ==========================================
-class YawMotor
-{
-public:
-    // Pins
-    int pinPwmR, pinPwmL, pinEnR, pinEnL, pinISR, pinISL;
-    const char *name;
-
-    // State
-    volatile long encoderPosition = 0;
-    long targetCounts = 0;
-    int currentPwm = 0;
-
-    // Safety & Averaging State
-    float averageCurrent = 0.0;
-    const float ALPHA = 0.1; // Smoothing factor
-
-    bool safetyTriggered = false;
-    bool runawayTriggered = false;
-
-    unsigned long lastMoveTime = 0;
-    unsigned long lastRampTime = 0;
-    long lastEncoderPos = 0;
-
-    // Constants
-    const float MAX_COUNTS = 2096.0 * (30.0 / 360.0); // ~174 counts
-    float Kp = 3.5;
-
-    YawMotor(const char *label, int pR, int pL, int eR, int eL, int isR, int isL)
-    {
-        name = label;
-        pinPwmR = pR;
-        pinPwmL = pL;
-        pinEnR = eR;
-        pinEnL = eL;
-        pinISR = isR;
-        pinISL = isL;
-    }
-
-    void init()
-    {
-        pinMode(pinPwmR, OUTPUT);
-        pinMode(pinPwmL, OUTPUT);
-        pinMode(pinEnR, OUTPUT);
-        pinMode(pinEnL, OUTPUT);
-        pinMode(pinISR, INPUT);
-        pinMode(pinISL, INPUT);
-        stopMotor();
-    }
-
-    // --- SAFETY: FILTERED OBSTACLE DETECTION ---
-    bool checkStall()
-    {
-        int maxRaw = max(analogRead(pinISR), analogRead(pinISL));
-        averageCurrent = (ALPHA * maxRaw) + ((1.0 - ALPHA) * averageCurrent);
-
-        if (averageCurrent > CURRENT_TRIP_THRESHOLD)
-        {
-            safetyTriggered = true;
-            stopMotor();
-            Serial.print("SAFETY:");
-            Serial.print(name);
-            Serial.print(" IS=");
-            Serial.println(maxRaw);
-            return true;
-        }
-        return false;
-    }
-
-    // --- SAFETY: RUNAWAY PROTECTION ---
-    void checkRunaway(int targetPwm)
-    {
-        if (runawayTriggered)
-            return;
-
-        if (abs(targetPwm) > 60)
-        {
-            unsigned long now = millis();
-            if (now - lastMoveTime > 200)
-            { // 200ms grace period
-                long delta = encoderPosition - lastEncoderPos;
-                bool fault = false;
-
-                // Case A: PWM Positive (Forward) but Encoder Negative
-                if (targetPwm > 0 && delta < -5)
-                    fault = true;
-                // Case B: PWM Negative (Backward) but Encoder Positive
-                if (targetPwm < 0 && delta > 5)
-                    fault = true;
-                // Case C: Power applied but No Movement
-                if (abs(delta) < 2)
-                    fault = true;
-
-                if (fault)
-                {
-                    runawayTriggered = true;
-                    stopMotor();
-                    Serial.print("RUNAWAY:");
-                    Serial.print(name);
-                    Serial.print(" delta=");
-                    Serial.print(delta);
-                    Serial.print(" pwm=");
-                    Serial.println(targetPwm);
-                }
-                lastMoveTime = now;
-                lastEncoderPos = encoderPosition;
-            }
-        }
-        else
-        {
-            lastMoveTime = millis();
-            lastEncoderPos = encoderPosition;
-        }
-    }
-
-    void setTarget(float val)
-    {
-        if (safetyTriggered || runawayTriggered)
-            return;
-        // Clamp [-1.0, 1.0]
-        if (val > 1.0)
-            val = 1.0;
-        if (val < -1.0)
-            val = -1.0;
-        targetCounts = (long)(val * MAX_COUNTS);
-    }
-
-    void update()
-    {
-        if (safetyTriggered || runawayTriggered)
-            return;
-        //if (checkStall())
-        //    return;
-
-        long error = targetCounts - encoderPosition;
-        int desiredPwm = (int)(error * Kp);
-
-        //checkRunaway(desiredPwm);
-
-        // Smooth Ramping
-        if (millis() - lastRampTime >= RAMP_INTERVAL_MS)
-        {
-            lastRampTime = millis();
-            if (currentPwm < desiredPwm)
-            {
-                currentPwm += PWM_RAMP_STEP;
-                if (currentPwm > desiredPwm)
-                    currentPwm = desiredPwm;
-            }
-            else if (currentPwm > desiredPwm)
-            {
-                currentPwm -= PWM_RAMP_STEP;
-                if (currentPwm < desiredPwm)
-                    currentPwm = desiredPwm;
-            }
-        }
-        driveHardware(currentPwm);
-    }
-
-    void driveHardware(int pwm)
-    {
-        if (pwm > 255)
-            pwm = 255;
-        if (pwm < -255)
-            pwm = -255;
-        if (abs(pwm) < 20)
-            pwm = 0; // Deadband
-
-        if (pwm > 0)
-        {
-            digitalWrite(pinEnR, HIGH);
-            digitalWrite(pinEnL, LOW);
-            analogWrite(pinPwmR, pwm);
-            analogWrite(pinPwmL, 0);
-        }
-        else if (pwm < 0)
-        {
-            digitalWrite(pinEnR, LOW);
-            digitalWrite(pinEnL, HIGH);
-            analogWrite(pinPwmR, 0);
-            analogWrite(pinPwmL, abs(pwm));
-        }
-        else
-        {
-            stopMotor();
-        }
-    }
-
-    void stopMotor()
-    {
-        digitalWrite(pinEnR, LOW);
-        digitalWrite(pinEnL, LOW);
-        analogWrite(pinPwmR, 0);
-        analogWrite(pinPwmL, 0);
-        currentPwm = 0;
-    }
-
-    float getPos() { return (float)encoderPosition / MAX_COUNTS; }
-};
-
-// ==========================================
-// CLASS 2: LINEAR ACTUATOR (Potentiometer Based)
-// New class for Task 2 expansion
-// ==========================================
-class LinearActuator
-{
-public:
-    int pinPwmR, pinPwmL, pinEnR, pinEnL, pinISR, pinISL, pinPot;
-    const char *name;
-    int currentPwm = 0;
-
-    // CALIBRATION: RAW POT VALUES
-    // These must be calibrated per motor!
-    int minPot = 100; // Retracted (0.0)
-    int maxPot = 900; // Extended (1.0)
-
-    int targetRaw = 0;
-    bool safetyTriggered = false;
-    float averageCurrent = 0.0;
-    const float ALPHA = 0.1;
-    unsigned long lastRampTime = 0;
-    float Kp = 2.0; // Lower Kp for linear actuators
-
-    LinearActuator(const char *label, int pR, int pL, int eR, int eL, int isR, int isL, int pot)
-    {
-        name = label;
-        pinPwmR = pR;
-        pinPwmL = pL;
-        pinEnR = eR;
-        pinEnL = eL;
-        pinISR = isR;
-        pinISL = isL;
-        pinPot = pot;
-    }
-
-    void init()
-    {
-        pinMode(pinPwmR, OUTPUT);
-        pinMode(pinPwmL, OUTPUT);
-        pinMode(pinEnR, OUTPUT);
-        pinMode(pinEnL, OUTPUT);
-        pinMode(pinISR, INPUT);
-        pinMode(pinISL, INPUT);
-        pinMode(pinPot, INPUT);
-        stopMotor();
-        // Default target to current position to prevent startup jump
-        targetRaw = analogRead(pinPot);
-    }
-
-    bool checkStall()
-    {
-        int maxRaw = max(analogRead(pinISR), analogRead(pinISL));
-        averageCurrent = (ALPHA * maxRaw) + ((1.0 - ALPHA) * averageCurrent);
-        if (averageCurrent > CURRENT_TRIP_THRESHOLD)
-        {
-            safetyTriggered = true;
-            stopMotor();
-            Serial.print("SAFETY:");
-            Serial.print(name);
-            Serial.print(" IS=");
-            Serial.println(maxRaw);
-            return true;
-        }
-        return false;
-    }
-
-    // Input: 0.0 (Retracted) to 1.0 (Extended)
-    void setTarget(float val)
-    {
-        if (safetyTriggered)
-            return;
-        if (val > 1.0)
-            val = 1.0;
-        if (val < 0.0)
-            val = 0.0;
-        // Map 0.0-1.0 to MinPot-MaxPot
-        targetRaw = minPot + (int)(val * (maxPot - minPot));
-    }
-
-    void update()
-    {
-        if (safetyTriggered || checkStall())
-            return;
-
-        int currentRaw = analogRead(pinPot);
-        int error = targetRaw - currentRaw;
-
-        // Deadband (higher for pots to prevent jitter)
-        if (abs(error) < 10)
-            error = 0;
-
-        int desiredPwm = (int)(error * Kp);
-
-        // Ramp Logic
-        if (millis() - lastRampTime >= RAMP_INTERVAL_MS)
-        {
-            lastRampTime = millis();
-            if (currentPwm < desiredPwm)
-            {
-                currentPwm += PWM_RAMP_STEP;
-                if (currentPwm > desiredPwm)
-                    currentPwm = desiredPwm;
-            }
-            else if (currentPwm > desiredPwm)
-            {
-                currentPwm -= PWM_RAMP_STEP;
-                if (currentPwm < desiredPwm)
-                    currentPwm = desiredPwm;
-            }
-        }
-        driveHardware(currentPwm);
-    }
-
-    void driveHardware(int pwm)
-    {
-        if (pwm > 255)
-            pwm = 255;
-        if (pwm < -255)
-            pwm = -255;
-        // Apply deadband to the commanded PWM but keep ramp state intact
-        bool inDeadband = abs(pwm) < 30;
-        if (inDeadband)
-            pwm = 0;
-
-        if (pwm > 0)
-        {
-            digitalWrite(pinEnR, HIGH);
-            digitalWrite(pinEnL, LOW);
-            analogWrite(pinPwmR, pwm);
-            analogWrite(pinPwmL, 0);
-        }
-        else if (pwm < 0)
-        {
-            digitalWrite(pinEnR, LOW);
-            digitalWrite(pinEnL, HIGH);
-            analogWrite(pinPwmR, 0);
-            analogWrite(pinPwmL, abs(pwm));
-        }
-        else
-        {
-            // Hold outputs off but keep currentPwm value so ramp can climb past deadband
-            digitalWrite(pinEnR, LOW);
-            digitalWrite(pinEnL, LOW);
-            analogWrite(pinPwmR, 0);
-            analogWrite(pinPwmL, 0);
-        }
-    }
-
-    void stopMotor()
-    {
-        digitalWrite(pinEnR, LOW);
-        digitalWrite(pinEnL, LOW);
-        analogWrite(pinPwmR, 0);
-        analogWrite(pinPwmL, 0);
-        currentPwm = 0;
-    }
-
-    // Return Normalized Position (0.0 - 1.0)
-    float getPos()
-    {
-        int val = analogRead(pinPot);
-        // Avoid division by zero if not calibrated
-        if (maxPot == minPot)
-            return 0.0;
-        return (float)(val - minPot) / (float)(maxPot - minPot);
-    }
-};
-
-// ==========================================
-// INSTANTIATION (6 MOTORS)
-// ==========================================
-
-// 1. YAW MOTORS (Encoder) - Pins from Task 2
-YawMotor yawL("yawL", 46, 45, 22, 23, A4, A5);
-YawMotor yawR("yawR", 2, 3, 24, 25, A6, A7);
-
-// 2. LINEAR ACTUATORS (Potentiometer)
-// Using new Enable Pins 26-33 for the 4 linear drivers
-// Mapping: PWM_R, PWM_L, EN_R, EN_L, IS_R, IS_L, POT
-LinearActuator hipL("hipL", 4, 5, 26, 27, A8, A9, A0);
-LinearActuator kneeL("kneeL", 6, 7, 28, 29, A10, A11, A1);
-LinearActuator hipR("hipR", 8, 9, 30, 31, A12, A13, A2);
-LinearActuator kneeR("kneeR", 10, 11, 32, 33, A14, A15, A3);
-
-// --- ISRs ---
-void isrL()
-{
-    if (digitalRead(19))
-        yawL.encoderPosition++;
-    else
-        yawL.encoderPosition--;
-}
-void isrR()
-{
-    if (digitalRead(21))
-        yawR.encoderPosition++;
-    else
-        yawR.encoderPosition--;
-}
+LinearActuator lhy("LHY", 46, 45, 22, 23, A10, A0);
+LinearActuator rhy("RHY", 2, 3, 24, 25, A11, A1);
+LinearActuator lhl("LHL", 4, 5, 26, 27, A12, A2);
+LinearActuator lkl("LKL", 6, 7, 28, 29, A13, A3);
+LinearActuator rhl("RHL", 8, 9, 30, 31, A14, A4);
+LinearActuator rkl("RKL", 10, 11, 32, 33, A15, A5);
+ActuatorManager actuatorManager{&lhy, &rhy, &lhl, &lkl, &rhl, &rkl};
+const size_t CMD_BUF_SIZE = actuatorManager.count(); // There's always max one command per joint
+Command cmdBuf[CMD_BUF_SIZE];
 
 void setup()
 {
     Serial.begin(115200);
 
-    // Init All Motors
-    yawL.init();
-    yawR.init();
-    hipL.init();
-    kneeL.init();
-    hipR.init();
-    kneeR.init();
-
-    // Encoder Interrupts
-    pinMode(18, INPUT_PULLUP);
-    pinMode(19, INPUT_PULLUP);
-    pinMode(20, INPUT_PULLUP);
-    pinMode(21, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(18), isrL, RISING);
-    attachInterrupt(digitalPinToInterrupt(20), isrR, RISING);
+    actuatorManager.initAll();
 }
 
-// --- MAIN LOOP ---
 void loop()
 {
-    // 1. INPUT PARSING: "T <yL> <yR> <hL> <kL> <hR> <kR>"
+    // 1. PARSE INPUT COMMANDS AND APPLY COMMAND TARGETS: "T <name> <val> [<name> <val>...]"
     if (Serial.available())
     {
         if (Serial.read() == 'T')
         {
-            float v[6];
-            // Expect 6 float values
-            for (int i = 0; i < 6; i++)
-                v[i] = Serial.parseFloat();
-
-            // Safety Reset: If all zeros, reset flags
-            bool allZeros = true;
-            for (int i = 0; i < 6; i++)
-                if (v[i] != 0)
-                    allZeros = false;
-
-            if (allZeros)
+            String payload = Serial.readStringUntil('\n');
+            size_t cmdCount = parseCommands(payload, cmdBuf, CMD_BUF_SIZE);
+            if (cmdCount > 0)
             {
-                yawL.runawayTriggered = false;
-                yawL.safetyTriggered = false;
-                yawR.runawayTriggered = false;
-                yawR.safetyTriggered = false;
-                hipL.safetyTriggered = false;
-                kneeL.safetyTriggered = false;
-                hipR.safetyTriggered = false;
-                kneeR.safetyTriggered = false;
+                actuatorManager.applyCommands(cmdBuf, cmdCount);
             }
-
-            // Yaw Targets [-1.0, 1.0]
-            yawL.setTarget(v[0]);
-            yawR.setTarget(v[1]);
-            // Linear Targets [0.0, 1.0]
-            hipL.setTarget(v[2]);
-            kneeL.setTarget(v[3]);
-            hipR.setTarget(v[4]);
-            kneeR.setTarget(v[5]);
         }
+        // TODO: Should we care about other commands? Or just ignore them?
     }
 
     // 2. UPDATE CONTROL LOOPS
-    yawL.update();
-    yawR.update();
-    hipL.update();
-    kneeL.update();
-    hipR.update();
-    kneeR.update();
+    actuatorManager.updateAll(PWM_RAMP_STEP, RAMP_INTERVAL_MS, PWM_DEADBAND, PWM_ERROR_DEADBAND);
 
-    // 3. TELEMETRY STREAMING
-    if (millis() - lastTelemetry > TELEMETRY_INTERVAL_MS)
+    // 3. DUMP TELEMETRY TO SERIAL (one line for all joints)
+    unsigned long curMillis = millis();
+    if (curMillis - lastTelemetry > TELEMETRY_INTERVAL_MS)
     {
-        lastTelemetry = millis();
+        lastTelemetry = curMillis;
 
-        int enYL = digitalRead(yawL.pinEnR) || digitalRead(yawL.pinEnL);
-        int enYR = digitalRead(yawR.pinEnR) || digitalRead(yawR.pinEnL);
-        int enHL = digitalRead(hipL.pinEnR) || digitalRead(hipL.pinEnL);
-        int enKL = digitalRead(kneeL.pinEnR) || digitalRead(kneeL.pinEnL);
-        int enHR = digitalRead(hipR.pinEnR) || digitalRead(hipR.pinEnL);
-        int enKR = digitalRead(kneeR.pinEnR) || digitalRead(kneeR.pinEnL);
-
-        // Per-side PWM intents (split R/L) for visibility
-        int pwmYL_R = yawL.currentPwm > 0 ? yawL.currentPwm : 0;
-        int pwmYL_L = yawL.currentPwm < 0 ? -yawL.currentPwm : 0;
-        int pwmYR_R = yawR.currentPwm > 0 ? yawR.currentPwm : 0;
-        int pwmYR_L = yawR.currentPwm < 0 ? -yawR.currentPwm : 0;
-
-        int pwmHL_R = hipL.currentPwm > 0 ? hipL.currentPwm : 0;
-        int pwmHL_L = hipL.currentPwm < 0 ? -hipL.currentPwm : 0;
-        int pwmKL_R = kneeL.currentPwm > 0 ? kneeL.currentPwm : 0;
-        int pwmKL_L = kneeL.currentPwm < 0 ? -kneeL.currentPwm : 0;
-        int pwmHR_R = hipR.currentPwm > 0 ? hipR.currentPwm : 0;
-        int pwmHR_L = hipR.currentPwm < 0 ? -hipR.currentPwm : 0;
-        int pwmKR_R = kneeR.currentPwm > 0 ? kneeR.currentPwm : 0;
-        int pwmKR_L = kneeR.currentPwm < 0 ? -kneeR.currentPwm : 0;
-
-        // Format: FB:yL,yR,hL,kL,hR,kR
-        Serial.print("FB:");
-        Serial.print(yawL.getPos(), 3);
-        Serial.print(",");
-        Serial.print(yawR.getPos(), 3);
-        Serial.print(",");
-        Serial.print(hipL.getPos(), 3);
-        Serial.print(",");
-        Serial.print(kneeL.getPos(), 3);
-        Serial.print(",");
-        Serial.print(hipR.getPos(), 3);
-        Serial.print(",");
-        Serial.print(kneeR.getPos(), 3);
-
-        // Debug: Print Raw Pot Values to help Calibration
-        // The client needs this to set minPot/maxPot
-        Serial.print(",POT:");
-        Serial.print(analogRead(A0));
-        Serial.print(",");
-        Serial.print(analogRead(A1));
-        Serial.print(",");
-        Serial.print(analogRead(A2));
-        Serial.print(",");
-        Serial.print(analogRead(A3));
-
-        // Safety Flags Snapshot
-        // Order: yawL_safe, yawR_safe, yawL_run, yawR_run, hipL_safe, kneeL_safe, hipR_safe, kneeR_safe
-        Serial.print(",S:");
-        Serial.print(yawL.safetyTriggered);
-        Serial.print(",");
-        Serial.print(yawR.safetyTriggered);
-        Serial.print(",");
-        Serial.print(yawL.runawayTriggered);
-        Serial.print(",");
-        Serial.print(yawR.runawayTriggered);
-        Serial.print(",");
-        Serial.print(hipL.safetyTriggered);
-        Serial.print(",");
-        Serial.print(kneeL.safetyTriggered);
-        Serial.print(",");
-        Serial.print(hipR.safetyTriggered);
-        Serial.print(",");
-        Serial.print(kneeR.safetyTriggered);
-
-        // Current PWM commands (post-ramp, per joint)
-        // Order: yL,yR,hL,kL,hR,kR
-        Serial.print(",P:");
-        Serial.print(yawL.currentPwm);
-        Serial.print(",");
-        Serial.print(yawR.currentPwm);
-        Serial.print(",");
-        Serial.print(hipL.currentPwm);
-        Serial.print(",");
-        Serial.print(kneeL.currentPwm);
-        Serial.print(",");
-        Serial.print(hipR.currentPwm);
-        Serial.print(",");
-        Serial.print(kneeR.currentPwm);
-
-        // EN state per joint (1 if either EN pin is high)
-        Serial.print(",EN:");
-        Serial.print(enYL);
-        Serial.print(",");
-        Serial.print(enYR);
-        Serial.print(",");
-        Serial.print(enHL);
-        Serial.print(",");
-        Serial.print(enKL);
-        Serial.print(",");
-        Serial.print(enHR);
-        Serial.print(",");
-        Serial.print(enKR);
-
-        // Per-side PWM/EN (R_pwm,L_pwm,R_en,L_en) for each joint
-        Serial.print(",IO:");
-        Serial.print(pwmYL_R);
-        Serial.print(",");
-        Serial.print(pwmYL_L);
-        Serial.print(",");
-        Serial.print(digitalRead(yawL.pinEnR));
-        Serial.print(",");
-        Serial.print(digitalRead(yawL.pinEnL));
-        Serial.print(",");
-        Serial.print(pwmYR_R);
-        Serial.print(",");
-        Serial.print(pwmYR_L);
-        Serial.print(",");
-        Serial.print(digitalRead(yawR.pinEnR));
-        Serial.print(",");
-        Serial.print(digitalRead(yawR.pinEnL));
-
-        Serial.print(",");
-        Serial.print(pwmHL_R);
-        Serial.print(",");
-        Serial.print(pwmHL_L);
-        Serial.print(",");
-        Serial.print(digitalRead(hipL.pinEnR));
-        Serial.print(",");
-        Serial.print(digitalRead(hipL.pinEnL));
-        Serial.print(",");
-        Serial.print(pwmKL_R);
-        Serial.print(",");
-        Serial.print(pwmKL_L);
-        Serial.print(",");
-        Serial.print(digitalRead(kneeL.pinEnR));
-        Serial.print(",");
-        Serial.print(digitalRead(kneeL.pinEnL));
-
-        Serial.print(",");
-        Serial.print(pwmHR_R);
-        Serial.print(",");
-        Serial.print(pwmHR_L);
-        Serial.print(",");
-        Serial.print(digitalRead(hipR.pinEnR));
-        Serial.print(",");
-        Serial.print(digitalRead(hipR.pinEnL));
-        Serial.print(",");
-        Serial.print(pwmKR_R);
-        Serial.print(",");
-        Serial.print(pwmKR_L);
-        Serial.print(",");
-        Serial.print(digitalRead(kneeR.pinEnR));
-        Serial.print(",");
-        Serial.print(digitalRead(kneeR.pinEnL));
-
-        // Debug: Print Average Current (Optional, good for tuning)
-        Serial.print(",AVG:");
-        Serial.print((int)yawL.averageCurrent);
-
-        // Instant current-sense snapshot (max of the two IS pins per bridge)
-        Serial.print(",IS:");
-        Serial.print(max(analogRead(yawL.pinISR), analogRead(yawL.pinISL)));
-        Serial.print(",");
-        Serial.print(max(analogRead(yawR.pinISR), analogRead(yawR.pinISL)));
-        Serial.print(",");
-        Serial.print(max(analogRead(hipL.pinISR), analogRead(hipL.pinISL)));
-        Serial.print(",");
-        Serial.print(max(analogRead(kneeL.pinISR), analogRead(kneeL.pinISL)));
-        Serial.print(",");
-        Serial.print(max(analogRead(hipR.pinISR), analogRead(hipR.pinISL)));
-        Serial.print(",");
-        Serial.print(max(analogRead(kneeR.pinISR), analogRead(kneeR.pinISL)));
-
-        Serial.println();
+        Serial.println(actuatorManager.serializeTelemetry());
     }
 }
