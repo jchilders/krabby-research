@@ -26,10 +26,10 @@ public:
 
     const char *name;  // Short joint name/id (e.g. "LHY" = "Left Hip Yaw")
     // PIN ASSIGNMENTS
-    const int pinPwmR; // Sending on PWM_R defines desired motor voltage in the right/extend direction
-    const int pinPwmL; // Sending on PWM_L defines desired motor voltage in the left/retract direction
-    const int pinEnR;  // Sending HIGH to EN_R enables right/extend PWM (note: only one of EN_R/EN_L should be HIGH at a time to avoid motor chatter/damage)
-    const int pinEnL;  // Send HIGH to EN_L enables left/retract PWM (note: only one of EN_R/EN_L should be HIGH at a time to avoid motor chatter/damage)
+    const int pinPwmR; // Sending on PWM_R defines desired motor voltage in the right/extend direction (note: Only send one of PWM_R or PWM_L at a time to avoid motor chatter/damage)
+    const int pinPwmL; // Sending on PWM_L defines desired motor voltage in the left/retract direction (note: Only send one of PWM_R or PWM_L at a time to avoid motor chatter/damage)
+    const int pinEnR;  // Sending HIGH to EN_R enables 'right' half of H-Bridge (note: both EN_R and EN_L should be HIGH to enable motor drive)
+    const int pinEnL;  // Sending HIGH to EN_L enables 'left' half of H-Bridge (note: both EN_R and EN_L should be HIGH to enable motor drive)
     const int pinIS;   // Analog current sense pin, reads motor current from H-Bridge as a value between 0 (0 Amp) and 1023 (Max motor Amps, e.g. ~8A @ 12V for common linear actuators)
     const int pinPot;  // Analog potentiometer pin, reads actuator position as a value between 0 (fully retracted) and 1023 (fully extended)
 
@@ -59,7 +59,11 @@ public:
         pinMode(pinEnL, OUTPUT);
         pinMode(pinIS, INPUT);
         pinMode(pinPot, INPUT);
-        stop();
+        // Enable driver; PWM selection drives direction.
+        digitalWrite(pinEnR, HIGH);
+        digitalWrite(pinEnL, HIGH);
+        analogWrite(pinPwmR, 0);
+        analogWrite(pinPwmL, 0);
         currentTarget = analogRead(pinPot); // start from current position
     }
 
@@ -120,8 +124,8 @@ public:
     // Immediately stops actuator motion, does not reset targetPosition, so motor may be driven again on next update()
     void stop()
     {
-        digitalWrite(pinEnR, LOW);
-        digitalWrite(pinEnL, LOW);
+        digitalWrite(pinEnR, HIGH);
+        digitalWrite(pinEnL, HIGH);
         analogWrite(pinPwmR, 0);
         analogWrite(pinPwmL, 0);
     }
@@ -166,7 +170,7 @@ private:
             stop();
             return;
         }
-        digitalWrite(pinEnR, LOW);
+        digitalWrite(pinEnR, HIGH);
         digitalWrite(pinEnL, HIGH);
         analogWrite(pinPwmR, 0);
         analogWrite(pinPwmL, abs(pwm));
@@ -180,7 +184,7 @@ private:
             return;
         }
         digitalWrite(pinEnR, HIGH);
-        digitalWrite(pinEnL, LOW);
+        digitalWrite(pinEnL, HIGH);
         analogWrite(pinPwmR, pwm);
         analogWrite(pinPwmL, 0);
     }
