@@ -124,8 +124,8 @@ public:
     // Immediately stops actuator motion, does not reset targetPosition, so motor may be driven again on next update()
     void stop()
     {
-        digitalWrite(pinEnR, HIGH);
-        digitalWrite(pinEnL, HIGH);
+        digitalWrite(pinEnR, LOW);
+        digitalWrite(pinEnL, LOW);
         analogWrite(pinPwmR, 0);
         analogWrite(pinPwmL, 0);
     }
