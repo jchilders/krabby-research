@@ -1,31 +1,55 @@
 #pragma once
 #include <Arduino.h>
-#include <map>
-#include <initializer_list>
 #include "joint_telemetry.h"
 #include "command.h"
 
-// Linear actuator controller (potentiometer feedback)
+// Linear actuator controller (w/ potentiometer feedback)
 class LinearActuator
 {
 public:
-    const char *name;
-    const int pinPwmR, pinPwmL, pinEnR, pinEnL, pinIS, pinPot;
+    struct ControlConfig
+    {
+        int pwmRampStep = 5;     // how much to change PWM per ramp step, higher will cause motor to accelerate faster
+        int rampIntervalMs = 10; // time in millis between ramp steps
+        int pwmDeadband = 20;    // PWM values below this are treated as zero, to avoid motor "creep"
+        int pwmErrDeadband = 10; // Position error below which no PWM is applied, to avoid motor oscillation near target
+        float Kp = 2.0;          // proportional gain applied to position error to derive desired PWM, PWM is set to max((targetPos - currentPos) * Kp, 255)
 
-    // Motion limits (raw ADC 0-1023)
+        ControlConfig() = default;
+        ControlConfig(int rampStep, int intervalMs, int deadband, int errDeadband, float kp)
+            : pwmRampStep(rampStep),
+              rampIntervalMs(intervalMs),
+              pwmDeadband(deadband),
+              pwmErrDeadband(errDeadband),
+              Kp(kp) {}
+    };
+
+    const char *name;  // Short joint name/id (e.g. "LHY" = "Left Hip Yaw")
+    // PIN ASSIGNMENTS
+    const int pinPwmR; // Sending on PWM_R defines desired motor voltage in the right/extend direction
+    const int pinPwmL; // Sending on PWM_L defines desired motor voltage in the left/retract direction
+    const int pinEnR;  // Sending HIGH to EN_R enables right/extend PWM (note: only one of EN_R/EN_L should be HIGH at a time to avoid motor chatter/damage)
+    const int pinEnL;  // Send HIGH to EN_L enables left/retract PWM (note: only one of EN_R/EN_L should be HIGH at a time to avoid motor chatter/damage)
+    const int pinIS;   // Analog current sense pin, reads motor current from H-Bridge as a value between 0 (0 Amp) and 1023 (Max motor Amps, e.g. ~8A @ 12V for common linear actuators)
+    const int pinPot;  // Analog potentiometer pin, reads actuator position as a value between 0 (fully retracted) and 1023 (fully extended)
+
+    // Motion limits (raw ADC 0-1023), setting minStop higher than 0 will limit retraction, setting maxStop lower than 1023 will limit extension
+    // Typically set to slightly less than max allowed by mechanical endstops to avoid motor damage
     int minStop = 0;
     int maxStop = 1023;
 
-    // Proportional gain (higher drives harder toward target)
-    float Kp = 2.0;
-
     // Control state
-    int currentPwm = 0;
-    int currentTarget = 0;      // Target position (raw ADC)
-    unsigned long lastRampTime = 0;
+    int currentPwm = 0;              // Current PWM being applied to motor (-255 to 255)
+    int currentTarget = 0;           // Target position (raw ADC)
+    unsigned long lastRampTime = 0;  // Last time PWM ramp was updated, in millis, used along with rampIntervalMs to control ramp timing
 
     LinearActuator(const char *n, int pR, int pL, int eR, int eL, int isPin, int pot)
         : name(n), pinPwmR(pR), pinPwmL(pL), pinEnR(eR), pinEnL(eL), pinIS(isPin), pinPot(pot) {}
+
+    void setControlConfig(const ControlConfig &cfg)
+    {
+        controlConfig = cfg;
+    }
 
     void init()
     {
@@ -39,6 +63,7 @@ public:
         currentTarget = analogRead(pinPot); // start from current position
     }
 
+    // Sets target position to drive actuator to via update(), as normalized value [0.0,1.0], where 0.0 = minStop, 1.0 = maxStop
     void setTarget(float val)
     {
         if (val > 1.0)
@@ -48,47 +73,51 @@ public:
         currentTarget = minStop + (int)(val * (maxStop - minStop));
     }
 
+    // Returns normalized position [0.0,1.0], where 0.0 = minStop, 1.0 = maxStop
     float getPos()
     {
         return (float)(getRawPos() - minStop) / (float)(maxStop - minStop);
     }
 
+    // Returns raw potentiometer reading (0-1023)
     float getRawPos()
     {
         return analogRead(pinPot);
     }
 
-    void update(int pwmRampStep, int rampIntervalMs, int pwmDeadband, int pwmErrDeadband)
+    // Drives actuator to desired position using controlConfig; call frequently in main loop
+    void update()
     {
         int error = currentTarget - getRawPos();
-        if (abs(error) < pwmErrDeadband)
+        if (abs(error) < controlConfig.pwmErrDeadband)
             error = 0;
 
-        int desiredPwm = (int)(error * Kp);
+        int desiredPwm = (int)(error * controlConfig.Kp);
         if (desiredPwm > 255)
             desiredPwm = 255;
         if (desiredPwm < -255)
             desiredPwm = -255;
 
-        if (millis() - lastRampTime >= (unsigned long)rampIntervalMs)
+        if (millis() - lastRampTime >= (unsigned long)controlConfig.rampIntervalMs)
         {
             lastRampTime = millis();
             if (currentPwm < desiredPwm)
             {
-                currentPwm += pwmRampStep;
+                currentPwm += controlConfig.pwmRampStep;
                 if (currentPwm > desiredPwm)
                     currentPwm = desiredPwm;
             }
             else if (currentPwm > desiredPwm)
             {
-                currentPwm -= pwmRampStep;
+                currentPwm -= controlConfig.pwmRampStep;
                 if (currentPwm < desiredPwm)
                     currentPwm = desiredPwm;
             }
         }
-        driveHardware(currentPwm, pwmDeadband);
+        driveActuator(currentPwm, controlConfig.pwmDeadband);
     }
 
+    // Immediately stops actuator motion, does not reset targetPosition, so motor may be driven again on next update()
     void stop()
     {
         digitalWrite(pinEnR, LOW);
@@ -97,6 +126,7 @@ public:
         analogWrite(pinPwmL, 0);
     }
 
+    // Returns live, non-normalized telemetry for this joint as read from sensors
     JointTelemetry getTelemetry(const char *code)
     {
         JointTelemetry jt;
@@ -113,7 +143,7 @@ public:
     }
 
 private:
-    void driveHardware(int pwm, int pwmDeadband)
+    void driveActuator(int pwm, int pwmDeadband)
     {
         if (abs(pwm) < pwmDeadband)
         {
@@ -154,62 +184,65 @@ private:
         analogWrite(pinPwmR, pwm);
         analogWrite(pinPwmL, 0);
     }
+
+    ControlConfig controlConfig;
 };
 
 class ActuatorManager
 {
 public:
-    ActuatorManager(std::initializer_list<LinearActuator *> list)
-    {
-        for (auto *act : list)
-            actuators[act->name] = act;
-    }
+    ActuatorManager(LinearActuator **actsArray, size_t actsCount)
+        : actuators(actsArray), count(actsCount) {}
 
     void initAll()
     {
-        for (auto &entry : actuators)
-            entry.second->init();
+        for (size_t i = 0; i < count; i++)
+            actuators[i]->init();
     }
 
-    void updateAll(int pwmRampStep, int rampIntervalMs, int pwmDeadband, int pwmErrDeadband)
-    {
-        for (auto &entry : actuators)
-            entry.second->update(pwmRampStep, rampIntervalMs, pwmDeadband, pwmErrDeadband);
-    }
-
-    size_t count() const
-    {
-        return actuators.size();
-    }
-
-    void applyCommands(const Command *cmds, size_t count)
+    void updateAll()
     {
         for (size_t i = 0; i < count; i++)
+            actuators[i]->update();
+    }
+
+    size_t size() const
+    {
+        return count;
+    }
+
+    void applyCommands(const Command *cmds, size_t cmdCount)
+    {
+        // TODO: This is O(N^2), but N is small so probably ok for now. Would need to add a map for larger actuator sets.
+        for (size_t i = 0; i < cmdCount; i++)
         {
             const auto &cmd = cmds[i];
-            auto it = actuators.find(cmd.name);
-            if (it != actuators.end())
-                it->second->setTarget(cmd.val);
+            for (size_t j = 0; j < count; j++)
+            {
+                if (cmd.name == actuators[j]->name)
+                {
+                    actuators[j]->setTarget(cmd.val);
+                    break;
+                }
+            }
         }
     }
 
     String serializeTelemetry() const
     {
         String out;
-        const size_t count = actuators.size();
-        out.reserve(3 + (count * JointTelemetry::serializedLengthEstimate()) + count);
+        out.reserve(3 + (count * JointTelemetry::serializedLengthEstimate()) + count); // 'JT ' + data + separators
         out += "JT ";
-        size_t i = 0;
-        for (auto &entry : actuators)
+        for (size_t i = 0; i < count; i++)
         {
-            entry.second->getTelemetry(entry.first.c_str()).appendTo(out);
+            actuators[i]->getTelemetry(actuators[i]->name).appendTo(out);
             if (i + 1 < count)
                 out += ';';
-            i++;
         }
         return out;
     }
 
 private:
-    std::map<String, LinearActuator *> actuators;
+    LinearActuator **actuators;
+    size_t count;
 };

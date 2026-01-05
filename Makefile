@@ -64,7 +64,7 @@ ifeq ($(OS),Windows_NT)
 		$$b = $$match.matching_boards[0]; \
 		$$fqbn = $$b.fqbn; \
 		$$port = $$match.port.address; \
-		$$inc = Join-Path (Resolve-Path '$(CURDIR)') 'firmware/Task2_SixAxis/interfaces'; \
+		$$inc = Join-Path (Resolve-Path '$(CURDIR)') 'firmware/Task2_SixAxis/Six_Axis_Controller'; \
 		if (-not $$fqbn -or -not $$port) { Write-Error 'Could not determine FQBN/port from arduino-cli board list.'; exit 1 } ; \
 		Write-Host ('Using FQBN=' + $$fqbn + ' PORT=' + $$port); \
 		Write-Host 'Compiling...'; \
