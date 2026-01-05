@@ -111,14 +111,14 @@ def calibration_wizard():
 
                 # 4. EXECUTE PULSE (The Safety Feature)
                 # Move for only 0.2 seconds, then STOP.
-                mcu.send_command(cmds_by_joint)
+                mcu.send_command_joints(cmds_by_joint)
                 time.sleep(5)
-                mcu.send_command(neutral_cmds)  # Hard Stop
+                mcu.send_command_joints_hold()
                 time.sleep(0.1)  # Wait for comms to update pot value
 
     except KeyboardInterrupt:
         print("\nStopping...")
-        mcu.send_command(neutral_cmds)
+        mcu.send_command_joints_hold()
     finally:
         mcu.close()
 

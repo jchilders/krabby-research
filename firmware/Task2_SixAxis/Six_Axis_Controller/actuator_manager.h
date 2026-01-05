@@ -255,6 +255,16 @@ public:
         }
     }
 
+    void holdAll()
+    {
+        // Set target to current normalized position for every actuator.
+        for (size_t i = 0; i < count; i++)
+        {
+            float cur = actuators[i]->getPos();
+            actuators[i]->setTarget(cur);
+        }
+    }
+
     String serializeTelemetry() const
     {
         String out;

@@ -58,10 +58,11 @@ void setup()
 
 void loop()
 {
-    // 1. PARSE INPUT COMMANDS AND APPLY COMMAND TARGETS: "T <name> <val> [<name> <val>...]"
+    // 1. PARSE INPUT COMMANDS AND APPLY COMMAND TARGETS: "T <name> <val> [<name> <val>...]" or "H" to hold all joints.
     if (Serial.available())
     {
-        if (Serial.read() == 'T')
+        char cmdType = Serial.read();
+        if (cmdType == 'T')
         {
             String payload = Serial.readStringUntil('\n');
             size_t cmdCount = parseCommands(payload, cmdBuf, CMD_BUF_SIZE);
@@ -69,6 +70,13 @@ void loop()
             {
                 actuatorManager.applyCommands(cmdBuf, cmdCount);
             }
+        }
+        else if (cmdType == 'H')
+        {
+            // Hold all joints at current positions
+            actuatorManager.holdAll();
+            // Drain the rest of the line
+            Serial.readStringUntil('\n');
         }
         // TODO: Should we care about other commands? Or just ignore them?
     }
