@@ -42,6 +42,7 @@ class KrabbyMCUSDK:
         self.thread = None
         self._last_debug_log_ts = 0.0
         self.last_error = None
+        self.last_cmd: Dict[str, Optional[float]] = {key: None for key in JOINT_ORDER}
 
     def connect(self):
         try:
@@ -107,7 +108,7 @@ class KrabbyMCUSDK:
             for key in JOINT_ORDER:
                 jt = self.joints.get(key)
                 if jt:
-                    parts.append(jt.format_compact())
+                    parts.append(jt.format_compact(self.last_cmd.get(key)))
             if parts:
                 logger.debug("JOINTS %s", ";".join(parts))
             self._last_debug_log_ts = now
@@ -131,9 +132,9 @@ class KrabbyMCUSDK:
             else:
                 val = max(0.0, min(1.0, val))
             seq.append((key, val))
+            self.last_cmd[key] = val
 
-        count = len(seq)
-        parts = ["T", str(count)]
+        parts = ["T"]
         for name, val in seq:
             parts.append(name)
             parts.append(f"{val:.3f}")

@@ -55,8 +55,11 @@ class JointTelemetry:
                 joints.append(jt)
         return joints
 
-    def format_compact(self) -> str:
+    def format_compact(self, target: Optional[float] = None) -> str:
+        pos_part = f"{self.pos:.3f}"
+        if target is not None:
+            pos_part = f"{pos_part}/{target:.3f}"
         return (
-            f"{self.name}:{self.pos},{self.pot},{self.current},"
+            f"{self.name}:{pos_part},{self.pot},{self.current},"
             f"({self.en[0]},{self.en[1]}),({self.pwm[0]},{self.pwm[1]}),{self.saf}"
         )

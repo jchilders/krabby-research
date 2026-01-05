@@ -30,7 +30,7 @@ static inline String nextTok(const String &line, int &idx, int len)
     return line.substring(start, idx);
 }
 
-// Parse "T <name> <val> [<name> <val>...]" into a caller-provided buffer.
+// Parse "<name> <val> [<name> <val>...]" (caller already consumed leading 'T') into a caller-provided buffer.
 // Returns the number of commands parsed.
 inline size_t parseCommands(const String &line, Command *cmds, size_t maxCmds)
 {
@@ -44,13 +44,6 @@ inline size_t parseCommands(const String &line, Command *cmds, size_t maxCmds)
         return 0;
 
     int i = 0;
-    // Expect and skip leading 'T'
-    String tTok = nextTok(line, i, len);
-    if (tTok != "T")
-    {
-        clearCommands(cmds, maxCmds);
-        return 0;
-    }
     size_t idx = 0;
 
     // Parse each <name> <val> pair until buffer full or tokens exhausted.

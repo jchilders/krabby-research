@@ -41,6 +41,7 @@ public:
     // Control state
     int currentPwm = 0;              // Current PWM being applied to motor (-255 to 255)
     int currentTarget = 0;           // Target position (raw ADC)
+    bool hasCommand = false;         // True after first external command applied
     unsigned long lastRampTime = 0;  // Last time PWM ramp was updated, in millis, used along with rampIntervalMs to control ramp timing
 
     LinearActuator(const char *n, int pR, int pL, int eR, int eL, int isPin, int pot)
@@ -75,6 +76,7 @@ public:
         if (val < 0.0)
             val = 0.0;
         currentTarget = minStop + (int)(val * (maxStop - minStop));
+        hasCommand = true;
     }
 
     // Returns normalized position [0.0,1.0], where 0.0 = minStop, 1.0 = maxStop
@@ -86,12 +88,33 @@ public:
     // Returns raw potentiometer reading (0-1023)
     float getRawPos()
     {
-        return analogRead(pinPot);
+        // Sample multiple times to reduce ADC noise; discard first conversion after mux switch.
+        const int n = 6;
+        analogRead(pinPot); // throw away first read to let mux settle
+        int sum = 0;
+        int minVal = 1023;
+        int maxVal = 0;
+        for (int i = 0; i < n; i++)
+        {
+            int v = analogRead(pinPot);
+            sum += v;
+            if (v < minVal)
+                minVal = v;
+            if (v > maxVal)
+                maxVal = v;
+        }
+        // Drop one min and one max to blunt spikes, average the rest.
+        return (sum - minVal - maxVal) / float(n - 2);
     }
 
     // Drives actuator to desired position using controlConfig; call frequently in main loop
     void update()
     {
+        if (!hasCommand)
+        {
+            stop();
+            return;
+        }
         int error = currentTarget - getRawPos();
         if (abs(error) < controlConfig.pwmErrDeadband)
             error = 0;
