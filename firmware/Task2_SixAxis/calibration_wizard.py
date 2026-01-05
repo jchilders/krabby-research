@@ -26,32 +26,29 @@ def calibration_wizard():
         return
 
     joint_key_by_choice = {
-        '1': ("Hip Left", "LHL"),
-        '2': ("Knee Left", "LKL"),
-        '3': ("Hip Right", "RHL"),
-        '4': ("Knee Right", "RKL"),
+        '1': ("Hip Yaw Left", "LHY"),
+        '2': ("Hip Yaw Right", "RHY"),
+        '3': ("Hip Left", "LHL"),
+        '4': ("Knee Left", "LKL"),
+        '5': ("Hip Right", "RHL"),
+        '6': ("Knee Right", "RKL"),
     }
     send_order = ["LHY", "RHY", "LHL", "LKL", "RHL", "RKL"]
 
-    neutral_cmds = {
-        "LHY": 0.0,
-        "RHY": 0.0,
-        "LHL": 0.5,
-        "LKL": 0.5,
-        "RHL": 0.5,
-        "RKL": 0.5,
-    }
+    neutral_cmds = {key: 0.5 for key in send_order}
 
     try:
         while True:
             print("\n--- Select Joint to Calibrate ---")
-            print("1: Hip Left")
-            print("2: Knee Left")
-            print("3: Hip Right")
-            print("4: Knee Right")
+            print("1: Hip Yaw Left")
+            print("2: Hip Yaw Right")
+            print("3: Hip Left")
+            print("4: Knee Left")
+            print("5: Hip Right")
+            print("6: Knee Right")
             print("q: Quit")
 
-            choice = get_user_input("Select (1-4): ")
+            choice = get_user_input("Select (1-6): ")
             if choice == 'q':
                 break
             if choice not in joint_key_by_choice:
@@ -81,23 +78,13 @@ def calibration_wizard():
 
                 # 3. Determine Pulse Direction
                 # Build default commands keyed by joint name
-                cmds_by_joint = {
-                    "LHY": 0.0,
-                    "RHY": 0.0,
-                    "LHL": 0.5,
-                    "LKL": 0.5,
-                    "RHL": 0.5,
-                    "RKL": 0.5,
-                }
+                cmds_by_joint = {key: 0.5 for key in send_order}
                 # Clamp from latest telemetry where available
                 for key in send_order:
                     jt_current = mcu.joints.get(key)
                     if not jt_current:
                         continue
-                    if key in ("LHY", "RHY"):
-                        cmds_by_joint[key] = max(-1.0, min(1.0, jt_current.pos))
-                    else:
-                        cmds_by_joint[key] = max(0.0, min(1.0, jt_current.pos))
+                    cmds_by_joint[key] = max(0.0, min(1.0, jt_current.pos))
 
                 # Target gets 0.7 (extend) or 0.3 (retract)
                 if cmd in ['+', 'w']:

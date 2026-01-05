@@ -67,3 +67,21 @@ This firmware drives a full leg pair (Left & Right) consisting of **6 Motors**:
     ```bash
     python3 krabby_mcu_six_axis.py --debug
     ```
+
+## 3. TODOs
+
+1. Right now the POT values jump around alot when POT is not moving, causing motor to activate sometimes. Needs to use a running average and discard bad values.
+2. Right now the IS values jump around alot (not as much as POT), put running average on this as well.
+3. Add an auto calibration that will retract/extend each joint one at a time until it sees no more movement on POT for ~0.25s or whatever is appropriate, then it stores that as the end maxStop value, and make this value persist between reboots. Repeat in this order to safely calibrate all limbs:
+Yaw Left -> Yaw Right, move to center
+Retract Hip (so hip is upright)
+Extend Knee (so leg is pointing in the air)
+Retract Knee (so leg is pointing to the ground)
+Extend Hip (so leg is tucked under body)
+Move all three to 50 (standard 'standing' pose on left side)
+Repeat on Right side
+
+4. Tweak manual calibration so you can just hold the +/- and it will move the selected joint, and releasing will stop moving, instead of right now it is awkward to have to do +, then enter, +, enter.
+5. Move pins so the limbs are in order on the arduino (i.e can we move 45/46 to D0/1 or 12/13?). Also order all pins so its LHY,LHL,LKL,RHY,RHL,RKL for PWM, IS, POT, and EN
+6. Review my changes to see if there any improvements or mistakes
+7. I think once these are done Task2 is fully completed.  
