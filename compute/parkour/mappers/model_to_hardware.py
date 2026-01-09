@@ -15,24 +15,22 @@ from hal.client.data_structures.hardware import JointCommand
 
 logger = logging.getLogger(__name__)
 
-# Krabby has 18 DOF (joints)
-KRABBY_JOINT_COUNT = 18
+# Real Krabby has 18 DOF (joints), but we use 12 for now to match model/environment
+KRABBY_JOINT_COUNT = 12
 
 
 class ParkourLocomotionToHWMapper:
     """Maps Parkour model output to hardware format.
     
     Converts model navigation/locomotion output to hardware joint positions.
-    May be 1:1 mapping once training is complete.
+    This is a 1:1 mapping since model and hardware both use 12 DOF.
     
     Zero-copy guarantees:
-    - If model outputs 18 joints directly, can use view
-    - If model outputs different dimension, requires transformation (copy)
+    - If model outputs 12 joints directly, can use view
     - Timestamp is always copied (scalar)
     
-    Note: The model typically outputs ACTION_DIM joints (usually 12 for quadruped).
-    Hardware has 18 joints, so this mapper handles the conversion. Once training
-    is complete with 18-joint output, this may become a 1:1 mapping.
+    Note: The model outputs ACTION_DIM joints (12 for quadruped).
+    Hardware has 12 joints, so this is a 1:1 mapping.
     """
     
     def __init__(self, model_action_dim: int = 12):
@@ -84,7 +82,7 @@ class ParkourLocomotionToHWMapper:
         if action_array.dtype != np.float32:
             action_array = action_array.astype(np.float32)
         
-        # Map to 18 joints
+        # Map to 12 joints (1:1 mapping)
         joint_positions = self._map_to_krabby_joints(action_array)
         
         return JointCommand(
@@ -94,20 +92,20 @@ class ParkourLocomotionToHWMapper:
         )
     
     def _map_to_krabby_joints(self, model_action: np.ndarray) -> np.ndarray:
-        """Map model action to Krabby 18-joint positions.
+        """Map model action to Krabby 12-joint positions.
         
         Args:
             model_action: Model action array (shape: ACTION_DIM,)
             
         Returns:
-            Joint positions array (shape: 18,)
+            Joint positions array (shape: 12,)
         """
         if len(model_action) != self.model_action_dim:
             raise ValueError(
                 f"Model action dimension {len(model_action)} != expected {self.model_action_dim}"
             )
         
-        # If model outputs 18 joints directly, use as-is (1:1 mapping)
+        # Model outputs 12 joints directly, use as-is (1:1 mapping)
         if self.model_action_dim == KRABBY_JOINT_COUNT:
             # Can use view if compatible, otherwise copy
             if model_action.shape == (KRABBY_JOINT_COUNT,) and model_action.dtype == np.float32:
@@ -119,19 +117,8 @@ class ParkourLocomotionToHWMapper:
             else:
                 return np.asarray(model_action, dtype=np.float32)
         
-        # Otherwise, need to map from model action dim to 18 joints
-        # Placeholder: pad or interpolate to 18 joints
-        # In reality, this would depend on the model architecture and training
-        joint_positions = np.zeros(KRABBY_JOINT_COUNT, dtype=np.float32)
-        
-        # For now, map first ACTION_DIM joints directly, pad rest with zeros
-        # This is a placeholder - actual mapping will depend on model architecture
-        num_to_copy = min(self.model_action_dim, KRABBY_JOINT_COUNT)
-        joint_positions[:num_to_copy] = model_action[:num_to_copy]
-        
-        logger.debug(
-            f"Mapped {self.model_action_dim} model joints to {KRABBY_JOINT_COUNT} Krabby joints"
+        # Should not reach here if model_action_dim == 12 and KRABBY_JOINT_COUNT == 12
+        raise ValueError(
+            f"Model action dimension {self.model_action_dim} != hardware joint count {KRABBY_JOINT_COUNT}"
         )
-        
-        return joint_positions
 

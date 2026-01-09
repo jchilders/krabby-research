@@ -178,7 +178,7 @@ def test_jetson_hal_server_joint_command_application(hal_server_config, hal_clie
     assert received is not None, "Server did not receive command"
     # get_joint_command now returns JointCommand instance
     assert hasattr(received, 'joint_positions')
-    # Should receive the mapped joint positions (18 DOF)
+    # Should receive the mapped joint positions (12 DOF)
     np.testing.assert_array_equal(received.joint_positions, joint_positions.joint_positions)
 
     hal_client.close()

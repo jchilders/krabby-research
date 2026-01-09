@@ -166,16 +166,18 @@ class HalClient:
                         logger.error(f"[ZMQ RECV] observation: {error_msg}")
                         raise ValueError(error_msg)
 
-                    # Expected format: [topic, schema_version, ...hw_obs_parts (6 parts)]
-                    # Total: 2 + 6 = 8 parts
+                    # Expected format: [topic, schema_version, ...hw_obs_parts]
+                    # hw_obs_parts format:
+                    #   - 12 parts: standard format (metadata + 11 arrays, no optional fields)
+                    #   - 13 parts: extended format (metadata + 12 arrays, includes scan_features OR privileged_latent)
+                    #   - 14 parts: full format (metadata + 13 arrays, includes scan_features + privileged_latent)
+                    # Total message: 2 (topic + schema) + hw_obs_parts
                     # Timestamp is included in hw_obs metadata, no separate timestamp part
-                    if len(parts) != 8:
-                        error_msg = f"Invalid number of parts: {len(parts)}, expected 8"
+                    hw_obs_parts = parts[2:]
+                    if len(hw_obs_parts) not in (12, 13, 14):
+                        error_msg = f"Invalid number of hw_obs parts: {len(hw_obs_parts)}, expected 12 (standard), 13 (extended), or 14 (full). Total message parts: {len(parts)}"
                         logger.error(f"[ZMQ RECV] observation: {error_msg}")
                         raise ValueError(error_msg)
-
-                    # Extract hardware observation parts (parts 2-7)
-                    hw_obs_parts = parts[2:8]
 
                     # Deserialize hardware observation - let errors propagate
                     # Timestamp is already in the hw_obs metadata

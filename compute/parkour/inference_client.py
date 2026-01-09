@@ -9,20 +9,31 @@ Designed to run in a separate thread from the simulation/HAL server.
 """
 
 import logging
+import os
+import sys
 import threading
 import time
 from typing import Optional
 
 import numpy as np
+import torch
 import zmq
 
 from hal.client.client import HalClient
 from hal.client.config import HalClientConfig
 from hal.client.observation.types import NavigationCommand
+from hal.client.data_structures.hardware import JointCommand
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
 from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
 from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
-from compute.parkour.parkour_types import ParkourModelIO
+from compute.parkour.parkour_types import NUM_PROP, NUM_PRIV_EXPLICIT, NUM_SCAN, ParkourModelIO, TeacherObservation
+
+from hal.client.config import HalClientConfig
+from hal.client.observation.types import NavigationCommand
+from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
+from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
+from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
+from compute.parkour.parkour_types import NUM_PROP, NUM_PRIV_EXPLICIT, NUM_SCAN, ParkourModelIO
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +57,7 @@ class ParkourInferenceClient(HalClient):
         control_rate: float = 100.0,
         device: str = "cuda",
         transport_context: Optional[zmq.Context] = None,
+        use_env_observations: bool = False,
     ):
         """Initialize Parkour inference client.
 
@@ -55,6 +67,8 @@ class ParkourInferenceClient(HalClient):
             control_rate: Control loop rate in Hz
             device: Device for inference ("cuda" or "cpu")
             transport_context: ZMQ context for inproc connections (required for inproc)
+            use_env_observations: If True, use environment observations directly instead of hardware observations
+                                 (for comparison testing - bypasses hardware observation mapping)
         """
         # Initialize base HalClient
         super().__init__(hal_client_config, context=transport_context)
@@ -62,12 +76,18 @@ class ParkourInferenceClient(HalClient):
         self.model_weights = model_weights
         self.control_rate = control_rate
         self.device = device
+        self.use_env_observations = use_env_observations
 
         self.model: Optional[ParkourPolicyModel] = None
         self.nav_cmd: Optional[NavigationCommand] = None
         self._inference_initialized = False
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        # Initialize mapper immediately (maintains history buffer across steps)
+        # Only used if use_env_observations is False
+        self._mapper = HWObservationsToParkourMapper() if not use_env_observations else None
+        # Store environment reference for direct observation access (if use_env_observations is True)
+        self._env = None
 
     def initialize(self) -> None:
         """Initialize HAL client and policy model."""
@@ -86,6 +106,77 @@ class ParkourInferenceClient(HalClient):
 
         self._inference_initialized = True
         logger.info("ParkourInferenceClient initialized")
+    
+    def process_env_observation(self, obs_tensor: torch.Tensor, extras: Optional[dict] = None) -> Optional["JointCommand"]:
+        """Process environment observation directly (for comparison testing).
+        
+        This method bypasses HAL polling and hardware observation mapping,
+        using environment observations directly. This ensures identical
+        observation processing as the play script.
+        
+        Args:
+            obs_tensor: Observation tensor from environment (shape: [num_envs, obs_dim])
+            extras: Optional extras dict from environment
+        
+        Returns:
+            JointCommand if inference succeeded
+            
+        Raises:
+            RuntimeError: If inference fails
+        """
+        if not self._inference_initialized:
+            raise RuntimeError("Inference client not initialized. Call initialize() first.")
+        if self.model is None:
+            raise RuntimeError("Policy model not loaded. Call initialize() first.")
+        
+        # Ensure tensor is on correct device
+        obs_tensor = obs_tensor.to(self.device)
+        
+        # Apply estimator to fill privileged explicit features (same as play script)
+        # NOTE: Do NOT normalize before estimator - normalization happens inside policy function
+        # The play script applies estimator to raw observations, then policy normalizes internally
+        # Get estimator from policy model
+        estimator = self.model.runner.get_estimator_inference_policy(device=str(self.device))
+        
+        # Apply estimator to proprioceptive features (first num_prop dimensions)
+        with torch.inference_mode():
+            estimator_output = estimator(obs_tensor[:, :NUM_PROP])
+        
+        # Update privileged explicit features in the observation tensor (in-place, matching play script)
+        priv_explicit_start = NUM_PROP + NUM_SCAN
+        priv_explicit_end = priv_explicit_start + NUM_PRIV_EXPLICIT
+        obs_tensor[:, priv_explicit_start:priv_explicit_end] = estimator_output
+        
+        # Build model IO from observation tensor
+        model_obs = TeacherObservation(
+            observation=obs_tensor[0].cpu().numpy(),  # Take first env, convert to numpy
+            timestamp_ns=time.time_ns(),
+            schema_version="1.0",
+        )
+        model_io = ParkourModelIO(
+            timestamp_ns=model_obs.timestamp_ns,
+            schema_version=model_obs.schema_version,
+            nav_cmd=NavigationCommand.create_now(),
+            observation=model_obs,
+        )
+        
+        # Run inference
+        inference_result = self.model.inference(model_io)
+        
+        if not inference_result.success:
+            raise RuntimeError(f"Inference failed: {inference_result.error_message}")
+        
+        # Map inference response to hardware joint positions
+        hw_mapper = ParkourLocomotionToHWMapper(model_action_dim=self.model.action_dim)
+        joint_cmd = hw_mapper.map(inference_result, observation_timestamp_ns=model_obs.timestamp_ns)
+        
+        # Update timestamp to current time
+        joint_cmd.timestamp_ns = time.time_ns()
+        
+        # Send command via HAL (using inherited method)
+        self.send_joint_command(joint_cmd)
+        
+        return joint_cmd
 
     def _inference_step(self) -> bool:
         """Execute one inference step.
@@ -95,15 +186,19 @@ class ParkourInferenceClient(HalClient):
         Returns:
             True if step succeeded, False otherwise
         """
-        if not self._initialized or not self._inference_initialized or self.model is None:
-            raise RuntimeError("Client not initialized. Call initialize() first.")
+        if not self._initialized:
+            raise RuntimeError("Base HAL client not initialized. Call initialize() first.")
+        if not self._inference_initialized:
+            raise RuntimeError("Inference client not initialized. Call initialize() first.")
+        if self.model is None:
+            raise RuntimeError("Policy model not loaded. Call initialize() first.")
 
-        # Poll HAL for latest hardware observation (using inherited method)
+        # Poll HAL for hardware observation (same path for simulation and hardware)
         hw_obs = self.poll(timeout_ms=1)
 
         if hw_obs is None:
             # No new observation available - this is normal, just continue
-            return True
+            return None  # Return None to indicate no observation received
 
         # Capture current timestamp for synchronization
         current_timestamp_ns = time.time_ns()
@@ -113,8 +208,31 @@ class ParkourInferenceClient(HalClient):
         nav_cmd = NavigationCommand.create_now()
         nav_cmd.timestamp_ns = current_timestamp_ns
         
-        mapper = HWObservationsToParkourMapper()
-        model_obs = mapper.map(hw_obs, nav_cmd=nav_cmd)
+        # Use persistent mapper (maintains history buffer across steps)
+        # Mapper is initialized in initialize(), so it should always be available here
+        if self._mapper is None:
+            raise RuntimeError("Mapper not initialized. Cannot process hardware observations.")
+        model_obs = self._mapper.map(hw_obs, nav_cmd=nav_cmd)
+        
+        # Apply estimator to fill privileged explicit features
+        # The estimator always overwrites privileged explicit features from physics with estimated values
+        # Formula: obs[num_prop+num_scan:num_prop+num_scan+num_priv_explicit] = estimator(obs[:num_prop])
+        
+        # Get estimator from policy model
+        estimator = self.model.runner.get_estimator_inference_policy(device=str(self.device))
+        
+        # Convert observation to torch tensor for estimator
+        obs_tensor = torch.from_numpy(model_obs.observation).unsqueeze(0).to(self.device)
+        
+        # Apply estimator to proprioceptive features (first num_prop dimensions)
+        with torch.inference_mode():
+            estimator_output = estimator(obs_tensor[:, :NUM_PROP])
+        
+        # Update privileged explicit features in the observation array
+        # Position: num_prop + num_scan to num_prop + num_scan + num_priv_explicit
+        priv_explicit_start = NUM_PROP + NUM_SCAN
+        priv_explicit_end = priv_explicit_start + NUM_PRIV_EXPLICIT
+        model_obs.observation[priv_explicit_start:priv_explicit_end] = estimator_output.cpu().numpy()[0]
         
         # Update both observation and nav_cmd timestamps to use the captured timestamp
         # This ensures synchronization between observation and nav_cmd
@@ -130,27 +248,28 @@ class ParkourInferenceClient(HalClient):
         )
 
         # Run inference
-        try:
-            inference_result = self.model.inference(model_io)
+        inference_result = self.model.inference(model_io)
 
-            if not inference_result.success:
-                logger.error(f"Inference failed: {inference_result.error_message}")
-                return False
-
-            # Map inference response to hardware joint positions
-            hw_mapper = ParkourLocomotionToHWMapper(model_action_dim=self.model.action_dim)
-            joint_cmd = hw_mapper.map(inference_result, observation_timestamp_ns=hw_obs.timestamp_ns)
-            
-            # Update timestamp to current time
-            joint_cmd.timestamp_ns = time.time_ns()
-
-            # Send command back to HAL server (using inherited method)
-            self.put_joint_command(joint_cmd)
-            return True
-
-        except Exception as e:
-            logger.error(f"Inference step failed: {e}", exc_info=True)
+        if not inference_result.success:
+            logger.error(f"Inference failed: {inference_result.error_message}")
             return False
+
+        # Map inference response to hardware joint positions
+        hw_mapper = ParkourLocomotionToHWMapper(model_action_dim=self.model.action_dim)
+        joint_cmd = hw_mapper.map(inference_result, observation_timestamp_ns=hw_obs.timestamp_ns)
+        
+        # Update timestamp to current time
+        joint_cmd.timestamp_ns = time.time_ns()
+
+        # Send command back to HAL server (using inherited method)
+        self.put_joint_command(joint_cmd)
+        
+        # Update mapper with previous action for next step
+        # Extract action from joint command (first 12 joints)
+        action_array = joint_cmd.joint_positions[:12]
+        self._mapper.set_previous_action(action_array)
+        
+        return True
 
     def _run_loop(self, running_flag) -> None:
         """Run inference loop at control rate.
@@ -158,18 +277,33 @@ class ParkourInferenceClient(HalClient):
         Args:
             running_flag: Callable that returns True while loop should continue
         """
-        if not self._initialized or not self._inference_initialized:
-            raise RuntimeError("Client not initialized. Call initialize() first.")
-
+        import threading
         logger.info(f"Starting inference loop at {self.control_rate} Hz")
         period_s = 1.0 / self.control_rate
 
-        while running_flag():
+        iteration = 0
+        observations_received = 0
+        commands_sent = 0
+        no_observation_count = 0
+        while self._running and running_flag():
+            iteration += 1
             loop_start_ns = time.time_ns()
 
             # Execute inference step
-            if not self._inference_step():
+            step_result = self._inference_step()
+            if step_result is True:
+                # Track successful steps (when observation was received and processed)
+                observations_received += 1
+                commands_sent += 1
+                no_observation_count = 0  # Reset counter on success
+            elif step_result is False:
                 logger.warning("Inference step failed, continuing...")
+            else:
+                # step_result is None means no observation available
+                no_observation_count += 1
+                # Log warning if we haven't received observations for a while
+                if no_observation_count == 100:
+                    logger.warning(f"Inference loop: No observations received for {no_observation_count} iterations. Is HAL server publishing?")
 
             # Timing control
             loop_end_ns = time.time_ns()
@@ -178,14 +312,7 @@ class ParkourInferenceClient(HalClient):
 
             if sleep_time > 0:
                 time.sleep(sleep_time)
-            else:
-                if loop_duration_s > period_s * 1.1:
-                    logger.warning(
-                        f"Inference unable to keep up! "
-                        f"Frame time: {loop_duration_s*1000:.2f}ms exceeds "
-                        f"target: {period_s*1000:.2f}ms"
-                    )
-
+        
         logger.info("Inference loop stopped")
 
     def start_thread(self, running_flag=lambda: True) -> None:
@@ -194,8 +321,13 @@ class ParkourInferenceClient(HalClient):
         Args:
             running_flag: Callable that returns True while loop should continue
         """
-        if not self._initialized or not self._inference_initialized:
-            raise RuntimeError("Client not initialized. Call initialize() first.")
+        # Detailed verification before starting thread
+        if not self._initialized:
+            raise RuntimeError("Base HAL client not initialized. Call initialize() first.")
+        if not self._inference_initialized:
+            raise RuntimeError("Inference client not initialized. Call initialize() first.")
+        if self.model is None:
+            raise RuntimeError("Policy model not loaded. Call initialize() first.")
 
         if self._running:
             logger.warning("Inference thread already running")

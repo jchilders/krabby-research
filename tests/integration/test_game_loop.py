@@ -198,6 +198,9 @@ def test_game_loop_basic_functionality(hal_setup):
     test_runner.run()
 
     stop_thread.join(timeout=1.0)
+    
+    # Stop publishing before test ends to ensure threads are cleaned up
+    server.stop_publishing()
 
     # Verify inference test ran
     assert test_runner.frame_count > 0
@@ -239,8 +242,8 @@ def test_game_loop_observation_tensor_correctness(hal_setup):
     assert received_hw_obs is not None, "Hardware observation should be received"
     
     # Verify hardware observation structure
-    assert received_hw_obs.joint_positions.shape == (18,), \
-        f"Joint positions shape should be (18,), got {received_hw_obs.joint_positions.shape}"
+    assert received_hw_obs.joint_positions.shape == (12,), \
+        f"Joint positions shape should be (12,), got {received_hw_obs.joint_positions.shape}"
     assert received_hw_obs.joint_positions.dtype == np.float32, \
         f"Joint positions dtype should be float32, got {received_hw_obs.joint_positions.dtype}"
     

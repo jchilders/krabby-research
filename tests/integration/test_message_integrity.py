@@ -412,7 +412,7 @@ def test_timestamp_synchronization_realistic_sequence():
     # First observation: arrives quickly, should be synchronized
     time.sleep(0.001)  # 1ms delay
     hw_obs_1 = HardwareObservations(
-        joint_positions=np.zeros(18, dtype=np.float32),
+        joint_positions=np.zeros(12, dtype=np.float32),
         rgb_camera_1=np.zeros((480, 640, 3), dtype=np.uint8),
         rgb_camera_2=np.zeros((480, 640, 3), dtype=np.uint8),
         depth_map=np.zeros((480, 640), dtype=np.float32),
@@ -420,6 +420,12 @@ def test_timestamp_synchronization_realistic_sequence():
         camera_height=480,
         camera_width=640,
         timestamp_ns=time.time_ns(),  # Fresh timestamp
+        base_ang_vel_b=np.zeros(3, dtype=np.float32),
+        base_lin_vel_b=np.zeros(3, dtype=np.float32),
+        base_quat_w=np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+        joint_velocities=np.zeros(12, dtype=np.float32),
+        contact_forces=np.zeros(5, dtype=np.float32),
+        previous_action=np.zeros(12, dtype=np.float32),
     )
     
     parkour_obs_1 = mapper.map(hw_obs_1, nav_cmd=nav_cmd)
@@ -442,7 +448,7 @@ def test_timestamp_synchronization_realistic_sequence():
     for i in range(5):
         time.sleep(0.01)  # 10ms between observations (100Hz)
         hw_obs = HardwareObservations(
-            joint_positions=np.zeros(18, dtype=np.float32),
+            joint_positions=np.zeros(12, dtype=np.float32),
             rgb_camera_1=np.zeros((480, 640, 3), dtype=np.uint8),
             rgb_camera_2=np.zeros((480, 640, 3), dtype=np.uint8),
             depth_map=np.zeros((480, 640), dtype=np.float32),
@@ -450,6 +456,12 @@ def test_timestamp_synchronization_realistic_sequence():
             camera_height=480,
             camera_width=640,
             timestamp_ns=time.time_ns(),  # Fresh timestamp each time
+            base_ang_vel_b=np.zeros(3, dtype=np.float32),
+            base_lin_vel_b=np.zeros(3, dtype=np.float32),
+            base_quat_w=np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+            joint_velocities=np.zeros(12, dtype=np.float32),
+            contact_forces=np.zeros(5, dtype=np.float32),
+            previous_action=np.zeros(12, dtype=np.float32),
         )
         
         parkour_obs = mapper.map(hw_obs, nav_cmd=nav_cmd)  # Still using same nav_cmd

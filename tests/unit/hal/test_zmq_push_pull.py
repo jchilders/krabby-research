@@ -370,9 +370,9 @@ def test_zmq_push_pull_mimic_hal_test_structure():
     time.sleep(0.01)
     
     # Mimic: Send command as JointCommand (multipart message)
-    command = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)  # 18 DOF
+    command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
     command_parts = [
-        b'{"joint_positions": {"shape": [18], "dtype": "float32"}, "timestamp_ns": 0}',
+        b'{"joint_positions": {"shape": [12], "dtype": "float32"}, "timestamp_ns": 0}',
         command.tobytes()
     ]
     pusher.send_multipart(command_parts)  # Blocking send
@@ -429,9 +429,9 @@ def test_zmq_push_pull_mimic_hal_with_shared_context():
     server_thread.start()
     time.sleep(0.05)
     
-    command = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)
+    command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
     command_parts = [
-        b'{"joint_positions": {"shape": [18], "dtype": "float32"}, "timestamp_ns": 0}',
+        b'{"joint_positions": {"shape": [12], "dtype": "float32"}, "timestamp_ns": 0}',
         command.tobytes()
     ]
     pusher.send_multipart(command_parts)  # Blocking send
@@ -486,7 +486,7 @@ def test_zmq_push_pull_mimic_hal_exact_timing():
     time.sleep(0.01)
     
     # Send command (exact same as HAL test)
-    command = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)  # 18 DOF
+    command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
     command_parts = [
         json.dumps({
             "joint_positions": {"shape": list(command.shape), "dtype": str(command.dtype)},
@@ -560,7 +560,7 @@ def test_zmq_push_pull_mimic_hal_with_class_wrapper():
     
     # Send using actual JointCommand format
     from hal.client.data_structures.hardware import JointCommand
-    command = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)
+    command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
     joint_cmd = JointCommand(
         joint_positions=command,
         timestamp_ns=time.time_ns(),
@@ -648,7 +648,7 @@ def test_zmq_push_pull_mimic_hal_with_context_manager():
         
         # Send using actual JointCommand
         from hal.client.data_structures.hardware import JointCommand
-        command = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)
+        command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
         joint_cmd = JointCommand(
             joint_positions=command,
             timestamp_ns=time.time_ns(),
@@ -728,7 +728,7 @@ def test_zmq_push_pull_mimic_hal_exact_sequence():
         
         # Send command as JointCommand (multipart message)
         from hal.client.data_structures.hardware import JointCommand
-        command = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)  # 18 DOF
+        command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
         joint_cmd = JointCommand(
             joint_positions=command,
             timestamp_ns=time.time_ns(),
@@ -821,7 +821,7 @@ def test_zmq_push_pull_mimic_hal_with_observation_socket():
         
         # Send using actual JointCommand
         from hal.client.data_structures.hardware import JointCommand
-        command = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)
+        command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
         joint_cmd = JointCommand(
             joint_positions=command,
             timestamp_ns=time.time_ns(),

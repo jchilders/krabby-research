@@ -490,6 +490,11 @@ def run_test_inference_latency_requirement():
             command_bind="inproc://test_cmd_latency",
         )
         
+        # Reset environment before creating HAL server to ensure deterministic initial state
+        logger.info("[STEP] Resetting environment...")
+        env.reset()
+        logger.info("[STEP] Environment reset complete")
+        
         # Create and initialize HAL server with real environment
         logger.info("[STEP] Creating and initializing HAL server...")
         server = IsaacSimHalServer(hal_server_config, env=env)
@@ -523,67 +528,93 @@ def run_test_inference_latency_requirement():
         inference_client.initialize()
         logger.info("[STEP] ParkourInferenceClient initialized")
         
-        # Start inference client thread (will run for entire test)
+        # Start inference client thread (matching main.py)
         logger.info("[STEP] Starting inference client thread...")
         measurement_running = True
         inference_client.start_thread(running_flag=lambda: measurement_running)
-        time.sleep(0.05)  # Give thread time to start
         
-        # Do a warmup run first to initialize CUDA kernels, JIT compilation, etc.
-        logger.info("[STEP] Running warmup inference (to initialize CUDA kernels)...")
+        # Run main loop in main thread (matching main.py sequence)
+        logger.info(f"[STEP] Starting main loop at 100 Hz (matching main.py sequence)...")
+        period_s = 1.0 / 100.0
+        timestep = 0
         
-        # Send warmup observations explicitly
-        server.set_observation()
-        time.sleep(0.01)  # Allow warmup to process
-        
-        # Sleep to allow warmup responses to be processed
-        time.sleep(0.1)
-        
-        # Bleed out any warmup responses
-        logger.info("[STEP] Clearing warmup responses...")
-        start_time = time.time()
-        while time.time() - start_time < 0.2:  # Collect warmup responses for up to 0.2 seconds
-            command = server.get_joint_command(timeout_ms=10)
-            if command is None:
-                break
-        
-        # Start publishing thread for actual test
-        publish_stop_flag = threading.Event()
-        
-        def publish_loop():
-            """Background loop that publishes observations from Isaac Sim at a fixed rate."""
-            period = 1.0 / 100.0  # 100 Hz
-            while not publish_stop_flag.is_set():
-                server.set_observation()
-                time.sleep(period)
-        
-        logger.info("[STEP] Starting observation publishing loop...")
-        publish_thread = threading.Thread(target=publish_loop, daemon=True)
-        publish_thread.start()
-        
-        # Run for 0.5 seconds to collect latency samples (after warmup)
-        logger.info("[STEP] Running inference test for 0.5 seconds (measuring latency)...")
-        time.sleep(0.5)
-        measurement_running = False
-        inference_client.stop_thread()
-        
-        # Collect round-trip latencies from individual commands (includes ZMQ message hops)
+        # Latency tracking: measure time from set_observation() to apply_command() returning
         latencies: list[float] = []
-        start_time = time.time()
-        while time.time() - start_time < 0.1:  # Poll for 0.1 seconds to collect any remaining commands
-            command = server.get_joint_command(timeout_ms=10)
-            if command is not None:
-                # Calculate round-trip latency: command timestamp - observation timestamp
-                round_trip_latency_ns = command.timestamp_ns - command.observation_timestamp_ns
-                round_trip_latency_ms = round_trip_latency_ns / 1e6
-                latencies.append(round_trip_latency_ms)
-            if command is None:
-                break
         
-        # Stop publishing BEFORE analyzing results
-        logger.info("[STEP] Stopping threads...")
-        publish_stop_flag.set()
-        publish_thread.join(timeout=1.0)
+        # Publish initial observation from environment (matching main.py)
+        # First inference is for warmup only - don't capture latency
+        logger.info("[STEP] Publishing initial observation (warmup inference)...")
+        server.set_observation()
+        
+        # Wait for first action from inference client (matching main.py)
+        # apply_command() will loop internally until command received or timeout (throws if timeout)
+        logger.info("[STEP] Waiting for first action from inference client (warmup)...")
+        first_action = server.apply_command()
+        # Skip latency measurement for first inference (warmup)
+        
+        if first_action.shape[0] == 1 and env.unwrapped.num_envs > 1:
+            first_action = first_action.expand(env.unwrapped.num_envs, -1)
+        
+        # Apply first action and step environment (matching main.py)
+        obs_dict, _, _, _, extras = env.step(first_action)
+        
+        # Track first applied action for next observation's previous_action
+        action_np = first_action[0].cpu().numpy() if first_action.ndim == 2 else first_action.cpu().numpy()
+        if len(action_np) >= 12:
+            server._last_applied_action[:] = action_np[:12].astype(np.float32)
+        else:
+            server._last_applied_action[:len(action_np)] = action_np.astype(np.float32)
+        
+        timestep += 1
+        
+        # Main loop: step simulation and publish observations (matching main.py)
+        # Run for 0.5 seconds (50 cycles at 100 Hz) to collect latency samples
+        logger.info("[STEP] Running main loop for 0.5 seconds to collect latency samples...")
+        target_cycles = 50
+        start_time = time.time()
+        
+        for cycle in range(target_cycles):
+            loop_start_ns = time.time_ns()
+            
+            # Publish hardware observations via HAL (matching main.py)
+            # Measure latency: time from set_observation() start to apply_command() returning
+            obs_timestamp_ns = time.time_ns()
+            server.set_observation()
+            
+            # Wait for action corresponding to the observation just published (matching main.py)
+            action = server.apply_command()
+            action_latency_ns = time.time_ns() - obs_timestamp_ns
+            action_latency_ms = action_latency_ns / 1e6
+            latencies.append(action_latency_ms)
+            
+            if action.shape[0] == 1 and env.unwrapped.num_envs > 1:
+                action = action.expand(env.unwrapped.num_envs, -1)
+            
+            # Step environment (matching main.py)
+            obs_dict, _, _, _, extras = env.step(action)
+            
+            # Track last applied action for next observation's previous_action
+            action_np = action[0].cpu().numpy() if action.ndim == 2 else action.cpu().numpy()
+            if len(action_np) >= 12:
+                server._last_applied_action[:] = action_np[:12].astype(np.float32)
+            else:
+                server._last_applied_action[:len(action_np)] = action_np.astype(np.float32)
+            
+            timestep += 1
+            
+            # Timing control (matching main.py)
+            loop_end_ns = time.time_ns()
+            loop_duration_s = (loop_end_ns - loop_start_ns) / 1e9
+            sleep_time = max(0.0, period_s - loop_duration_s)
+            
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+        
+        elapsed_total = time.time() - start_time
+        logger.info(f"[STEP] Completed {target_cycles} cycles in {elapsed_total:.2f} seconds")
+        
+        # Stop inference client thread
+        logger.info("[STEP] Stopping inference client thread...")
         measurement_running = False
         inference_client.stop_thread()
         inference_client.close()
@@ -602,7 +633,7 @@ def run_test_inference_latency_requirement():
         except Exception as e:
             logger.warning(f"[WARNING] Error closing environment: {e}")
         
-        # Analyze latencies AFTER cleanup
+        # Analyze latencies
         if len(latencies) == 0:
             raise AssertionError("No latency samples collected - inference may not have run")
         
@@ -650,20 +681,14 @@ def run_test_inference_latency_requirement():
         traceback.print_exc()
         # Ensure cleanup even on failure - stop threads and close resources
         try:
-            if 'game_loop_running' in locals():
-                game_loop_running = False
-                logger.info("[STEP] Game loop stopped (cleanup on error)")
-        except:
-            pass
-        try:
-            if 'publish_stop_flag' in locals():
-                publish_stop_flag.set()
-            if 'publish_thread' in locals():
-                publish_thread.join(timeout=0.5)
+            if 'measurement_running' in locals():
+                measurement_running = False
+                logger.info("[STEP] Inference client stopped (cleanup on error)")
         except:
             pass
         try:
             if 'inference_client' in locals():
+                inference_client.stop_thread()
                 inference_client.close()
                 logger.info("[STEP] Inference client closed (cleanup on error)")
         except:

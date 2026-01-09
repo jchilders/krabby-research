@@ -130,8 +130,8 @@ class MockHalServer(HalServerBase):
             HardwareObservations with synthetic data
         """
         # Generate synthetic data
-        # Joint positions: 18 DOF, simple sine wave pattern
-        joint_positions = np.sin(np.arange(18) * 0.1 + self.tick_count * 0.01).astype(np.float32)
+        # Joint positions: 12 DOF, simple sine wave pattern
+        joint_positions = np.sin(np.arange(12) * 0.1 + self.tick_count * 0.01).astype(np.float32)
         
         # RGB camera images: simple gradient pattern
         rgb_camera_1 = np.zeros((self.camera_height, self.camera_width, 3), dtype=np.uint8)

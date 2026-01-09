@@ -182,7 +182,7 @@ def test_hal_client_put_joint_command():
     server_thread.join(timeout=2.0)
     received = received_command[0]
     assert received is not None
-    # Should receive the mapped joint positions (18 DOF)
+    # Should receive the mapped joint positions (12 DOF)
     # received is a JointCommand object, access joint_positions attribute
     np.testing.assert_array_equal(received.joint_positions, joint_positions.joint_positions)
 

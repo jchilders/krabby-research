@@ -165,16 +165,11 @@ class HalServerBase:
 
         # Send multipart message: [topic, schema_version, ...hw_obs_parts]
         # Timestamp is already included in hw_obs metadata
-        try:
-            self.observation_socket.send_multipart(
-                [topic, schema_version] + hw_obs_parts, zmq.NOBLOCK
-            )
-            if self._debug_enabled:
-                logger.debug(f"[ZMQ SEND] observation: message sent successfully")
-        except zmq.Again:
-            if self._debug_enabled:
-                logger.debug("[ZMQ SEND] observation: buffer full (HWM reached), message dropped")
-            logger.warning("Observation socket buffer full (HWM reached), message dropped")
+        self.observation_socket.send_multipart(
+            [topic, schema_version] + hw_obs_parts, zmq.NOBLOCK
+        )
+        if self._debug_enabled:
+            logger.debug(f"[ZMQ SEND] observation: message sent successfully, timestamp={hw_obs.timestamp_ns}")
 
     def get_joint_command(self, timeout_ms: int = 100) -> Optional["JointCommand"]:
         """Get latest joint command from clients.

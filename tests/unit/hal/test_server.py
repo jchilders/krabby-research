@@ -74,14 +74,14 @@ def test_set_observation():
         parts = subscriber.recv_multipart(zmq.NOBLOCK)
         
         # Validate message format
-        assert len(parts) == 8, f"Expected 8 parts (topic + schema + 6 hw_obs), got {len(parts)}"
+        assert len(parts) == 14, f"Expected 14 parts (topic + schema + 12 hw_obs), got {len(parts)}"
         assert parts[0] == b"observation", f"Expected topic 'observation', got {parts[0]}"
         assert parts[1] == b"1.0", f"Expected schema '1.0', got {parts[1]}"
         
         # Extract hw_obs parts (skip topic and schema)
-        # Parts: [0:topic, 1:schema, 2:metadata, 3-7:arrays]
+        # Parts: [0:topic, 1:schema, 2:metadata, 3-13:arrays]
         hw_obs_parts = parts[2:]  # Skip topic and schema
-        assert len(hw_obs_parts) == 6, f"Expected 6 parts for hw_obs (metadata + 5 arrays), got {len(hw_obs_parts)}"
+        assert len(hw_obs_parts) == 12, f"Expected 12 parts for hw_obs (metadata + 11 arrays), got {len(hw_obs_parts)}"
         
         # Deserialize and validate
         received_hw_obs = HardwareObservations.from_bytes(hw_obs_parts)
@@ -126,7 +126,7 @@ def test_get_joint_command():
 
         # Send command as JointCommand (multipart message)
         from hal.client.data_structures.hardware import JointCommand
-        command = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)  # 18 DOF
+        command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
         joint_cmd = JointCommand(
             joint_positions=command,
             timestamp_ns=time.time_ns(),

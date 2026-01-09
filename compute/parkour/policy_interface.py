@@ -25,7 +25,7 @@ import yaml
 from rsl_rl.env import VecEnv
 
 from compute.parkour.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
-from compute.parkour.parkour_types import InferenceResponse, ParkourModelIO
+from compute.parkour.parkour_types import InferenceResponse, OBS_DIM, ParkourModelIO
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class ModelWeights:
     checkpoint_path: str
     config_path: Optional[str] = None
     action_dim: int = 12
-    obs_dim: int = 753  # num_prop(53) + num_scan(132) + num_priv_explicit(9) + num_priv_latent(29) + history(530)
+    obs_dim: int = OBS_DIM
 
 
 class MinimalVecEnvStub(VecEnv):

@@ -24,10 +24,11 @@ fast-simplification
 pytest>=7.0.0
 
 # Reinforcement learning library
-# Pin to 2.3.1 to match parkour code's import paths (rsl_rl.modules.normalizer)
-# Newer versions moved EmpiricalNormalization from rsl_rl.networks.normalization
-# to rsl_rl.modules.normalizer, causing import errors
-rsl-rl-lib==2.3.1
+# Note: Isaac Lab installs rsl-rl-lib 3.1.2 as a dependency, which overrides this
+# Version 3.1.2 has EmpiricalNormalization in rsl_rl.networks
+# Version 2.3.1 has EmpiricalNormalization in rsl_rl.modules
+# This pin is for documentation - actual version will be 3.1.2 from Isaac Lab
+rsl-rl-lib==3.1.2
 
 # Note: scipy is NOT installed here - Isaac Sim has its own bundled scipy
 # Installing scipy in the venv causes conflicts with Isaac Sim's bundled scipy

@@ -30,7 +30,7 @@ def create_dummy_hw_obs(
         timestamp_ns = time.time_ns()
     
     return HardwareObservations(
-        joint_positions=np.zeros(18, dtype=np.float32),
+        joint_positions=np.zeros(12, dtype=np.float32),
         rgb_camera_1=np.zeros((camera_height, camera_width, 3), dtype=np.uint8),
         rgb_camera_2=np.zeros((camera_height, camera_width, 3), dtype=np.uint8),
         depth_map=np.zeros((camera_height, camera_width), dtype=np.float32),
@@ -38,6 +38,12 @@ def create_dummy_hw_obs(
         camera_height=camera_height,
         camera_width=camera_width,
         timestamp_ns=timestamp_ns,
+        base_ang_vel_b=np.zeros(3, dtype=np.float32),
+        base_lin_vel_b=np.zeros(3, dtype=np.float32),
+        base_quat_w=np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),  # Identity quaternion
+        joint_velocities=np.zeros(12, dtype=np.float32),
+        contact_forces=np.zeros(5, dtype=np.float32),
+        previous_action=np.zeros(12, dtype=np.float32),
     )
 
 
@@ -56,7 +62,7 @@ def create_dummy_joint_positions(
         timestamp_ns = time.time_ns()
     
     return JointCommand(
-        joint_positions=np.zeros(18, dtype=np.float32),
+        joint_positions=np.zeros(12, dtype=np.float32),
         timestamp_ns=timestamp_ns,
         observation_timestamp_ns=timestamp_ns,
     )

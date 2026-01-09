@@ -139,7 +139,7 @@ def main():
                 # Try to get joint command from inference client (non-blocking)
                 # This command was generated from observations we published in a PREVIOUS iteration
                 # We'll apply it in THIS iteration
-                command = hal_server.get_joint_command(timeout_ms=1)
+                command = hal_server.get_joint_command(timeout_ms=1)  # 1ms timeout for non-blocking check
                 if command is not None:
                     # Apply the command to actuators
                     hal_server.apply_command(command)

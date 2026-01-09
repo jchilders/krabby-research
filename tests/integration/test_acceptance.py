@@ -147,8 +147,8 @@ class ProtoHalServer(HalServerBase):
         hw_obs = create_dummy_hw_obs(
             camera_height=480, camera_width=640
         )
-        # Copy joint positions from obs_array (first 18 elements if available)
-        num_joints = min(18, len(obs_array))
+        # Copy joint positions from obs_array (first 12 elements if available)
+        num_joints = min(12, len(obs_array))
         hw_obs.joint_positions[:num_joints] = obs_array[:num_joints].astype(np.float32)
         
         # Publish via base class
@@ -260,6 +260,9 @@ def test_100_tick_execution_with_proto_hal(proto_hal_setup):
     test_runner.run()
 
     stop_thread.join(timeout=2.0)
+    
+    # Stop publishing before test ends to ensure threads are cleaned up
+    server.stop_publishing()
 
     # Verify we got approximately 100 ticks (allowing for timing variations)
     # At 100 Hz for 1.1 seconds, we expect ~100-110 ticks

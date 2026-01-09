@@ -207,6 +207,8 @@ class JetsonHalServer(HalServerBase):
         - Joint positions from state vector (echoed from last command)
         - Depth maps from ZED camera
         - RGB images if available from ZED camera
+        
+        Base class will loop until observation is published or throw if client isn't consuming.
         """
         # Validate camera is initialized (required for policy operation)
         if self.zed_camera is None:
@@ -215,95 +217,86 @@ class JetsonHalServer(HalServerBase):
                 "Camera must be initialized via initialize_camera() before calling set_observation()."
             )
         
-        try:
-            # Build state vector (required for publishing observations)
-            state_vector = self._build_state_vector()
-            if state_vector is None:
-                raise RuntimeError(
-                    "Failed to build state vector. "
-                    "State vector is required for publishing observations to the inference client."
-                )
-
-            # Extract components from state vector
-            # Format: base_pos(3), base_quat(4), base_lin_vel(3), base_ang_vel(3),
-            #         joint_pos(ACTION_DIM), joint_vel(ACTION_DIM)
-            # Total: 3 + 4 + 3 + 3 = 13 before joint positions
-            joint_pos = state_vector[13:13+self._action_dim]
-            
-            # Pad or truncate joint positions to 18 DOF (Krabby has 18 joints)
-            # HardwareObservations expects exactly 18 joint positions
-            joint_positions = np.zeros(18, dtype=np.float32)
-            num_joints = min(len(joint_pos), 18)
-            joint_positions[:num_joints] = joint_pos[:num_joints].astype(np.float32)
-
-            # Get camera data from ZED camera
-            # ZED camera provides depth features for model input, but we also need
-            # raw depth maps and RGB images for HardwareObservations
-            camera_height, camera_width = self.camera_resolution[1], self.camera_resolution[0]
-            
-            # Initialize with placeholder values
-            rgb_camera_1 = np.zeros((camera_height, camera_width, 3), dtype=np.uint8)
-            rgb_camera_2 = np.zeros((camera_height, camera_width, 3), dtype=np.uint8)
-            depth_map = np.zeros((camera_height, camera_width), dtype=np.float32)
-            confidence_map = np.ones((camera_height, camera_width), dtype=np.float32)
-            
-            if self.zed_camera is not None:
-                # Try to get raw depth map if available
-                if hasattr(self.zed_camera, 'get_depth_map'):
-                    depth_map_data = self.zed_camera.get_depth_map()
-                    if depth_map_data is not None:
-                        # Ensure it's a numpy array
-                        if not isinstance(depth_map_data, np.ndarray):
-                            depth_map_data = np.array(depth_map_data)
-                        
-                        # Resize if needed to match camera resolution
-                        if depth_map_data.shape != (camera_height, camera_width):
-                            zoom_factors = (camera_height / depth_map_data.shape[0], 
-                                          camera_width / depth_map_data.shape[1])
-                            depth_map = zoom(depth_map_data, zoom_factors, order=1).astype(np.float32)
-                        else:
-                            depth_map = depth_map_data.astype(np.float32)
-                
-                # Try to get RGB images if available
-                if hasattr(self.zed_camera, 'get_rgb_images'):
-                    rgb_images = self.zed_camera.get_rgb_images()
-                    if rgb_images is not None and len(rgb_images) >= 2:
-                        # Ensure RGB images are uint8
-                        rgb_camera_1 = np.array(rgb_images[0], dtype=np.uint8)
-                        rgb_camera_2 = np.array(rgb_images[1], dtype=np.uint8)
-                        
-                        # Resize if needed
-                        if rgb_camera_1.shape[:2] != (camera_height, camera_width):
-                            zoom_factors = (camera_height / rgb_camera_1.shape[0], 
-                                          camera_width / rgb_camera_1.shape[1], 1)
-                            rgb_camera_1 = zoom(rgb_camera_1, zoom_factors, order=1).astype(np.uint8)
-                        if rgb_camera_2.shape[:2] != (camera_height, camera_width):
-                            zoom_factors = (camera_height / rgb_camera_2.shape[0], 
-                                          camera_width / rgb_camera_2.shape[1], 1)
-                            rgb_camera_2 = zoom(rgb_camera_2, zoom_factors, order=1).astype(np.uint8)
-
-            # Create hardware observation
-            hw_obs = HardwareObservations(
-                joint_positions=joint_positions,
-                rgb_camera_1=rgb_camera_1,
-                rgb_camera_2=rgb_camera_2,
-                depth_map=depth_map,
-                confidence_map=confidence_map,
-                camera_height=camera_height,
-                camera_width=camera_width,
-                timestamp_ns=time.time_ns(),
+        # Build state vector (required for publishing observations)
+        state_vector = self._build_state_vector()
+        if state_vector is None:
+            raise RuntimeError(
+                "Failed to build state vector. "
+                "State vector is required for publishing observations to the inference client."
             )
 
-            # Publish hardware observation via base-class publisher
-            super().set_observation(hw_obs)
+        # Extract components from state vector
+        # Format: base_pos(3), base_quat(4), base_lin_vel(3), base_ang_vel(3),
+        #         joint_pos(ACTION_DIM), joint_vel(ACTION_DIM)
+        # Total: 3 + 4 + 3 + 3 = 13 before joint positions
+        joint_pos = state_vector[13:13+self._action_dim]
+        
+        # Pad or truncate joint positions to 12 DOF (Krabby has 12 joints)
+        # HardwareObservations expects exactly 12 joint positions
+        joint_positions = np.zeros(12, dtype=np.float32)
+        num_joints = min(len(joint_pos), 12)
+        joint_positions[:num_joints] = joint_pos[:num_joints].astype(np.float32)
 
-        except Exception as e:
-            logger.error(
-                f"Error publishing telemetry: {e}. "
-                f"Camera initialized: {self.zed_camera is not None}, "
-                f"State source: {self.state_source is not None}",
-                exc_info=True
-            )
+        # Get camera data from ZED camera
+        # ZED camera provides depth features for model input, but we also need
+        # raw depth maps and RGB images for HardwareObservations
+        camera_height, camera_width = self.camera_resolution[1], self.camera_resolution[0]
+        
+        # Initialize with placeholder values
+        rgb_camera_1 = np.zeros((camera_height, camera_width, 3), dtype=np.uint8)
+        rgb_camera_2 = np.zeros((camera_height, camera_width, 3), dtype=np.uint8)
+        depth_map = np.zeros((camera_height, camera_width), dtype=np.float32)
+        confidence_map = np.ones((camera_height, camera_width), dtype=np.float32)
+        
+        if self.zed_camera is not None:
+            # Try to get raw depth map if available
+            if hasattr(self.zed_camera, 'get_depth_map'):
+                depth_map_data = self.zed_camera.get_depth_map()
+                if depth_map_data is not None:
+                    # Ensure it's a numpy array
+                    if not isinstance(depth_map_data, np.ndarray):
+                        depth_map_data = np.array(depth_map_data)
+                    
+                    # Resize if needed to match camera resolution
+                    if depth_map_data.shape != (camera_height, camera_width):
+                        zoom_factors = (camera_height / depth_map_data.shape[0], 
+                                      camera_width / depth_map_data.shape[1])
+                        depth_map = zoom(depth_map_data, zoom_factors, order=1).astype(np.float32)
+                    else:
+                        depth_map = depth_map_data.astype(np.float32)
+            
+            # Try to get RGB images if available
+            if hasattr(self.zed_camera, 'get_rgb_images'):
+                rgb_images = self.zed_camera.get_rgb_images()
+                if rgb_images is not None and len(rgb_images) >= 2:
+                    # Ensure RGB images are uint8
+                    rgb_camera_1 = np.array(rgb_images[0], dtype=np.uint8)
+                    rgb_camera_2 = np.array(rgb_images[1], dtype=np.uint8)
+                    
+                    # Resize if needed
+                    if rgb_camera_1.shape[:2] != (camera_height, camera_width):
+                        zoom_factors = (camera_height / rgb_camera_1.shape[0], 
+                                      camera_width / rgb_camera_1.shape[1], 1)
+                        rgb_camera_1 = zoom(rgb_camera_1, zoom_factors, order=1).astype(np.uint8)
+                    if rgb_camera_2.shape[:2] != (camera_height, camera_width):
+                        zoom_factors = (camera_height / rgb_camera_2.shape[0], 
+                                      camera_width / rgb_camera_2.shape[1], 1)
+                        rgb_camera_2 = zoom(rgb_camera_2, zoom_factors, order=1).astype(np.uint8)
+
+        # Create hardware observation
+        hw_obs = HardwareObservations(
+            joint_positions=joint_positions,
+            rgb_camera_1=rgb_camera_1,
+            rgb_camera_2=rgb_camera_2,
+            depth_map=depth_map,
+            confidence_map=confidence_map,
+            camera_height=camera_height,
+            camera_width=camera_width,
+            timestamp_ns=time.time_ns(),
+        )
+
+        # Publish hardware observation via base-class publisher
+        super().set_observation(hw_obs)
 
     def apply_command(self, command: JointCommand) -> None:
         """Apply joint command to actuators.

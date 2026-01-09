@@ -157,7 +157,7 @@ isaaclab-cache:
 
 
 .PHONY: build-test-image
-build-test-image: build-wheels
+build-test-image: build-wheels isaaclab-cache
 	@echo "Building x86 test Docker image..."
 	docker build -f images/testing/x86/Dockerfile -t krabby-testing-x86:latest .
 	@echo "Test image built: krabby-testing-x86:latest"

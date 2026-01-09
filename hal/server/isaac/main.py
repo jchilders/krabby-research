@@ -8,7 +8,7 @@ For standalone server mode (client runs separately), use TCP endpoints instead.
 
 Simulates a robot environment (default: single robot), gathers observations,
 runs inference, and applies commands to control the robot. Supports visual display
-and video recording like play.py.
+and video recording.
 """
 
 import argparse
@@ -18,13 +18,11 @@ import signal
 import sys
 import time
 
+import numpy as np
 import torch
 from isaaclab.app import AppLauncher
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+
 logger = logging.getLogger(__name__)
 
 
@@ -80,7 +78,7 @@ def main():
         "--num_envs",
         type=int,
         default=16,
-        help="Number of parallel environments to simulate (default: 16, matching play.py)",
+        help="Number of parallel environments to simulate (default: 16)",
     )
     parser.add_argument(
         "--video",
@@ -138,14 +136,12 @@ def main():
     # The window may not exist immediately after AppLauncher starts
     import omni.appwindow
     import time
-    logger.info("Waiting for app window to be created...")
     max_wait_time = 5.0
     wait_interval = 0.1
     elapsed = 0.0
     while elapsed < max_wait_time:
         app_window = omni.appwindow.get_default_app_window()
         if app_window is not None:
-            logger.info("App window created successfully")
             break
         time.sleep(wait_interval)
         elapsed += wait_interval
@@ -166,10 +162,8 @@ def main():
     
     # Import packages to register gym environments
     # This must happen before parse_env_cfg is called
-    logger.info("Importing packages to register gym environments...")
     import isaaclab_tasks  # noqa: F401
     import parkour_tasks  # noqa: F401
-    logger.info("Packages imported successfully")
 
     from hal.client.config import HalClientConfig
     from hal.server import HalServerConfig
@@ -193,168 +187,164 @@ def main():
     parkour_client = None
     env = None
 
-    try:
-        # Parse environment configuration
-        # Note: parse_env_cfg() will import parkour_tasks internally, which triggers
-        # gym registration, but we bypass gym.make() and use direct instantiation instead
-        env_cfg = parse_env_cfg(
-            args.task,
-            device=args.device,  # Use AppLauncher's device for environment
-            num_envs=args.num_envs,
-            use_fabric=not args.disable_fabric,
-        )
+    # Parse environment configuration
+    # Note: parse_env_cfg() will import parkour_tasks internally, which triggers
+    # gym registration, but we bypass gym.make() and use direct instantiation instead
+    env_cfg = parse_env_cfg(
+        args.task,
+        device=args.device,  # Use AppLauncher's device for environment
+        num_envs=args.num_envs,
+        use_fabric=not args.disable_fabric,
+    )
 
-        # Determine render mode based on video flag
-        # For visual display, use None (default window rendering)
-        # For video recording, use "rgb_array" 
-        render_mode = "rgb_array" if args.video else None
+    # Determine render mode based on video flag
+    # For visual display, use None (default window rendering)
+    # For video recording, use "rgb_array" 
+    render_mode = "rgb_array" if args.video else None
+    
+    # Create environment using gym.make() to ensure proper configuration
+    # This ensures all gym environment registration and configuration is properly applied
+    import gymnasium as gym
+    env = gym.make(args.task, cfg=env_cfg, render_mode=render_mode)
+    
+    logger.info(f"Created IsaacSim environment: {args.task} with {env.unwrapped.num_envs} parallel environments (render_mode={render_mode})")
+
+    # Reset environment before model loading
+    env.reset()
+
+    # Create HAL server config
+    hal_server_config = HalServerConfig(
+        observation_bind=args.observation_bind,
+        command_bind=args.command_bind,
+    )
+
+    # Create and initialize HAL server
+    hal_server = IsaacSimHalServer(hal_server_config, env=env)
+    hal_server.initialize()
+    logger.info("HAL server initialized")
+
+    # Get transport context for inproc connections
+    transport_context = hal_server.get_transport_context()
+
+    # Create HAL client config
+    hal_client_config = HalClientConfig(
+        observation_endpoint=args.observation_bind,
+        command_endpoint=args.command_bind,
+    )
+
+    # Create model weights configuration
+    model_weights = ModelWeights(
+        checkpoint_path=args.checkpoint,
+        action_dim=args.action_dim,
+        obs_dim=args.obs_dim,
+    )
+
+    # Create parkour inference client
+    parkour_client = ParkourInferenceClient(
+        hal_client_config=hal_client_config,
+        model_weights=model_weights,
+        control_rate=args.control_rate,
+        device=args.inference_device,
+        transport_context=transport_context,
+    )
+    # Initialize inference client first (creates model)
+    parkour_client.initialize()
+    logger.info("Parkour inference client initialized")
+
+    # Start inference client in separate thread
+    parkour_client.start_thread(running_flag=lambda: running)
+
+    logger.info(f"Starting integrated loop at {args.control_rate} Hz")
+    period_s = 1.0 / args.control_rate
+    
+    # Get environment step dt for real-time mode
+    dt = env.unwrapped.step_dt
+    timestep = 0
+
+    # Publish initial observation from environment
+    # set_observation() extracts hardware observations from Isaac Sim environment
+    hal_server.set_observation()
+
+    # Wait for first action from inference client (for the initial observation)
+    # apply_command() will loop internally until command received or timeout (throws if timeout)
+    # Use longer timeout for initial action
+    first_action = hal_server.apply_command()
+    if first_action.shape[0] == 1 and args.num_envs > 1:
+        first_action = first_action.expand(args.num_envs, -1)
+    
+    # Apply first action and step environment
+    obs_dict, _, _, _, extras = env.step(first_action)
+    
+    # Track first applied action for next observation's previous_action
+    action_np = first_action[0].cpu().numpy() if first_action.ndim == 2 else first_action.cpu().numpy()
+    if len(action_np) >= 12:
+        hal_server._last_applied_action[:] = action_np[:12].astype(np.float32)
+    else:
+        hal_server._last_applied_action[:len(action_np)] = action_np.astype(np.float32)
+    
+    timestep += 1
+
+    # Main loop: step simulation and publish observations
+    while running and simulation_app.is_running():
+        loop_start_ns = time.time_ns()
+
+        # Normal execution path: Publish hardware observations via HAL
+        # set_observation() extracts hardware observations from Isaac Sim environment
+        hal_server.set_observation()
         
-        # Create environment using gym.make() to ensure proper configuration
-        # This ensures all gym environment registration and configuration is properly applied
-        import gymnasium as gym
-        env = gym.make(args.task, cfg=env_cfg, render_mode=render_mode)
+        # Wait for action corresponding to the observation just published (synchronous matching)
+        # apply_command() will loop internally until command received or timeout (throws if timeout)
+        action = hal_server.apply_command()
+        if action.shape[0] == 1 and args.num_envs > 1:
+            action = action.expand(args.num_envs, -1)
+
+        # Step environment
+        # Note: env.step() increments episode_length_buf BEFORE computing observations
+        # This matches play script behavior where env.step() returns observations
+        obs_dict, _, _, _, extras = env.step(action)
         
-        logger.info(f"Created IsaacSim environment: {args.task} with {env.unwrapped.num_envs} parallel environments (render_mode={render_mode})")
+        # Track last applied action for next observation's previous_action
+        # Extract first 12 joints (action_dim) from action tensor
+        action_np = action[0].cpu().numpy() if action.ndim == 2 else action.cpu().numpy()
+        if len(action_np) >= 12:
+            hal_server._last_applied_action[:] = action_np[:12].astype(np.float32)
+        else:
+            logger.warning(f"Action length {len(action_np)} < 12, only tracking {len(action_np)} values")
+            hal_server._last_applied_action[:len(action_np)] = action_np.astype(np.float32)
 
-        # Create HAL server config
-        hal_server_config = HalServerConfig(
-            observation_bind=args.observation_bind,
-            command_bind=args.command_bind,
-        )
-
-        # Create and initialize HAL server
-        hal_server = IsaacSimHalServer(hal_server_config, env=env)
-        hal_server.initialize()
-        logger.info("HAL server initialized")
-
-        # Get transport context for inproc connections
-        transport_context = hal_server.get_transport_context()
-
-        # Create HAL client config
-        hal_client_config = HalClientConfig(
-            observation_endpoint=args.observation_bind,
-            command_endpoint=args.command_bind,
-        )
-
-        # Create model weights configuration
-        model_weights = ModelWeights(
-            checkpoint_path=args.checkpoint,
-            action_dim=args.action_dim,
-            obs_dim=args.obs_dim,
-        )
-
-        # Create parkour inference client
-        parkour_client = ParkourInferenceClient(
-            hal_client_config=hal_client_config,
-            model_weights=model_weights,
-            control_rate=args.control_rate,
-            device=args.inference_device,
-            transport_context=transport_context,
-        )
-        parkour_client.initialize()
-        logger.info("Parkour inference client initialized")
-
-        # Start inference client in separate thread
-        parkour_client.start_thread(running_flag=lambda: running)
-
-        logger.info(f"Starting integrated loop at {args.control_rate} Hz")
-        period_s = 1.0 / args.control_rate
+        timestep += 1
         
-        # Get environment step dt for real-time mode
-        dt = env.unwrapped.step_dt
-        timestep = 0
+        # Handle video recording limit
+        if args.video:
+            if timestep >= args.video_length:
+                logger.info(f"Reached video length limit ({args.video_length} steps), stopping...")
+                break
+        
+        # Timing control
+        if args.real_time:
+            # Real-time mode: sleep based on environment step dt
+            loop_end_ns = time.time_ns()
+            loop_duration_s = (loop_end_ns - loop_start_ns) / 1e9
+            sleep_time = dt - loop_duration_s
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+        else:
+            # Fixed rate mode: sleep based on control rate
+            loop_end_ns = time.time_ns()
+            loop_duration_s = (loop_end_ns - loop_start_ns) / 1e9
+            sleep_time = max(0.0, period_s - loop_duration_s)
 
-        # Reset environment before starting the loop (required by gymnasium)
-        logger.info("Resetting environment...")
-        env.reset()
-        logger.info("Environment reset complete")
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
-        # Initialize action to zero (default pose) for first iteration
-        # We'll update this with commands from inference client
-        action = torch.zeros((args.num_envs, args.action_dim), device=env.unwrapped.device, dtype=torch.float32)
-
-        # Main loop: step simulation and publish observations
-        try:
-            while running and simulation_app.is_running():
-                loop_start_ns = time.time_ns()
-
-                # Step IsaacSim environment with action
-                # This generates new observations internally
-                # env.step() requires an action, so we always step with whatever action we have
-                env.step(action)
-
-                # Publish observations from the step we just performed
-                # The inference client thread will process these observations and send commands
-                # for use in the NEXT iteration
-                hal_server.set_observation()
-
-                # Try to get joint command from inference client (non-blocking)
-                # This command was generated from observations we published in a PREVIOUS iteration
-                # We'll use it in the NEXT iteration
-                command = hal_server.get_joint_command(timeout_ms=1)
-                if command is not None:
-                    # Convert command to action tensor
-                    # JointCommand has 18 joints, but environment expects action_dim (12) actions
-                    # The mapper puts the first action_dim actions into the first action_dim joint positions
-                    command_array = command.joint_positions[:args.action_dim]  # Take first action_dim joints
-                    action = torch.from_numpy(command_array).to(device=env.unwrapped.device, dtype=torch.float32)
-                    # Add batch dimension if needed (env.step expects (num_envs, action_dim))
-                    if action.ndim == 1:
-                        action = action.unsqueeze(0)  # Shape: (1, ACTION_DIM)
-                    # Expand to match num_envs if needed
-                    if action.shape[0] == 1 and args.num_envs > 1:
-                        action = action.expand(args.num_envs, -1)
-                # If no new command available, reuse the last action to maintain current pose
-                # This allows the simulation to continue while inference processes observations
-                # The action variable already contains the last used action, so no change needed
-
-                # Handle video recording limit
-                if args.video:
-                    timestep += 1
-                    if timestep >= args.video_length:
-                        logger.info(f"Reached video length limit ({args.video_length} steps), stopping...")
-                        break
-
-                # Timing control
-                if args.real_time:
-                    # Real-time mode: sleep based on environment step dt
-                    loop_end_ns = time.time_ns()
-                    loop_duration_s = (loop_end_ns - loop_start_ns) / 1e9
-                    sleep_time = dt - loop_duration_s
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
-                else:
-                    # Fixed rate mode: sleep based on control rate
-                    loop_end_ns = time.time_ns()
-                    loop_duration_s = (loop_end_ns - loop_start_ns) / 1e9
-                    sleep_time = max(0.0, period_s - loop_duration_s)
-
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
-                    else:
-                        if loop_duration_s > period_s * 1.1:
-                            logger.warning(
-                                f"Simulation unable to keep up! "
-                                f"Frame time: {loop_duration_s*1000:.2f}ms "
-                                f"exceeds target: {period_s*1000:.2f}ms"
-                            )
-
-        except KeyboardInterrupt:
-            logger.info("Interrupted by user")
-
-    except Exception as e:
-        logger.error(f"Failed to run IsaacSim HAL server: {e}", exc_info=True)
-        sys.exit(1)
-
-    finally:
-        # Clean up in reverse order of creation
-        if parkour_client:
-            parkour_client.close()
-        if hal_server:
-            hal_server.close()
-        if env:
-            env.close()
-        simulation_app.close()
+    # Clean up in reverse order of creation
+    if parkour_client:
+        parkour_client.close()
+    if hal_server:
+        hal_server.close()
+    if env:
+        env.close()
+    simulation_app.close()
 
 
 if __name__ == "__main__":
