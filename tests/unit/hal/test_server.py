@@ -126,7 +126,7 @@ def test_get_joint_command():
 
         # Send command as JointCommand (multipart message)
         from hal.client.data_structures.hardware import JointCommand
-        command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
+        command = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)  # 18 DOF (hexapod)
         joint_cmd = JointCommand(
             joint_positions=command,
             timestamp_ns=time.time_ns(),

@@ -56,6 +56,7 @@ def mock_isaac_env():
     env.scene = mock_scene
     env.unwrapped = env  # Make unwrapped point to same object for mock
     env.unwrapped.num_envs = 1  # Mock uses single environment
+    env.device = torch.device("cpu")  # Set device for SDK initialization
     
     env.observation_manager = MagicMock()
     
@@ -209,7 +210,7 @@ def test_isaacsim_hal_server_joint_command_application(mock_isaac_env, hal_serve
     # apply_command() calls get_joint_command(timeout_ms=poll_delay_ms) internally
     def mock_get_joint_command(timeout_ms=10):
         from hal.client.data_structures.hardware import JointCommand
-        command_array = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
+        command_array = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)  # 18 DOF for hexapod
         return JointCommand(
             joint_positions=command_array,
             timestamp_ns=time.time_ns(),
@@ -225,7 +226,7 @@ def test_isaacsim_hal_server_joint_command_application(mock_isaac_env, hal_serve
     # Verify action tensor was returned
     assert action is not None
     assert isinstance(action, torch.Tensor)
-    assert action.shape == (1, 12)  # (num_envs, action_dim)
+    assert action.shape == (1, 18)  # (num_envs, action_dim) - 18 joints for hexapod
 
     hal_client.close()
     hal_server.close()
@@ -414,7 +415,7 @@ def test_isaacsim_hal_server_behavior_matches_baseline(mock_isaac_env, hal_serve
     # apply_command() calls get_joint_command(timeout_ms=poll_delay_ms) internally
     def mock_get_joint_command(timeout_ms=10):
         from hal.client.data_structures.hardware import JointCommand
-        command_array = np.array([0.0] * 12, dtype=np.float32)
+        command_array = np.array([0.0] * 18, dtype=np.float32)  # 18 joints for hexapod
         return JointCommand(
             joint_positions=command_array,
             timestamp_ns=time.time_ns(),
@@ -563,8 +564,9 @@ def test_isaacsim_hal_server_error_handling(mock_isaac_env, hal_server_config):
         hal_server_no_env.set_observation()
 
     # Apply command with no environment:
-    # Likewise, apply_command() now raises a RuntimeError when env is None.
-    with pytest.raises(RuntimeError, match="No environment set"):
+    # apply_command() now raises a RuntimeError when env is None (SDK not initialized).
+    # The error message will be either "No environment set" or "IsaacSimMCUSDK not initialized"
+    with pytest.raises(RuntimeError, match="No environment set|IsaacSimMCUSDK not initialized"):
         hal_server_no_env.apply_command()
 
     hal_server_no_env.close()

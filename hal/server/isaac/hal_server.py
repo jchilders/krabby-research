@@ -7,10 +7,10 @@ from typing import Optional
 import numpy as np
 import torch
 from scipy.ndimage import zoom
-from isaaclab.utils.math import wrap_to_pi, euler_xyz_from_quat
 
 from hal.server import HalServerBase, HalServerConfig
 from hal.client.data_structures.hardware import HardwareObservations, JointCommand
+from hal.server.isaac.isaacsim_mcusdk import IsaacSimMCUSDK
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +49,14 @@ class IsaacSimHalServer(HalServerBase):
         self._last_applied_action = np.zeros(12, dtype=np.float32)
         # Track last published observation to detect duplicates
         self._last_published_obs_vals = None
+        
+        # Initialize IsaacSim MCU SDK for standardized command application
+        # Device will be set when environment is available
+        self._mcusdk: Optional[IsaacSimMCUSDK] = None
 
         if env is not None:
             self._cache_references()
+            self._initialize_mcusdk()
 
     def _cache_references(self) -> None:
         """Cache references to environment components for efficient access.
@@ -129,6 +134,23 @@ class IsaacSimHalServer(HalServerBase):
             )
 
         logger.info("Cached environment references successfully")
+    
+    def _initialize_mcusdk(self) -> None:
+        """Initialize IsaacSim MCU SDK with environment device.
+        
+        This method initializes the SDK after environment references are cached,
+        so we can get the correct device (CPU/CUDA) from the environment.
+        """
+        if self.env is None:
+            return
+        
+        # Get device from unwrapped environment (gym.make() wraps the environment)
+        unwrapped_env = self.env.unwrapped if hasattr(self.env, 'unwrapped') else self.env
+        device = getattr(unwrapped_env, 'device', torch.device("cpu"))
+        
+        # Initialize SDK with environment device
+        self._mcusdk = IsaacSimMCUSDK(device=device)
+        logger.info(f"Initialized IsaacSimMCUSDK with device: {device}")
 
     def set_observation(self) -> None:
         """Set observation from IsaacSim environment as hardware observations.
@@ -412,18 +434,21 @@ class IsaacSimHalServer(HalServerBase):
         """Get joint command from transport layer and convert to action tensor.
         
         Loops until a command is received or timeout is reached.
-        Gets the latest command from the transport layer and converts it to an action
-        tensor that can be passed to env.step(). Does NOT apply the action - env.step()
-        will handle that.
+        Gets the latest command from the transport layer and uses IsaacSimMCUSDK
+        to convert it to an action tensor that can be passed to env.step().
+        Does NOT apply the action - env.step() will handle that.
         
         Returns:
             Action tensor ready to be passed to env.step().
-        
+            
         Raises:
-            RuntimeError: If environment not available or no command received within timeout.
+            RuntimeError: If environment not available, SDK not initialized, or no command received within timeout.
         """
         if self.env is None:
             raise RuntimeError("No environment set, cannot apply command")
+        
+        if self._mcusdk is None:
+            raise RuntimeError("IsaacSimMCUSDK not initialized. Call _initialize_mcusdk() first.")
 
         # Loop until command received or timeout
         timeout_s = 1.0  # 1s timeout
@@ -450,19 +475,13 @@ class IsaacSimHalServer(HalServerBase):
             # No command available, sleep and retry
             time.sleep(poll_delay_s)
 
-        # Extract joint positions array from command
-        command_array = command.joint_positions
-
-        # Convert NumPy array to tensor (zero-copy when array is C-contiguous float32)
-        # The joint_positions array from JointCommand is already
-        # a zero-copy view of the bytes and is C-contiguous float32
-        # Use unwrapped environment to get device (gym.make() wraps the environment)
+        # Get number of environments from unwrapped environment
         unwrapped_env = self.env.unwrapped if hasattr(self.env, 'unwrapped') else self.env
-        action = torch.from_numpy(command_array).to(device=unwrapped_env.device, dtype=torch.float32)
-
-        # Add batch dimension if needed (env.step() expects (num_envs, action_dim))
-        if action.ndim == 1:
-            action = action.unsqueeze(0)  # Shape: (1, ACTION_DIM)
+        num_envs = getattr(unwrapped_env, 'num_envs', 1)
+        
+        # Use standardized SDK to convert command to action tensor
+        # The SDK handles device placement, batch dimensions, and logging
+        action = self._mcusdk.apply_command(command, num_envs=num_envs)
 
         return action
 
