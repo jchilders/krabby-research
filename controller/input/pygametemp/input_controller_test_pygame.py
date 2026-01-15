@@ -244,13 +244,22 @@ class InputController:
         2. Processing controls at fixed rate (50-100 Hz)
         
         Uses pygame for macOS compatibility with Bluetooth controllers.
+        
+        This method checks if pygame is already initialized and only initializes
+        joystick subsystem if needed.
         """
         sleep_time = 1.0 / self._update_rate_hz if self._update_rate_hz > 0 else 0.02
         
-        # Initialize pygame (safe to call multiple times)
+        # Check if pygame is already initialized (may be initialized in main thread on macOS)
+        pygame_was_initialized = pygame.get_init()
+        joystick_was_initialized = pygame.joystick.get_init()
+        
+        # Initialize pygame only if not already initialized
         try:
-            pygame.init()
-            pygame.joystick.init()
+            if not pygame_was_initialized:
+                pygame.init()
+            if not joystick_was_initialized:
+                pygame.joystick.init()
         except Exception as e:
             logger.error(f"Failed to initialize pygame: {e}", exc_info=True)
             self._running = False
@@ -264,7 +273,8 @@ class InputController:
             logger.error("No joystick/gamepad found. Make sure your controller is connected.")
             logger.error("Try running with --list to verify the controller is detected.")
             self._running = False
-            pygame.quit()
+            if not pygame_was_initialized:
+                pygame.quit()
             return
         
         if self._device_id >= pygame.joystick.get_count():
@@ -281,7 +291,8 @@ class InputController:
         except Exception as e:
             logger.error(f"Failed to initialize joystick {self._device_id}: {e}", exc_info=True)
             self._running = False
-            pygame.quit()
+            if not pygame_was_initialized:
+                pygame.quit()
             return
         
         try:
@@ -310,13 +321,14 @@ class InputController:
         except Exception as e:
             logger.error(f"InputController event loop error: {e}", exc_info=True)
         finally:
-            # Clean up pygame
+            # Clean up joystick
             if self._joystick is not None:
                 try:
                     self._joystick.quit()
                 except Exception:
                     pass
-            pygame.quit()
+            if not pygame_was_initialized:
+                pygame.quit()
             self._running = False
     
     def _update_state_pygame(self, joystick: pygame.joystick.Joystick) -> None:
