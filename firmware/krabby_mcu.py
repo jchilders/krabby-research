@@ -229,8 +229,7 @@ if __name__ == "__main__":
                         else:
                             mcu.send_command_jog(joint, 0)
                         time.sleep(0.05)  # Prevent flooding
-
-        except KeyboardInterrupt:g
+        except KeyboardInterrupt:
             mcu.send_command_joints_hold()
         finally:
             mcu.close()
