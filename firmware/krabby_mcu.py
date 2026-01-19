@@ -7,6 +7,8 @@ from typing import Dict, Optional
 from serial.tools import list_ports
 from interfaces.joint_telemetry import JointTelemetry
 
+import keyboard
+
 # --- LOGGING SETUP ---
 logging.basicConfig(
     level=logging.INFO,
@@ -75,6 +77,10 @@ class KrabbyMCUSDK:
                 if line.startswith("JT"):
                     self._parse_joint_line(line)
                     self.last_feedback_ts = time.time()
+                # --- Log Firmware Messages (like Calibration) ---
+                elif "Krabby" in line or "CAL" in line or "Saved" in line:
+                    logger.info(f"[MCU] {line}")
+
             except (serial.SerialException, AttributeError) as e:
                 if self.running:
                     logger.exception("Reader loop error")
@@ -131,6 +137,22 @@ class KrabbyMCUSDK:
 
         logger.info("CMD -> %s", " ".join(parts))
 
+    def send_command_jog(self, joint_name: str, pwm: int):
+        """ Send J<name> <pwm> (-255 to 255) """
+        if not self.ser or not self.ser.is_open:
+            return
+        pwm = max(-255, min(255, int(pwm)))
+        cmd = f"J{joint_name} {pwm}\n"
+        self.ser.write(cmd.encode('utf-8'))
+        # Optional: Uncomment if you want spammy logs for jogging
+        # logger.debug(f"JOG -> {joint_name} {pwm}")
+
+    def send_command_calibrate(self):
+        if not self.ser or not self.ser.is_open:
+            return
+        self.ser.write(b"C\n")
+        logger.info("CMD -> AUTO-CALIBRATE (C)")
+
     def send_command_joints_hold(self):
         """
         Send the 'H' command to hold all joints at their current positions.
@@ -160,32 +182,55 @@ class KrabbyMCUSDK:
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1.0)
 
-# --- MAIN TEST ---
+
 if __name__ == "__main__":
     import sys
     # Enable Debug to see telemetry
-    if "--debug" in sys.argv or True:  # Force debug for calibration visibility
+    if "--debug" in sys.argv:
         logger.setLevel(logging.DEBUG)
 
     mcu = KrabbyMCUSDK()
     if mcu.connect():
         try:
-            logger.info("--- CALIBRATION MODE: Reading Telemetry ---")
-            # Send neutral commands
-            mcu.send_command_joints({
-                "LHY": 0.5,
-                "RHY": 0.5,
-                "LHL": 0.5,
-                "LKL": 0.5,
-                "RHL": 0.5,
-                "RKL": 0.5,
-            })
+            print("\n=== Krabby MCU Task 2 ===")
+            print("1: Send Neutral (0.5)")
+            print("2: AUTO-CALIBRATE (New!)")
+            print("3: Manual Jog Mode (Requires 'keyboard' lib)")
+            print("q: Quit")
 
-            # Loop to print values
-            for _ in range(20):
-                mcu.wait_for_move(0.5)
+            while True:
+                choice = input("\nSelect > ").strip().lower()
 
-        except KeyboardInterrupt:
+                if choice == 'q':
+                    break
+                elif choice == '1':
+                    logger.info("Sending Neutral...")
+                    mcu.send_command_joints({
+                        "LHY": 0.5, "RHY": 0.5,
+                        "LHL": 0.5, "LKL": 0.5,
+                        "RHL": 0.5, "RKL": 0.5,
+                    })
+                elif choice == '2':
+                    print("WARNING: This will move ALL limbs to find limits.")
+                    if input("Confirm (y/n): ") == 'y':
+                        mcu.send_command_calibrate()
+                elif choice == '3':
+                    joint = input("Enter Joint (e.g. LHY): ").upper()
+                    print(f"Holding W/S to move {joint}. ESC to exit.")
+
+                    while True:
+                        if keyboard.is_pressed('esc'):
+                            mcu.send_command_jog(joint, 0)
+                            break
+                        elif keyboard.is_pressed('w'):
+                            mcu.send_command_jog(joint, 255)  # Max speed
+                        elif keyboard.is_pressed('s'):
+                            mcu.send_command_jog(joint, -255)
+                        else:
+                            mcu.send_command_jog(joint, 0)
+                        time.sleep(0.05)  # Prevent flooding
+
+        except KeyboardInterrupt:g
             mcu.send_command_joints_hold()
         finally:
             mcu.close()

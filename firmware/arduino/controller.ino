@@ -4,6 +4,7 @@
  */
 
 #include <Arduino.h>
+#include <EEPROM.h> // Added for calibration persistence
 #include "joint_telemetry.h"
 #include "command.h"
 #include "actuator_manager.h"
@@ -11,23 +12,27 @@
 // ==========================================
 // INSTANTIATION (6 LINEAR ACTUATORS)
 // ==========================================
+// Format: Name, PWM_R, PWM_L, EN_R, EN_L, IS_PIN, POT_PIN
 
-LinearActuator lhy("LHY", 46, 45, 22, 23, A10, A0);
-LinearActuator rhy("RHY", 2, 3, 24, 25, A11, A1);
-LinearActuator lhl("LHL", 4, 5, 26, 27, A12, A2);
-LinearActuator lkl("LKL", 6, 7, 28, 29, A13, A3);
-LinearActuator rhl("RHL", 8, 9, 30, 31, A14, A4);
-LinearActuator rkl("RKL", 10, 11, 32, 33, A15, A5);
+// --- LEFT LEG ---
+LinearActuator lhy("LHY", 2, 3, 22, 23, A6, A0);
+LinearActuator lhl("LHL", 4, 5, 24, 25, A7, A1);
+LinearActuator lkl("LKL", 6, 7, 26, 27, A8, A2);
+
+// --- RIGHT LEG ---
+LinearActuator rhy("RHY", 8, 9, 28, 29, A9, A3);
+LinearActuator rhl("RHL", 10, 11, 30, 31, A10, A4);
+LinearActuator rkl("RKL", 12, 13, 32, 33, A11, A5);
 
 const LinearActuator::ControlConfig ACTUATOR_CONFIG = {
-    5,   // PWM_RAMP_STEP
-    10,  // RAMP_INTERVAL_MS
-    20,  // PWM_DEADBAND
-    10,  // PWM_ERROR_DEADBAND
-    2.0  // Kp
+    5,  // PWM_RAMP_STEP
+    10, // RAMP_INTERVAL_MS
+    20, // PWM_DEADBAND
+    10, // PWM_ERROR_DEADBAND
+    2.0 // Kp
 };
 
-LinearActuator *ACT_LIST[] = {&lhy, &rhy, &lhl, &lkl, &rhl, &rkl};
+LinearActuator *ACT_LIST[] = {&lhy, &lhl, &lkl, &rhy, &rhl, &rkl};
 const size_t ACT_COUNT = sizeof(ACT_LIST) / sizeof(ACT_LIST[0]);
 ActuatorManager actuatorManager(ACT_LIST, ACT_COUNT);
 
@@ -54,16 +59,21 @@ void setup()
     }
 
     actuatorManager.initAll();
+    actuatorManager.loadCalibration();
+
+    Serial.println("Krabby Ready. Send T/J/C/H commands to move joints.");
 }
 
 void loop()
 {
-    // 1. PARSE INPUT COMMANDS AND APPLY COMMAND TARGETS: "T <name> <val> [<name> <val>...]" or "H" to hold all joints.
+    // 1. PARSE INPUT COMMANDS
     if (Serial.available())
     {
-        char cmdType = Serial.read();
-        if (cmdType == 'T')
+        char cmdType = Serial.peek(); // Peek first to decide handler
+
+        if (cmdType == 'T') // Target Command
         {
+            Serial.read(); // Consume 'T'
             String payload = Serial.readStringUntil('\n');
             size_t cmdCount = parseCommands(payload, cmdBuf, CMD_BUF_SIZE);
             if (cmdCount > 0)
@@ -71,14 +81,29 @@ void loop()
                 actuatorManager.applyCommands(cmdBuf, cmdCount);
             }
         }
-        else if (cmdType == 'H')
+        else if (cmdType == 'J') // TODO 4: Manual Jog Command (J <name> <pwm>)
         {
-            // Hold all joints at current positions
+            Serial.read(); // Consume 'J'
+            String name = Serial.readStringUntil(' ');
+            int pwm = Serial.readStringUntil('\n').toInt();
+            actuatorManager.handleJog(name, pwm);
+        }
+        else if (cmdType == 'C') // TODO 3: Trigger Auto-Calibration
+        {
+            Serial.read();                // Consume 'C'
+            Serial.readStringUntil('\n'); // Clear line
+            actuatorManager.startAutoCalibration();
+        }
+        else if (cmdType == 'H') // Hold
+        {
+            Serial.read();
             actuatorManager.holdAll();
-            // Drain the rest of the line
             Serial.readStringUntil('\n');
         }
-        // TODO: Should we care about other commands? Or just ignore them?
+        else
+        {
+            Serial.read(); // Flush junk
+        }
     }
 
     // 2. UPDATE CONTROL LOOPS
