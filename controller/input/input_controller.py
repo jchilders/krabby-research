@@ -1,14 +1,40 @@
-"""InputController singleton for gamepad/joystick input handling."""
+"""InputController singleton for gamepad/joystick input handling using Pygame.
+
+Testing with Pro Controller on macOS:
+-------------------------------------
+1. Ensure your Pro Controller is paired via Bluetooth:
+   - Press and hold the sync button on the Pro Controller until lights flash
+   - On Mac: System Preferences > Bluetooth > Connect to "Pro Controller"
+
+2. Install pygame if not already installed:
+   pip install pygame
+
+3. Use the monitor command:
+   python -m controller.input --monitor
+
+Pro Controller Button/Axis Mapping (Pro Controller on macOS):
+------------------------------------------------------------------------------
+- B7 = Left Stick click (LS)
+- B8 = Right Stick click (RS)
+- B9 = Left Bumper (LB)
+- B10 = Right Bumper (RB)
+- A0 = Left Stick X (LX)
+- A1 = Left Stick Y (LY)
+- A2 = Right Stick X (RX)
+- A3 = Right Stick Y (RY)
+- A4 = ZL (Left Trigger) - analog axis
+- A5 = ZR (Right Trigger) - analog axis
+"""
 import logging
 import threading
 import time
 from typing import Callable, Optional
 
 try:
-    from inputs import get_gamepad, devices
+    import pygame
 except ImportError:
     raise ImportError(
-        "inputs library not installed. Install with: pip install inputs"
+        "pygame library not installed. Install with: pip install pygame"
     )
 
 from controller.input.state import ControllerState, GamepadControlData, LegIdentifier
@@ -17,10 +43,11 @@ logger = logging.getLogger(__name__)
 
 
 class InputController:
-    """Singleton controller for reading and processing gamepad input.
+    """Singleton controller for reading and processing gamepad input (Pygame version).
     
     This class provides a thread-safe interface for reading gamepad events
     and processing them into normalized controller state and control data.
+    Uses pygame instead of inputs library for macOS compatibility.
     
     Usage:
         controller = InputController.get_instance()
@@ -48,6 +75,7 @@ class InputController:
         self._update_rate_hz = 50.0   # once every 20ms
         self._callbacks: list[Callable[[GamepadControlData], None]] = []
         self._callback_lock = threading.Lock()
+        self._joystick: Optional[pygame.joystick.Joystick] = None
         
     @classmethod
     def get_instance(cls) -> "InputController":
@@ -75,7 +103,7 @@ class InputController:
             return
         
         self._update_rate_hz = update_rate_hz
-        self._device_id = device_id
+        self._device_id = device_id if device_id is not None else 0
         
         # Reset state
         with self._state_lock:
@@ -89,7 +117,7 @@ class InputController:
         )
         self._thread.start()
         logger.info(
-            f"InputController started (device_id={device_id}, "
+            f"InputController started (device_id={self._device_id}, "
             f"update_rate={update_rate_hz} Hz)"
         )
     
@@ -103,6 +131,14 @@ class InputController:
             self._thread.join(timeout=2.0)
             if self._thread.is_alive():
                 logger.warning("InputController thread did not stop cleanly")
+        
+        # Clean up pygame joystick
+        if self._joystick is not None:
+            try:
+                self._joystick.quit()
+            except Exception:
+                pass
+            self._joystick = None
         
         logger.info("InputController stopped")
     
@@ -161,49 +197,74 @@ class InputController:
     def _event_loop(self) -> None:
         """Main event loop running in background thread.
         
-        This loop handles two concerns:
-        1. Reading gamepad events (blocking, but in separate thread)
+        This loop handles:
+        1. Reading gamepad events via pygame
         2. Processing controls at fixed rate (50-100 Hz)
         
-        We use a separate thread for event reading to avoid blocking
-        the control processing loop.
+        Uses pygame for macOS compatibility with Bluetooth controllers.
+        
+        This method checks if pygame is already initialized and only initializes
+        joystick subsystem if needed.
         """
         sleep_time = 1.0 / self._update_rate_hz if self._update_rate_hz > 0 else 0.02
         
-        # Start event reading in a sub-thread to avoid blocking control processing
-        event_thread_running = threading.Event()
-        event_thread_running.set()
+        # Check if pygame is already initialized (may be initialized in main thread on macOS)
+        pygame_was_initialized = pygame.get_init()
+        joystick_was_initialized = pygame.joystick.get_init()
         
-        def read_events():
-            """Read gamepad events in a separate thread."""
-            try:
-                while self._running and event_thread_running.is_set():
-                    try:
-                        # get_gamepad() blocks until events are available
-                        # This is fine since we're in a separate thread
-                        events = get_gamepad()
-                        for event in events:
-                            if not self._running:
-                                break
-                            self._update_state(event)
-                    except Exception as e:
-                        if self._running:
-                            logger.debug(f"Error reading gamepad events: {e}")
-                        time.sleep(0.01)  # Brief sleep on error
-            except Exception as e:
-                logger.error(f"Event reading thread error: {e}", exc_info=True)
+        # Initialize pygame only if not already initialized
+        try:
+            if not pygame_was_initialized:
+                pygame.init()
+            if not joystick_was_initialized:
+                pygame.joystick.init()
+        except Exception as e:
+            logger.error(f"Failed to initialize pygame: {e}", exc_info=True)
+            self._running = False
+            return
         
-        event_thread = threading.Thread(
-            target=read_events,
-            daemon=True,
-            name="InputController-EventReader"
-        )
-        event_thread.start()
+        # Initialize joystick
+        joystick_count = pygame.joystick.get_count()
+        logger.debug(f"Found {joystick_count} joystick(s)")
+        
+        if joystick_count == 0:
+            logger.error("No joystick/gamepad found. Make sure your controller is connected.")
+            logger.error("Try running with --list to verify the controller is detected.")
+            self._running = False
+            if not pygame_was_initialized:
+                pygame.quit()
+            return
+        
+        if self._device_id >= pygame.joystick.get_count():
+            logger.warning(
+                f"Device ID {self._device_id} not available. "
+                f"Using device 0 instead."
+            )
+            self._device_id = 0
+        
+        try:
+            self._joystick = pygame.joystick.Joystick(self._device_id)
+            self._joystick.init()
+            logger.info(f"Using pygame joystick: {self._joystick.get_name()}")
+        except Exception as e:
+            logger.error(f"Failed to initialize joystick {self._device_id}: {e}", exc_info=True)
+            self._running = False
+            if not pygame_was_initialized:
+                pygame.quit()
+            return
         
         try:
             # Main control processing loop at fixed rate
             while self._running:
                 start_time = time.time()
+                
+                # Note: We don't call pygame.event.pump() here because on macOS,
+                # it must be called from the main thread. Since we're only reading
+                # joystick state (not processing window events), we can read the
+                # joystick directly without pumping events.
+                
+                # Update state from pygame joystick
+                self._update_state_pygame(self._joystick)
                 
                 # Process controls and notify callbacks
                 control_data = self.get_control_data()
@@ -218,52 +279,77 @@ class InputController:
         except Exception as e:
             logger.error(f"InputController event loop error: {e}", exc_info=True)
         finally:
-            event_thread_running.clear()
-            # Wait briefly for event thread to finish
-            event_thread.join(timeout=1.0)
+            # Clean up joystick
+            if self._joystick is not None:
+                try:
+                    self._joystick.quit()
+                except Exception:
+                    pass
+            if not pygame_was_initialized:
+                pygame.quit()
             self._running = False
     
-    def _update_state(self, event) -> None:
-        """Update controller state from a gamepad event.
+    def _update_state_pygame(self, joystick: pygame.joystick.Joystick) -> None:
+        """Update controller state from pygame joystick (macOS/Pro Controller).
         
         Args:
-            event: Event from inputs library.
-        """
-        code = event.code
-        val = event.state
+            joystick: pygame.joystick.Joystick instance.
         
+        Note: Pro Controller button/axis indices may vary. If buttons don't work
+        correctly, you may need to adjust these indices. See the file header
+        documentation for how to find the correct mapping.
+        """
         with self._state_lock:
-            # Map event codes to state fields
-            # Triggers (analog, thresholded at 10)
-            if code == "ABS_Z":  # Left Trigger analog
-                self._state.LT = (val > 10)
-            elif code == "ABS_RZ":  # Right Trigger analog
-                self._state.RT = (val > 10)
-            # Bumpers
-            elif code == "BTN_TL":  # Left Bumper
-                self._state.LB = (val == 1)
-            elif code == "BTN_TR":  # Right Bumper
-                self._state.RB = (val == 1)
-            # Stick buttons
-            elif code == "BTN_THUMBL":  # Left Stick button
-                self._state.LS = (val == 1)
-            elif code == "BTN_THUMBR":  # Right Stick button
-                self._state.RS = (val == 1)
-            # Sticks (normalize to [-1.0, 1.0])
-            elif code == "ABS_X":  # Left stick X
-                # Normalize from typical range [-32768, 32767] to [-1.0, 1.0]
-                self._state.LX = max(-1.0, min(1.0, val / 32768.0))
-            elif code == "ABS_Y":  # Left stick Y
-                self._state.LY = max(-1.0, min(1.0, val / 32768.0))
-            elif code == "ABS_RX":  # Right stick X
-                self._state.RX = max(-1.0, min(1.0, val / 32768.0))
-            elif code == "ABS_RY":  # Right stick Y
-                self._state.RY = max(-1.0, min(1.0, val / 32768.0))
+            # Reset all button states first
+            self._state.LT = False
+            self._state.LB = False
+            self._state.LS = False
+            self._state.RT = False
+            self._state.RB = False
+            self._state.RS = False
+            
+            # Pro Controller button mapping (Pro Controller on macOS via pygame)
+            # B7 = Left Stick click (LS)
+            # B8 = Right Stick click (RS)
+            # B9 = Left Bumper (LB)
+            # B10 = Right Bumper (RB)
+            # A4 = ZL (Left Trigger) - analog axis
+            # A5 = ZR (Right Trigger) - analog axis
+            
+            # Stick buttons (clicking the sticks)
+            if joystick.get_numbuttons() > 7:
+                self._state.LS = bool(joystick.get_button(7))  # Left stick press
+            if joystick.get_numbuttons() > 8:
+                self._state.RS = bool(joystick.get_button(8))  # Right stick press
+            
+            # Bumpers (L and R buttons)
+            if joystick.get_numbuttons() > 9:
+                self._state.LB = bool(joystick.get_button(9))  # L button (left bumper)
+            if joystick.get_numbuttons() > 10:
+                self._state.RB = bool(joystick.get_button(10))  # R button (right bumper)
+            
+            # Triggers (ZL and ZR) - analog axes, thresholded as boolean
+            if joystick.get_numaxes() > 4:
+                trigger_left_val = joystick.get_axis(4)
+                self._state.LT = (trigger_left_val > 0.1)  # ZL (Left Trigger)
+            if joystick.get_numaxes() > 5:
+                trigger_right_val = joystick.get_axis(5)
+                self._state.RT = (trigger_right_val > 0.1)  # ZR (Right Trigger)
+            
+            # Sticks (normalized to [-1.0, 1.0])
+            if joystick.get_numaxes() > 0:
+                self._state.LX = max(-1.0, min(1.0, joystick.get_axis(0)))  # Left stick X
+            if joystick.get_numaxes() > 1:
+                self._state.LY = max(-1.0, min(1.0, joystick.get_axis(1)))  # Left stick Y
+            if joystick.get_numaxes() > 2:
+                self._state.RX = max(-1.0, min(1.0, joystick.get_axis(2)))  # Right stick X
+            if joystick.get_numaxes() > 3:
+                self._state.RY = max(-1.0, min(1.0, joystick.get_axis(3)))  # Right stick Y
     
     def _process_controls(self, state: ControllerState) -> GamepadControlData:
         """Process controller state into leg selection and axis mappings.
         
-        Implements the leg selection logic:
+        Implements the leg selection logic from the specification:
         - LT (without LB): Select Front Left (FL)
         - LB (without LT): Select Rear Left (RL)
         - LS: Select Left Middle (ML)
@@ -346,20 +432,26 @@ class InputController:
     
     @staticmethod
     def list_devices() -> list[dict]:
-        """List available gamepad/input devices.
+        """List available gamepad/input devices using pygame.
         
         Returns:
             List of device dictionaries with 'name' and 'path' keys.
         """
         try:
+            pygame.init()
+            pygame.joystick.init()
             gamepads = []
-            for device in devices:
-                if device.device_type == "gamepad":
-                    gamepads.append({
-                        "name": device.name,
-                        "path": device.path,
-                    })
+            for i in range(pygame.joystick.get_count()):
+                joystick = pygame.joystick.Joystick(i)
+                joystick.init()
+                gamepads.append({
+                    "name": joystick.get_name(),
+                    "path": f"pygame_joystick_{i}",
+                })
+                joystick.quit()
+            pygame.quit()
             return gamepads
         except Exception as e:
             logger.error(f"Error listing devices: {e}", exc_info=True)
             return []
+
