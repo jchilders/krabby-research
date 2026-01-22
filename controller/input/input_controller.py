@@ -1,6 +1,6 @@
 """InputController singleton for gamepad/joystick input handling using Pygame.
 
-Testing with Pro Controller on macOS:
+Testing with Pro Controller:
 -------------------------------------
 1. Ensure your Pro Controller is paired via Bluetooth:
    - Press and hold the sync button on the Pro Controller until lights flash
@@ -12,7 +12,7 @@ Testing with Pro Controller on macOS:
 3. Use the monitor command:
    python -m controller.input --monitor
 
-Pro Controller Button/Axis Mapping (Pro Controller on macOS):
+Pro Controller Button/Axis Mapping:
 ------------------------------------------------------------------------------
 - B7 = Left Stick click (LS)
 - B8 = Right Stick click (RS)
@@ -37,17 +37,17 @@ except ImportError:
         "pygame library not installed. Install with: pip install pygame"
     )
 
-from controller.input.state import ControllerState, GamepadControlData, LegIdentifier
+from controller.input.state import ControllerState
 
 logger = logging.getLogger(__name__)
 
 
 class InputController:
-    """Singleton controller for reading and processing gamepad input (Pygame version).
+    """Singleton controller for reading and storing gamepad input state.
     
     This class provides a thread-safe interface for reading gamepad events
-    and processing them into normalized controller state and control data.
-    Uses pygame instead of inputs library for macOS compatibility.
+    and storing them in a normalized ControllerState dataclass.
+    Uses pygame.
     
     Usage:
         controller = InputController.get_instance()
@@ -73,7 +73,7 @@ class InputController:
         self._thread: Optional[threading.Thread] = None
         self._device_id: Optional[int] = None
         self._update_rate_hz = 50.0   # once every 20ms
-        self._callbacks: list[Callable[[GamepadControlData], None]] = []
+        self._callbacks: list[Callable[[ControllerState], None]] = []
         self._callback_lock = threading.Lock()
         self._joystick: Optional[pygame.joystick.Joystick] = None
         
@@ -101,6 +101,11 @@ class InputController:
         if self._running:
             logger.warning("InputController is already running")
             return
+        
+        if update_rate_hz <= 0:
+            raise ValueError(
+                f"update_rate_hz must be greater than 0, got {update_rate_hz}"
+            )
         
         self._update_rate_hz = update_rate_hz
         self._device_id = device_id if device_id is not None else 0
@@ -162,28 +167,19 @@ class InputController:
                 RY=self._state.RY, 
             )
     
-    def get_control_data(self) -> GamepadControlData:
-        """Get processed control data with leg selection and axis mappings.
-        
-        Returns:
-            GamepadControlData with selected legs and axis values.
-        """
-        state = self.get_state()
-        return self._process_controls(state)
-    
     def register_callback(
-        self, callback: Callable[[GamepadControlData], None]
+        self, callback: Callable[[ControllerState], None]
     ) -> None:
-        """Register a callback to be called when control data is updated.
+        """Register a callback to be called when controller state is updated.
         
         Args:
-            callback: Function that takes GamepadControlData as argument.
+            callback: Function that takes ControllerState as argument.
         """
         with self._callback_lock:
             self._callbacks.append(callback)
     
     def unregister_callback(
-        self, callback: Callable[[GamepadControlData], None]
+        self, callback: Callable[[ControllerState], None]
     ) -> None:
         """Unregister a callback.
         
@@ -201,14 +197,12 @@ class InputController:
         1. Reading gamepad events via pygame
         2. Processing controls at fixed rate (50-100 Hz)
         
-        Uses pygame for macOS compatibility with Bluetooth controllers.
-        
         This method checks if pygame is already initialized and only initializes
         joystick subsystem if needed.
         """
-        sleep_time = 1.0 / self._update_rate_hz if self._update_rate_hz > 0 else 0.02
+        sleep_time = 1.0 / self._update_rate_hz # e.g. if update_rate_hz is 50, sleep_time is 0.02 seconds
         
-        # Check if pygame is already initialized (may be initialized in main thread on macOS)
+        # Check if pygame is already initialized 
         pygame_was_initialized = pygame.get_init()
         joystick_was_initialized = pygame.joystick.get_init()
         
@@ -257,18 +251,14 @@ class InputController:
             # Main control processing loop at fixed rate
             while self._running:
                 start_time = time.time()
-                
-                # Note: We don't call pygame.event.pump() here because on macOS,
-                # it must be called from the main thread. Since we're only reading
-                # joystick state (not processing window events), we can read the
-                # joystick directly without pumping events.
+            
                 
                 # Update state from pygame joystick
                 self._update_state_pygame(self._joystick)
                 
-                # Process controls and notify callbacks
-                control_data = self.get_control_data()
-                self._notify_callbacks(control_data)
+                # Get current state and notify callbacks
+                state = self.get_state()
+                self._notify_callbacks(state)
                 
                 # Sleep to maintain target rate
                 elapsed = time.time() - start_time
@@ -278,6 +268,7 @@ class InputController:
                     
         except Exception as e:
             logger.error(f"InputController event loop error: {e}", exc_info=True)
+            raise e
         finally:
             # Clean up joystick
             if self._joystick is not None:
@@ -290,7 +281,7 @@ class InputController:
             self._running = False
     
     def _update_state_pygame(self, joystick: pygame.joystick.Joystick) -> None:
-        """Update controller state from pygame joystick (macOS/Pro Controller).
+        """Update controller state from pygame joystick.
         
         Args:
             joystick: pygame.joystick.Joystick instance.
@@ -308,7 +299,7 @@ class InputController:
             self._state.RB = False
             self._state.RS = False
             
-            # Pro Controller button mapping (Pro Controller on macOS via pygame)
+            # Pro Controller button mapping (Pro Controller on any platform via pygame)
             # B7 = Left Stick click (LS)
             # B8 = Right Stick click (RS)
             # B9 = Left Bumper (LB)
@@ -346,87 +337,18 @@ class InputController:
             if joystick.get_numaxes() > 3:
                 self._state.RY = max(-1.0, min(1.0, joystick.get_axis(3)))  # Right stick Y
     
-    def _process_controls(self, state: ControllerState) -> GamepadControlData:
-        """Process controller state into leg selection and axis mappings.
-        
-        Implements the leg selection logic from the specification:
-        - LT (without LB): Select Front Left (FL)
-        - LB (without LT): Select Rear Left (RL)
-        - LS: Select Left Middle (ML)
-        - RS: Select Right Middle (MR)
-        - RT (without RB): Select Front Right (FR)
-        - RB (without RT): Select Rear Right (RR)
-        - LT + LB: Select FL, RL, MR (tripod combo left)
-        - RT + RB: Select FR, RR, ML (tripod combo right)
-        
-        Axis mappings:
-        - Left stick Y: Hip up/down (inverted)
-        - Left stick X: Knee out/in
-        - Right stick Y: Hip yaw forward/back
+    def _notify_callbacks(self, state: ControllerState) -> None:
+        """Notify all registered callbacks with new controller state.
         
         Args:
-            state: Current controller state.
-            
-        Returns:
-            GamepadControlData with selected legs and axis values.
-        """
-        # Determine leg selections
-        select_FL = state.LT and not state.LB
-        select_RL = state.LB and not state.LT
-        select_ML = state.LS
-        select_MR = state.RS
-        select_FR = state.RT and not state.RB
-        select_RR = state.RB and not state.RT
-        
-        # Combo triggers
-        combo_left = state.LT and state.LB  # FL/RL/MR
-        combo_right = state.RT and state.RB  # FR/RR/ML
-        
-        # Build selected legs set
-        legs = set()
-        if combo_left:
-            legs |= {LegIdentifier.FRONT_LEFT, LegIdentifier.REAR_LEFT, LegIdentifier.MIDDLE_RIGHT}
-        if combo_right:
-            legs |= {LegIdentifier.FRONT_RIGHT, LegIdentifier.REAR_RIGHT, LegIdentifier.MIDDLE_LEFT}
-        if not combo_left and not combo_right:
-            if select_FL:
-                legs.add(LegIdentifier.FRONT_LEFT)
-            if select_RL:
-                legs.add(LegIdentifier.REAR_LEFT)
-            if select_ML:
-                legs.add(LegIdentifier.MIDDLE_LEFT)
-            if select_MR:
-                legs.add(LegIdentifier.MIDDLE_RIGHT)
-            if select_FR:
-                legs.add(LegIdentifier.FRONT_RIGHT)
-            if select_RR:
-                legs.add(LegIdentifier.REAR_RIGHT)
-        
-        # Map axes
-        hip_up_down = -state.LY  # Invert Y axis (up = positive)
-        knee_out_in = state.LX
-        hip_yaw = state.RY
-        
-        return GamepadControlData(
-            selected_legs=legs,
-            hip_up_down=hip_up_down,
-            knee_out_in=knee_out_in,
-            hip_yaw=hip_yaw,
-            raw_state=state,
-        )
-    
-    def _notify_callbacks(self, control_data: GamepadControlData) -> None:
-        """Notify all registered callbacks with new control data.
-        
-        Args:
-            control_data: Current control data to send to callbacks.
+            state: Current controller state to send to callbacks.
         """
         with self._callback_lock:
             callbacks = list(self._callbacks)  # Copy to avoid lock during iteration
         
         for callback in callbacks:
             try:
-                callback(control_data)
+                callback(state)
             except Exception as e:
                 logger.error(f"Error in InputController callback: {e}", exc_info=True)
     

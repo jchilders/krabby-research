@@ -136,21 +136,16 @@ class IsaacSimHalServer(HalServerBase):
         logger.info("Cached environment references successfully")
     
     def _initialize_mcusdk(self) -> None:
-        """Initialize IsaacSim MCU SDK with environment device.
+        """Initialize IsaacSim MCU SDK.
         
-        This method initializes the SDK after environment references are cached,
-        so we can get the correct device (CPU/CUDA) from the environment.
+        This method initializes the SDK after environment references are cached.
         """
         if self.env is None:
             return
         
-        # Get device from unwrapped environment (gym.make() wraps the environment)
-        unwrapped_env = self.env.unwrapped if hasattr(self.env, 'unwrapped') else self.env
-        device = getattr(unwrapped_env, 'device', torch.device("cpu"))
-        
-        # Initialize SDK with environment device
-        self._mcusdk = IsaacSimMCUSDK(device=device)
-        logger.info(f"Initialized IsaacSimMCUSDK with device: {device}")
+        # Initialize SDK
+        self._mcusdk = IsaacSimMCUSDK()
+        logger.info("Initialized IsaacSimMCUSDK")
 
     def set_observation(self) -> None:
         """Set observation from IsaacSim environment as hardware observations.
@@ -435,7 +430,8 @@ class IsaacSimHalServer(HalServerBase):
         
         Loops until a command is received or timeout is reached.
         Gets the latest command from the transport layer and uses IsaacSimMCUSDK
-        to convert it to an action tensor that can be passed to env.step().
+        to get normalized PWM values as a numpy array, then converts it to a
+        torch tensor for compatibility with env.step() and calling code.
         Does NOT apply the action - env.step() will handle that.
         
         Returns:
@@ -479,9 +475,20 @@ class IsaacSimHalServer(HalServerBase):
         unwrapped_env = self.env.unwrapped if hasattr(self.env, 'unwrapped') else self.env
         num_envs = getattr(unwrapped_env, 'num_envs', 1)
         
-        # Use standardized SDK to convert command to action tensor
-        # The SDK handles device placement, batch dimensions, and logging
-        action = self._mcusdk.apply_command(command, num_envs=num_envs)
+        # Use standardized SDK to get normalized PWM values as numpy array
+        action_np = self._mcusdk.apply_command(command, num_envs=num_envs)
+        
+        # Convert to torch tensor for compatibility with env.step() and calling code
+        device = getattr(unwrapped_env, 'device', torch.device("cpu"))
+        action = torch.from_numpy(action_np).to(device=device, dtype=torch.float32)
+        
+        # Add batch dimension if needed (env.step() expects (num_envs, action_dim))
+        if action.ndim == 1:
+            action = action.unsqueeze(0)  # Shape: (1, 18)
+        
+        # Expand to num_envs if needed
+        if action.shape[0] == 1 and num_envs > 1:
+            action = action.expand(num_envs, -1)  # Shape: (num_envs, 18)
 
         return action
 

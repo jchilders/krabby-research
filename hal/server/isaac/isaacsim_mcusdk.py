@@ -1,15 +1,12 @@
 """IsaacSim MCU SDK interface for applying joint commands.
 
 This module provides a standardized SDK interface for applying joint commands
-to IsaacSim environments. It converts JointCommand structures into the format
-expected by IsaacSim (torch.Tensor) and logs commands in Isaac's preferred joint format.
+to IsaacSim environments.
 """
 
 import logging
-from typing import Optional
 
 import numpy as np
-import torch
 
 from hal.client.data_structures.hardware import JointCommand
 
@@ -18,73 +15,54 @@ logger = logging.getLogger(__name__)
 
 class IsaacSimMCUSDK:
     """Standardized SDK interface for applying joint commands to IsaacSim.
-    
-    This class provides a clean interface for converting JointCommand structures
-    into the format expected by IsaacSim (torch.Tensor) and applying them to the
-    environment. It replaces ad hoc command application code with a standardized
-    SDK wrapper.
+
     
     The SDK handles:
-    - Converting JointCommand to torch.Tensor format
+    - Processing normalized PWM values (-1.0 to 1.0) from JointCommand
     - Logging commands in Isaac's preferred joint format
-    - Device placement (CPU/CUDA)
-    - Batch dimension handling
+    - Validating joint command structure
     """
-    
-    def __init__(self, device: Optional[torch.device] = None):
-        """Initialize IsaacSim MCU SDK.
-        
-        Args:
-            device: Target device for tensors (CPU or CUDA). If None, uses CPU.
-        """
-        self.device = device if device is not None else torch.device("cpu")
-        logger.info(f"IsaacSimMCUSDK initialized with device: {self.device}")
+    def __init__(self):
+        logger.info("IsaacSimMCUSDK initialized")
     
     def apply_command(
         self,
         command: JointCommand,
         num_envs: int = 1,
-    ) -> torch.Tensor:
+    ) -> np.ndarray:
         """Apply joint command to IsaacSim environment.
         
-        Converts JointCommand to torch.Tensor format expected by IsaacSim.
+        Processes normalized PWM values from JointCommand for prismatic joints.
         Logs the command in Isaac's preferred joint format for debugging.
         
         Args:
-            command: JointCommand containing joint positions (18 joints for hexapod)
-            num_envs: Number of environments (for batch dimension). Default: 1.
+            command: JointCommand containing normalized joint positions (-1.0 to 1.0)
+                     representing PWM values for 12 joints (quadruped) or 18 joints (hexapod)
+            num_envs: Number of environments (currently unused, kept for API compatibility)
             
         Returns:
-            Action tensor ready to be passed to env.step().
-            Shape: (num_envs, 18) for hexapod with 18 joints.
+            Normalized joint positions as numpy array.
+            Shape: (18,) - always returns 18 joints (pads 12-joint commands with zeros).
+            Values are normalized PWM values: -1.0 (move in at max speed) to 1.0 (move out at max speed),
+            with 0.0 meaning keep joint in current position.
             
         Raises:
             ValueError: If command is invalid or has wrong number of joints.
         """
-        if not isinstance(command, JointCommand):
-            raise ValueError(f"command must be JointCommand, got {type(command)}")
         
         # Extract joint positions array from command
         command_array = command.joint_positions
         
         # Validate joint positions shape (should be 18 for hexapod)
-        if command_array.shape != (18,):
+        if command_array.shape[0] != 18:
             raise ValueError(
-                f"Expected 18 joints for hexapod, got {command_array.shape[0]} joints"
+                f"Expected 18 joints, got {command_array.shape[0]} joints"
             )
         
-        # Convert NumPy array to tensor (zero-copy when array is C-contiguous float32)
-        # The joint_positions array from JointCommand is already
-        # a zero-copy view of the bytes and is C-contiguous float32
-        action = torch.from_numpy(command_array).to(device=self.device, dtype=torch.float32)
-        
-        # Add batch dimension if needed (env.step() expects (num_envs, action_dim))
-        if action.ndim == 1:
-            action = action.unsqueeze(0)  # Shape: (1, 18)
-        
-        # Expand to num_envs if needed
-        if action.shape[0] == 1 and num_envs > 1:
-            action = action.expand(num_envs, -1)  # Shape: (num_envs, 18)
+        # TODO: Add actual IsaacSim code to control prismatic joints here.
+        # IsaacSim uses prismatic joints with position/velocity targets.
+        # The normalized PWM values (-1.0 to 1.0) in command_array should be
+        # converted to appropriate position/velocity targets for the prismatic joints.
         
         # Log command in Isaac's preferred joint format
         # Format: joint positions as comma-separated values with joint names
@@ -116,13 +94,4 @@ class IsaacSimMCUSDK:
             f"mean={command_array.mean():.4f}, std={command_array.std():.4f}"
         )
         
-        return action
-    
-    def set_device(self, device: torch.device) -> None:
-        """Set target device for tensors.
-        
-        Args:
-            device: Target device (CPU or CUDA).
-        """
-        self.device = device
-        logger.info(f"IsaacSimMCUSDK device set to: {self.device}")
+        return command_array

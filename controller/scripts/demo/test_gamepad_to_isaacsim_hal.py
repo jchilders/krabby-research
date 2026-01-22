@@ -15,16 +15,12 @@ Usage:
 
 Requirements:
     - A gamepad/joystick connected (Bluetooth or USB)
-    - The inputs library installed: pip install inputs
-    - Note: On macOS, you may need to use pygame instead (see controller/input/pygametemp/)
-        - if you want to use pygame on MacOS to test, replace the InputController import in the control_loop.py file with the pygame version
-        -   In control_loop.py, Use "from controller.input.pygametemp.input_controller_test_pygame import InputController" instead of "from controller.input import InputController"
-        - To make it easy to remove pygame in future, pygame references have only been kept in the pygametemp folder and not in the main input folder. It is also kept here as this is a demo script.
+    - The pygame library installed: pip install pygame
 
 Note: 
 1. When the test is run, it keeps on logging the joint commands in Isaac's format continuously. 
 To see specific action, you can press a specific gamepad button(like LB, etc) and then move the joystick(like left stick, right stick, etc) to see the corresponding joint commands in Isaac's format.
-2. TODO As of 1/15/2026, this is only tested on MacOS. It is not tested on Ubuntu/Linux yet. Again, as mentioned above, do not forget to set the pygame version in control_loop.py if you want to use pygame on MacOS to test.
+2. TODO As of 1/22/2026, this is only tested on MacOS. It is not tested on Ubuntu/Linux/Windoews yet.
             
 """
 
@@ -134,7 +130,11 @@ def create_mock_isaac_env():
     return env
 
 def initialize_pygame_if_needed():
-    """Initialize Pygame on macOS if needed for InputController."""
+    """Initialize Pygame in main thread if needed for InputController.
+    
+    On macOS, pygame must be initialized in the main thread before background
+    threads can use it. This ensures proper initialization for cross-platform pygame usage.
+    """
     import platform
     if platform.system() != "Darwin":
         return
@@ -162,7 +162,11 @@ def initialize_pygame_if_needed():
 
 
 def pump_pygame_events_if_needed(last_pump_time):
-    """Pump Pygame events on macOS to update joystick state."""
+    """Pump Pygame events to update joystick state.
+    
+    On macOS, pygame requires event pumping in the main thread for joystick
+    state updates. This function handles that requirement.
+    """
     import platform
     if platform.system() != "Darwin":
         return
@@ -238,7 +242,6 @@ def main():
         input_controller_device_id=None,  # Use first available gamepad
         input_controller_update_rate_hz=50.0,
         hal_client_config=hal_client_config,
-        hal_server_config=hal_server_config,
         mapper_hip_up_down_scale=0.3,
         mapper_knee_out_in_scale=0.3,
         mapper_hip_yaw_scale=0.2,
@@ -272,28 +275,13 @@ def main():
     except Exception as e:
         logger.warning(f"Could not get initial InputController state: {e}")
     
-    # Check if gamepad is detected (works for both pygame and non-pygame versions)
+    # Check if gamepad is detected (pygame-based detection)
     gamepad_detected = False
-    if hasattr(input_controller, '_joystick'):
-        # Pygame version - check _joystick attribute
-        if input_controller._joystick is not None:
-            gamepad_detected = True
-    else:
-        # Non-pygame version - check if inputs library can detect devices
-        try:
-            from inputs import devices
-            gamepads = [device for device in devices if device.name]
-            # Filter for gamepad-like devices (keyboards and mice are not gamepads)
-            gamepads = [d for d in gamepads if 'keyboard' not in d.name.lower() and 'mouse' not in d.name.lower()]
-            if gamepads:
-                gamepad_detected = True
-                logger.info(f"Found {len(gamepads)} gamepad device(s) via inputs library: {[d.name for d in gamepads]}")
-        except Exception as e:
-            logger.debug(f"Could not check for gamepad devices via inputs library: {e}")
-            # Continue anyway - the event loop will handle errors
+    if hasattr(input_controller, '_joystick') and input_controller._joystick is not None:
+        gamepad_detected = True
     
     if not gamepad_detected:
-        logger.error("No gamepad detected. Please connect a gamepad and try again. On macOS, you may need to use pygame instead (see controller/input/pygametemp/ and comments at the top of this file).")
+        logger.error("No gamepad detected. Please connect a gamepad and try again. Make sure pygame is installed: pip install pygame")
         logger.error("Exiting script - gamepad is required for this test.")
         return
     
@@ -335,14 +323,10 @@ def main():
     # - No background thread needed because the main loop IS the command processing loop
     #
     # Test script case:
-    # - On macOS: We need non-blocking behavior to pump pygame events in the main thread
+    # - We need non-blocking behavior to pump pygame events in the main thread
     #   (pygame requires main-thread event pumping for joystick state updates)
-    # - On Ubuntu/Linux: The inputs library handles events in its own background thread,
-    #   so no main-thread event pumping is needed
     # - Background thread handles command processing using the server's existing interface
-    #   Note: The background thread is only strictly necessary on macOS, but we use it on
-    #   both platforms for code simplicity. On Ubuntu, we could call apply_command() directly
-    #   in the main loop since there's nothing else the main thread needs to do.
+    #   This allows the main thread to pump pygame events while commands are processed
         
     last_pump_time = [0.0]
     

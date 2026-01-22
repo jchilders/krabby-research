@@ -1,16 +1,22 @@
-"""Mapper from gamepad control data to IsaacSim HAL command format.
+"""Mapper from gamepad controller state to HAL command format (for IsaacSim).
 
-This mapper converts GamepadControlData (leg selections and axis values)
-into JointCommand format compatible with IsaacSim HAL server.
+This mapper encapsulates the complete mapping from:
+- Input: Gamepad controller state (ControllerState)
+- Robot embodiment: Hexapod (6 legs, 3 DOF per leg = 18 joints)
+- Input control type: Gamepad
+- Output: HAL JointCommand format (used with IsaacSim HAL server)
+
+The mapper handles leg selection, axis mapping, and joint position calculation,
+outputting absolute joint positions in JointCommand format.
 """
 
 import logging
 import time
-from typing import Optional
+from typing import Optional, Set
 
 import numpy as np
 
-from controller.input.state import GamepadControlData, LegIdentifier
+from controller.input.state import ControllerState, LegIdentifier
 from hal.client.data_structures.hardware import JointCommand
 
 logger = logging.getLogger(__name__)
@@ -38,13 +44,19 @@ DEFAULT_HIP_YAW_SCALE = 0.2      # radians per unit (yaw is typically smaller ra
 
 
 class GamepadToIsaacSimHALMapper:
-    """Maps gamepad control data to IsaacSim HAL joint commands.
+    """Maps gamepad controller state to IsaacSim HAL joint commands.
     
-    Converts GamepadControlData (selected legs and axis values) into
-    JointCommand format with normalized joint targets/speeds.
+    This mapper encapsulates the complete transformation from raw gamepad input
+    to joint commands for a hexapod robot in IsaacSim:
     
-    The mapper applies axis scaling and maps leg selections to joint indices.
-    Joint commands are relative to current positions (incremental control).
+    - Robot embodiment: Hexapod (6 legs × 3 DOF = 18 joints)
+    - Input control type: Gamepad
+    - Output environment: IsaacSim
+    
+    The mapper handles:
+    1. Leg selection based on button combinations
+    2. Axis mapping (sticks → joint control axes)
+    3. Joint position calculation (absolute positions)
     
     Zero-copy guarantees:
     - Joint positions array is always newly created (not a view)
@@ -70,76 +82,143 @@ class GamepadToIsaacSimHALMapper:
         self.hip_up_down_scale = hip_up_down_scale
         self.knee_out_in_scale = knee_out_in_scale
         self.hip_yaw_scale = hip_yaw_scale
+    
+    def _select_legs(self, state: ControllerState) -> Set[LegIdentifier]:
+        """Select legs based on controller button state.
         
-        # Store last joint positions for incremental control
-        # Initialize to zeros (neutral position) - 18 joints for hexapod
-        # TODO: This is a placeholder for the actual joint positions. This may be replaced with the actual joint positions in the future.
-        self._last_joint_positions = np.zeros(18, dtype=np.float32)
+        Leg selection rules:
+        - LT (without LB): Select Front Left (FL)
+        - LB (without LT): Select Rear Left (RL)
+        - LS: Select Left Middle (ML)
+        - RS: Select Right Middle (MR)
+        - RT (without RB): Select Front Right (FR)
+        - RB (without RT): Select Rear Right (RR)
+        - LT + LB: Select FL, RL, MR (tripod combo left)
+        - RT + RB: Select FR, RR, ML (tripod combo right)
+        
+        Args:
+            state: Controller state with button presses.
+            
+        Returns:
+            Set of selected leg identifiers.
+        """
+        # Determine leg selections
+        select_FL = state.LT and not state.LB
+        select_RL = state.LB and not state.LT
+        select_ML = state.LS
+        select_MR = state.RS
+        select_FR = state.RT and not state.RB
+        select_RR = state.RB and not state.RT
+        
+        # Combo triggers
+        combo_left = state.LT and state.LB  # FL/RL/MR
+        combo_right = state.RT and state.RB  # FR/RR/ML
+        
+        # Build selected legs set
+        legs = set()
+        if combo_left:
+            legs |= {LegIdentifier.FRONT_LEFT, LegIdentifier.REAR_LEFT, LegIdentifier.MIDDLE_RIGHT}
+        if combo_right:
+            legs |= {LegIdentifier.FRONT_RIGHT, LegIdentifier.REAR_RIGHT, LegIdentifier.MIDDLE_LEFT}
+        if not combo_left and not combo_right:
+            if select_FL:
+                legs.add(LegIdentifier.FRONT_LEFT)
+            if select_RL:
+                legs.add(LegIdentifier.REAR_LEFT)
+            if select_ML:
+                legs.add(LegIdentifier.MIDDLE_LEFT)
+            if select_MR:
+                legs.add(LegIdentifier.MIDDLE_RIGHT)
+            if select_FR:
+                legs.add(LegIdentifier.FRONT_RIGHT)
+            if select_RR:
+                legs.add(LegIdentifier.REAR_RIGHT)
+        
+        return legs
+    
+    def _map_axes(self, state: ControllerState) -> tuple[float, float, float]:
+        """Map controller stick axes to control axes.
+        
+        Axis mappings:
+        - Left stick Y: Hip up/down (inverted: -LY, so up = positive)
+        - Left stick X: Knee out/in (direct: LX)
+        - Right stick Y: Hip yaw forward/back (direct: RY)
+        
+        Args:
+            state: Controller state with stick values.
+            
+        Returns:
+            Tuple of (hip_up_down, knee_out_in, hip_yaw) axis values.
+        """
+        hip_up_down = -state.LY  # Invert Y axis (up = positive)
+        knee_out_in = state.LX
+        hip_yaw = state.RY
+        
+        return hip_up_down, knee_out_in, hip_yaw
     
     def map(
         self,
-        control_data: GamepadControlData,
+        state: ControllerState,
         observation_timestamp_ns: Optional[int] = None,
     ) -> JointCommand:
-        """Map gamepad control data to joint command.
+        """Map gamepad controller state to joint command.
+        
+        This method encapsulates the complete mapping from raw gamepad input
+        to absolute joint positions for a hexapod robot in IsaacSim.
         
         Args:
-            control_data: GamepadControlData with selected legs and axis values.
+            state: ControllerState with button and stick values.
             observation_timestamp_ns: Optional timestamp of the observation this
                 command responds to. If None, uses current time.
                 
         Returns:
-            JointCommand with joint positions for selected legs.
+            JointCommand with absolute joint positions.
             
         Raises:
-            ValueError: If control data is invalid.
+            ValueError: If state is invalid.
         """
-        if not isinstance(control_data, GamepadControlData):
-            raise ValueError(f"control_data must be GamepadControlData, got {type(control_data)}")
+        if not isinstance(state, ControllerState):
+            raise ValueError(f"state must be ControllerState, got {type(state)}")
         
-        # Start with last joint positions (incremental control)
-        joint_positions = self._last_joint_positions.copy()
+        # Select legs based on button state
+        selected_legs = self._select_legs(state)
         
-        # Apply control to selected legs
-        if control_data.selected_legs:
-            for leg in control_data.selected_legs:
+        # Map stick axes to control axes
+        hip_up_down, knee_out_in, hip_yaw = self._map_axes(state)
+        
+        # Start from neutral position (all joints at 0.0)
+        # TODO: In the future, starting joint positions will be available from the robot state/observations
+        joint_positions = np.zeros(18, dtype=np.float32)
+        
+        # Apply control to selected legs (absolute positions)
+        if selected_legs:
+            for leg in selected_legs:
                 if leg in LEG_TO_JOINT_INDICES:
                     hip_yaw_idx, hip_pitch_idx, knee_idx = LEG_TO_JOINT_INDICES[leg]
                     
                     # Apply hip up/down (hip_pitch joint)
                     # Positive hip_up_down = up = positive joint angle
-                    hip_delta = control_data.hip_up_down * self.hip_up_down_scale
-                    joint_positions[hip_pitch_idx] += hip_delta
+                    joint_positions[hip_pitch_idx] = hip_up_down * self.hip_up_down_scale
                     
                     # Apply knee out/in (knee joint)
                     # Positive knee_out_in = out = positive joint angle
-                    knee_delta = control_data.knee_out_in * self.knee_out_in_scale
-                    joint_positions[knee_idx] += knee_delta
+                    joint_positions[knee_idx] = knee_out_in * self.knee_out_in_scale
                     
                     # Apply hip yaw (hip_yaw joint)
                     # Positive hip_yaw = forward/back rotation
-                    hip_yaw_delta = control_data.hip_yaw * self.hip_yaw_scale
-                    joint_positions[hip_yaw_idx] += hip_yaw_delta
+                    joint_positions[hip_yaw_idx] = hip_yaw * self.hip_yaw_scale
                     
                     logger.debug(
-                        f"Leg {leg.value}: hip_yaw_idx={hip_yaw_idx} delta={hip_yaw_delta:.3f}, "
-                        f"hip_pitch_idx={hip_pitch_idx} delta={hip_delta:.3f}, "
-                        f"knee_idx={knee_idx} delta={knee_delta:.3f}"
+                        f"Leg {leg.value}: hip_yaw_idx={hip_yaw_idx} pos={joint_positions[hip_yaw_idx]:.3f}, "
+                        f"hip_pitch_idx={hip_pitch_idx} pos={joint_positions[hip_pitch_idx]:.3f}, "
+                        f"knee_idx={knee_idx} pos={joint_positions[knee_idx]:.3f}"
                     )
                 else:
                     logger.warning(f"Unknown leg identifier: {leg}")
         else:
-            # No legs selected, maintain current positions (no change)
-            logger.debug("No legs selected, maintaining current joint positions")
+            # No legs selected, all joints remain at 0.0 (neutral position)
+            logger.debug("No legs selected, all joints at neutral position")
         
-        # Clamp joint positions to reasonable limits
-        # Typical joint limits: hip_pitch [-1.0, 1.0] rad, knee [-2.0, 0.0] rad
-        # Clamp to safe ranges
-        # TODO: This may be replaced by limits per joint type in the future. E.g. knee limits are [-2.0, 0.0] rad, but hip_pitch limits are [-1.0, 1.0] rad.
-        joint_positions = np.clip(joint_positions, -2.0, 2.0)
-        
-        # Update last joint positions for next iteration
-        self._last_joint_positions = joint_positions.copy()
         
         # Create timestamps
         # JointCommand requires timestamps for:
@@ -148,7 +227,7 @@ class GamepadToIsaacSimHALMapper:
         #    (used for tracking command-observation relationships and measuring round-trip latency)
         # These timestamps enable the HAL system to:
         # - Match commands to their corresponding observations
-        # - Measure end-to-end latency (observation → command → application)
+        # - Measure round-trip latency (observation → command)
         # - Debug timing issues and ensure proper synchronization
         current_timestamp_ns = time.time_ns()
         if observation_timestamp_ns is None:
@@ -164,13 +243,8 @@ class GamepadToIsaacSimHALMapper:
         )
         
         logger.debug(
-            f"Mapped gamepad control: {len(control_data.selected_legs)} legs selected, "
+            f"Mapped gamepad state: {len(selected_legs)} legs selected, "
             f"joint_positions range=[{joint_positions.min():.3f}, {joint_positions.max():.3f}]"
         )
         
         return joint_cmd
-    
-    def reset(self) -> None:
-        """Reset mapper state (reset last joint positions to zero)."""
-        self._last_joint_positions = np.zeros(18, dtype=np.float32)
-        logger.debug("GamepadToIsaacSimHALMapper reset")

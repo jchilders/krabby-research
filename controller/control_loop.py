@@ -10,16 +10,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-import zmq
-
 from controller.input import InputController
-# Note: On macOS, you may need to use pygame instead (see controller/input/pygametemp/). TODO: This can be removed later when pygame is no longer used for testing in MacOS.
-# from controller.input.pygametemp.input_controller_test_pygame import InputController
-from controller.input.state import GamepadControlData
+from controller.input.state import ControllerState
 from controller.mappers.gamepad_to_isaacsim_hal_mapper import GamepadToIsaacSimHALMapper
 from hal.client import HalClient
 from hal.client.config import HalClientConfig
-from hal.server.config import HalServerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +36,6 @@ class ControlLoopConfig:
         input_controller_device_id: Optional device ID for InputController
         input_controller_update_rate_hz: Update rate for InputController (default: 50.0)
         hal_client_config: HAL client configuration
-        hal_server_config: HAL server configuration (for inproc connections)
         mapper_hip_up_down_scale: Scaling factor for hip up/down axis
         mapper_knee_out_in_scale: Scaling factor for knee out/in axis
         mapper_hip_yaw_scale: Scaling factor for hip yaw axis
@@ -50,7 +44,6 @@ class ControlLoopConfig:
     input_controller_device_id: Optional[int] = None
     input_controller_update_rate_hz: float = 50.0
     hal_client_config: Optional[HalClientConfig] = None
-    hal_server_config: Optional[HalServerConfig] = None
     mapper_hip_up_down_scale: float = 0.3
     mapper_knee_out_in_scale: float = 0.3
     mapper_hip_yaw_scale: float = 0.2
@@ -87,10 +80,6 @@ class ControlLoop:
         self._input_controller: Optional[InputController] = None
         self._hal_client: Optional[HalClient] = None
         self._gamepad_to_isaacsim_hal_mapper: Optional[GamepadToIsaacSimHALMapper] = None
-        self._zmq_context: Optional[zmq.Context] = None
-        
-        # For inproc connections, we need shared ZMQ context
-        self._zmq_context_owned = False
     
     def start(self) -> None:
         """Start the control loop.
@@ -142,11 +131,6 @@ class ControlLoop:
             self._hal_client.close()
             self._hal_client = None
         
-        # Clean up ZMQ context if we own it
-        if self._zmq_context is not None and self._zmq_context_owned:
-            self._zmq_context.term()
-            self._zmq_context = None
-        
         logger.info("ControlLoop stopped")
     
     def _start_input_controller_isaacsim_mode(self) -> None:
@@ -158,37 +142,9 @@ class ControlLoop:
         if self.config.hal_client_config is None:
             raise ValueError("hal_client_config is required for INPUT_CONTROLLER_ISAACSIM mode")
         
-        # For inproc connections, use shared ZMQ context from server
-        # For network connections, create new context
-        use_inproc = (
-            self.config.hal_client_config.observation_endpoint.startswith("inproc://") or
-            self.config.hal_client_config.command_endpoint.startswith("inproc://")
-        )
-        
-        if use_inproc:
-            if self.config.hal_server_config is None:
-                raise ValueError(
-                    "hal_server_config is required for inproc connections. "
-                    "Server must be initialized first and provide context via get_transport_context()."
-                )
-            # For inproc, we need the server's context
-            # This should be obtained from the server after it's initialized
-            # For now, we'll create our own context and expect the server to use the same
-            # In practice, the server should be initialized first and provide its context
-            logger.warning(
-                "Inproc connections require server context. "
-                "Ensure server is initialized first and provides context via get_transport_context()."
-            )
-            self._zmq_context = zmq.Context()
-            self._zmq_context_owned = True
-        else:
-            # Network connection, create our own context
-            self._zmq_context = zmq.Context()
-            self._zmq_context_owned = True
-        
         self._hal_client = HalClient(
             config=self.config.hal_client_config,
-            context=self._zmq_context,
+            context=None,
         )
         self._hal_client.initialize()
         
@@ -200,7 +156,7 @@ class ControlLoop:
         )
         
         # Register callback to send commands when gamepad state changes
-        self._input_controller.register_callback(self._on_gamepad_control_data)
+        self._input_controller.register_callback(self._on_gamepad_state)
         
         # Start input controller
         self._input_controller.start(
@@ -210,36 +166,32 @@ class ControlLoop:
         
         logger.info("INPUT_CONTROLLER_ISAACSIM mode initialized")
     
-    def _on_gamepad_control_data(self, control_data: GamepadControlData) -> None:
-        """Callback for gamepad control data updates.
+    def _on_gamepad_state(self, state: ControllerState) -> None:
+        """Callback for gamepad state updates.
         
-        Maps control data to joint command and sends via HAL client.
+        Maps controller state to joint command and sends via HAL client.
         
         Args:
-            control_data: Gamepad control data
+            state: Controller state
         """
         if not self._running:
             return
         
-        if self._hal_client is None or self._gamepad_to_isaacsim_hal_mapper is None:
-            logger.warning("HAL client or mapper not initialized, skipping command")
-            return
-        
         try:
-            # Map control data to joint command
-            # For now, we don't have observation timestamp, so use None
+            # Map controller state to joint command
+            # TODO: For now, we don't have observation timestamp, so use None
             # In a real implementation, we'd track the last observation timestamp
-            joint_cmd = self._gamepad_to_isaacsim_hal_mapper.map(control_data, observation_timestamp_ns=None)
+            joint_cmd = self._gamepad_to_isaacsim_hal_mapper.map(state, observation_timestamp_ns=None)
             
             # Send command via HAL client
             self._hal_client.put_joint_command(joint_cmd)
             
             logger.debug(
-                f"Sent joint command: {len(control_data.selected_legs)} legs, "
+                f"Sent joint command: "
                 f"joint_range=[{joint_cmd.joint_positions.min():.3f}, {joint_cmd.joint_positions.max():.3f}]"
             )
         except Exception as e:
-            logger.error(f"Error processing gamepad control data: {e}", exc_info=True)
+            logger.error(f"Error processing gamepad state: {e}", exc_info=True)
     
     def is_running(self) -> bool:
         """Check if control loop is running.
