@@ -327,7 +327,7 @@ class InputController:
                 trigger_right_val = joystick.get_axis(5)
                 self._state.RT = (trigger_right_val > 0.1)  # ZR (Right Trigger)
             
-            # Sticks (normalized to [-1.0, 1.0])
+            # Sticks (Clipped to -1.0 to 1.0 range. Pygame already returns values in this range. Clipping is just to ensure the values are in the correct range.)
             if joystick.get_numaxes() > 0:
                 self._state.LX = max(-1.0, min(1.0, joystick.get_axis(0)))  # Left stick X
             if joystick.get_numaxes() > 1:
@@ -336,6 +336,10 @@ class InputController:
                 self._state.RX = max(-1.0, min(1.0, joystick.get_axis(2)))  # Right stick X
             if joystick.get_numaxes() > 3:
                 self._state.RY = max(-1.0, min(1.0, joystick.get_axis(3)))  # Right stick Y
+            logger.debug(f"Left stick X: {self._state.LX}, Left stick Y: {self._state.LY}, Right stick X: {self._state.RX}, Right stick Y: {self._state.RY}")
+            logger.debug(f"Left trigger: {self._state.LT}, Right trigger: {self._state.RT}")
+            logger.debug(f"Left bumper: {self._state.LB}, Right bumper: {self._state.RB}")
+            logger.debug(f"Left stick press: {self._state.LS}, Right stick press: {self._state.RS}")
     
     def _notify_callbacks(self, state: ControllerState) -> None:
         """Notify all registered callbacks with new controller state.

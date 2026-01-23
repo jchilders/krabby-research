@@ -4,14 +4,6 @@ This module provides a command-line interface for the InputController singleton,
 allowing users to list available gamepad devices and monitor controller input
 in real-time.
 
-Prerequisites:
-    1. Install the inputs library:
-       pip install inputs
-    
-    2. On Linux, ensure proper permissions:
-       sudo usermod -a -G input $USER
-       # Log out and back in for changes to take effect
-
 Usage:
     From the krabby-research directory, run:
     
@@ -29,25 +21,6 @@ Usage:
     
     # Monitor a specific device at a custom rate
     python -m controller.input --monitor 0 --rate 100
-
-The --monitor command displays:
-    - Selected legs when buttons are pressed
-    - Control actions (hip up/down, knee out/in, hip yaw) when sticks are moved
-
-Leg selection controls:
-    - LT (without LB): Front Left (FL)
-    - LB (without LT): Rear Left (RL)
-    - LS button: Middle Left (ML)
-    - RS button: Middle Right (MR)
-    - RT (without RB): Front Right (FR)
-    - RB (without RT): Rear Right (RR)
-    - LT + LB: FL, RL, MR (tripod combo left)
-    - RT + RB: FR, RR, ML (tripod combo right)
-
-Control actions (when legs are selected):
-    - Left stick Y: Hip up/down
-    - Left stick X: Knee out/in
-    - Right stick Y: Hip yaw forward/back
 
 Note: If you get import errors, ensure you're in the krabby-research directory
 or that it's in your PYTHONPATH.
@@ -97,8 +70,6 @@ def monitor_device(device_id: Optional[int], update_rate_hz: float) -> None:
     
     Args:
         device_id: Device ID to monitor (None = first available).
-                  Note: Currently, the inputs library reads from all gamepads.
-                  This parameter is accepted for future compatibility.
         update_rate_hz: Update rate for monitoring (default: 50.0).
     """
     controller = InputController.get_instance()
@@ -154,89 +125,26 @@ def monitor_device(device_id: Optional[int], update_rate_hz: float) -> None:
         
         logger.info(f"Monitoring device [{device_id}]: {device_name}")
         logger.info(f"Update rate: {update_rate_hz} Hz")
-        logger.info("\nLeg Selection Controls:")
-        logger.info("  LT (without LB)     → Front Left (FL)")
-        logger.info("  LB (without LT)     → Rear Left (RL)")
-        logger.info("  LS button           → Middle Left (ML)")
-        logger.info("  RS button           → Middle Right (MR)")
-        logger.info("  RT (without RB)     → Front Right (FR)")
-        logger.info("  RB (without RT)     → Rear Right (RR)")
-        logger.info("  LT + LB             → FL, RL, MR (tripod left)")
-        logger.info("  RT + RB             → FR, RR, ML (tripod right)")
-        logger.info("\nPress Ctrl+C to stop")
-        logger.info("Waiting for controller input...\n")
+        logger.info("Press Ctrl+C to stop\n")
         
-        # Monitor loop - print only when legs are selected or control actions occur
-        check_interval = 1.0 / update_rate_hz  # Check at update rate
-        last_legs = set()
-        last_hip_up_down = 0.0
-        last_knee_out_in = 0.0
-        last_hip_yaw = 0.0
-        action_threshold = 0.02  # Threshold for detecting control actions
+        # Monitor loop - print controller state
+        check_interval = 1.0 / update_rate_hz
+        last_state = None
+
+        # Import pygame for event pumping 
+        import pygame
         
         while controller._running and (controller._thread is None or controller._thread.is_alive()):
-            control_data = controller.get_control_data()
+            # Pump events in main thread to update joystick state 
+            pygame.event.pump()
+
+            state = controller.get_state()
             
-            # Check if leg selection changed
-            legs_changed = control_data.selected_legs != last_legs
-            
-            # Check if control actions changed (hip up/down, knee out/in, hip yaw)
-            hip_up_down = control_data.hip_up_down
-            knee_out_in = control_data.knee_out_in
-            hip_yaw = control_data.hip_yaw
-            
-            action_changed = (
-                abs(hip_up_down - last_hip_up_down) > action_threshold or
-                abs(knee_out_in - last_knee_out_in) > action_threshold or
-                abs(hip_yaw - last_hip_yaw) > action_threshold
-            )
-            
-            # Print when legs are selected or control actions occur
-            should_print = False
-            output_parts = []
-            
-            # Always show leg selection changes
-            if legs_changed:
-                if control_data.selected_legs:
-                    legs_list = sorted([leg.value for leg in control_data.selected_legs])
-                    legs_str = ", ".join(legs_list)
-                    output_parts.append(f"Selected Legs: [{legs_str}]")
-                else:
-                    output_parts.append("Selected Legs: [none]")
-                should_print = True
-            
-            # Show control actions if legs are selected and actions changed
-            if control_data.selected_legs and action_changed:
-                actions = []
-                if abs(hip_up_down) > action_threshold:
-                    direction = "up" if hip_up_down > 0 else "down"
-                    actions.append(f"Hip {direction}: {abs(hip_up_down):.2f}")
-                if abs(knee_out_in) > action_threshold:
-                    direction = "out" if knee_out_in > 0 else "in"
-                    actions.append(f"Knee {direction}: {abs(knee_out_in):.2f}")
-                if abs(hip_yaw) > action_threshold:
-                    direction = "forward" if hip_yaw > 0 else "back"
-                    actions.append(f"Hip yaw {direction}: {abs(hip_yaw):.2f}")
-                
-                if actions:
-                    action_str = " | ".join(actions)
-                    if not legs_changed:
-                        legs_list = sorted([leg.value for leg in control_data.selected_legs])
-                        legs_str = ", ".join(legs_list)
-                        output_parts.append(f"Legs [{legs_str}]")
-                    output_parts.append(action_str)
-                    should_print = True
-            
-            if should_print:
-                print(" | ".join(output_parts))
-            
-            # Update tracking variables
-            if legs_changed:
-                last_legs = control_data.selected_legs.copy()
-            if action_changed:
-                last_hip_up_down = hip_up_down
-                last_knee_out_in = knee_out_in
-                last_hip_yaw = hip_yaw
+            # Only print if state changed
+            if state != last_state:
+                print(f"LT={state.LT} LB={state.LB} LS={state.LS} RS={state.RS} RT={state.RT} RB={state.RB} | "
+                      f"LX={state.LX:.3f} LY={state.LY:.3f} RX={state.RX:.3f} RY={state.RY:.3f}")
+                last_state = state
             
             time.sleep(check_interval)
         
@@ -312,4 +220,3 @@ Examples:
 
 if __name__ == "__main__":
     main()
-
