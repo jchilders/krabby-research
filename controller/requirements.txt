@@ -1,0 +1,6 @@
+pygame==2.6.1
+PyYAML==6.0.3
+pyzmq==27.1.0
+rsl-rl-lib==3.3.0
+scipy==1.17.0
+zmq==0.0.0
