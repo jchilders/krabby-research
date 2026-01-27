@@ -2,6 +2,7 @@
 
 This module provides a ControlLoop class that wires singleton components
 (InputController, HALClient, mappers, SDKs) based on configuration.
+
 """
 
 import logging
@@ -13,6 +14,7 @@ from typing import Optional
 from controller.input import InputController
 from controller.input.state import ControllerState
 from controller.mappers.gamepad_to_isaacsim_hal_mapper import GamepadToIsaacSimHALMapper
+from controller.mappers.gamepad_to_krabby_hal_mapper import GamepadToKrabbyHALMapper
 from hal.client import HalClient
 from hal.client.config import HalClientConfig
 
@@ -80,6 +82,7 @@ class ControlLoop:
         self._input_controller: Optional[InputController] = None
         self._hal_client: Optional[HalClient] = None
         self._gamepad_to_isaacsim_hal_mapper: Optional[GamepadToIsaacSimHALMapper] = None
+        self._gamepad_to_krabby_hal_mapper: Optional[GamepadToKrabbyHALMapper] = None
     
     def start(self) -> None:
         """Start the control loop.
@@ -102,8 +105,7 @@ class ControlLoop:
             # TODO: Implement MODEL_CONTROLLER_KRABBY mode. 
             raise NotImplementedError("MODEL_CONTROLLER_KRABBY mode not yet implemented")
         elif self.config.mode == ControlMode.INPUT_CONTROLLER_KRABBY:
-            # TODO: Implement INPUT_CONTROLLER_KRABBY mode. Will be done with Task 5 changes in Milestone 6.
-            raise NotImplementedError("INPUT_CONTROLLER_KRABBY mode not yet implemented")
+            self._start_input_controller_krabby_mode()
         else:
             raise ValueError(f"Unknown control mode: {self.config.mode}")
         
@@ -166,6 +168,39 @@ class ControlLoop:
         
         logger.info("INPUT_CONTROLLER_ISAACSIM mode initialized")
     
+    def _start_input_controller_krabby_mode(self) -> None:
+        """Start components for INPUT_CONTROLLER_KRABBY mode."""
+        # Get InputController singleton
+        self._input_controller = InputController.get_instance()
+        
+        # Initialize HAL client
+        if self.config.hal_client_config is None:
+            raise ValueError("hal_client_config is required for INPUT_CONTROLLER_KRABBY mode")
+        
+        self._hal_client = HalClient(
+            config=self.config.hal_client_config,
+            context=None,
+        )
+        self._hal_client.initialize()
+        
+        # Initialize mapper
+        self._gamepad_to_krabby_hal_mapper = GamepadToKrabbyHALMapper(
+            hip_up_down_scale=self.config.mapper_hip_up_down_scale,
+            knee_out_in_scale=self.config.mapper_knee_out_in_scale,
+            hip_yaw_scale=self.config.mapper_hip_yaw_scale,
+        )
+        
+        # Register callback to send commands when gamepad state changes
+        self._input_controller.register_callback(self._on_gamepad_state_krabby)
+        
+        # Start input controller
+        self._input_controller.start(
+            device_id=self.config.input_controller_device_id,
+            update_rate_hz=self.config.input_controller_update_rate_hz,
+        )
+        
+        logger.info("INPUT_CONTROLLER_KRABBY mode initialized")
+    
     def _on_gamepad_state(self, state: ControllerState) -> None:
         """Callback for gamepad state updates.
         
@@ -182,6 +217,31 @@ class ControlLoop:
             # TODO: For now, we don't have observation timestamp, so use None
             # In a real implementation, we'd track the last observation timestamp
             joint_cmd = self._gamepad_to_isaacsim_hal_mapper.map(state, observation_timestamp_ns=None)
+            
+            # Send command via HAL client
+            self._hal_client.put_joint_command(joint_cmd)
+            
+            logger.debug(
+                f"Sent joint command: "
+                f"joint_range=[{joint_cmd.joint_positions.min():.3f}, {joint_cmd.joint_positions.max():.3f}]"
+            )
+        except Exception as e:
+            logger.error(f"Error processing gamepad state: {e}", exc_info=True)
+    
+    def _on_gamepad_state_krabby(self, state: ControllerState) -> None:
+        """Callback for gamepad state updates in Krabby mode.
+        
+        Maps controller state to joint command and sends via HAL client.
+        
+        Args:
+            state: Controller state
+        """
+        if not self._running:
+            return
+        
+        try:
+            # Map controller state to joint command
+            joint_cmd = self._gamepad_to_krabby_hal_mapper.map(state, observation_timestamp_ns=None)
             
             # Send command via HAL client
             self._hal_client.put_joint_command(joint_cmd)

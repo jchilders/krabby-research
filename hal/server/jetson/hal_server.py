@@ -1,4 +1,6 @@
-"""Jetson HAL server implementation."""
+"""Jetson HAL server implementation.
+
+"""
 
 import logging
 import time
@@ -10,6 +12,7 @@ from scipy.ndimage import zoom
 from hal.server import HalServerBase, HalServerConfig
 from hal.client.data_structures.hardware import HardwareObservations, JointCommand
 from hal.server.jetson.camera import ZedCamera, create_zed_camera
+from hal.server.jetson.krabby_mcusdk import KrabbyMCUSDK
 
 # Import model-specific constant here (HAL server knows about model requirements)
 from compute.parkour.parkour_types import NUM_SCAN
@@ -29,6 +32,9 @@ class JetsonHalServer(HalServerBase):
         config: HalServerConfig,
         camera_resolution: tuple[int, int] = (640, 480),
         camera_fps: int = 30,
+        mcu_port: Optional[str] = None,
+        mcu_baud: int = 115200,
+        mcu_auto_connect: bool = True,
     ):
         """Initialize Jetson HAL server.
 
@@ -36,6 +42,10 @@ class JetsonHalServer(HalServerBase):
             config: HAL server configuration
             camera_resolution: ZED camera resolution (width, height). Default (640, 480)
             camera_fps: ZED camera FPS. Default 30
+            mcu_port: Serial port for MCU connection. If None, uses default from MCU SDK.
+            mcu_baud: Baud rate for MCU serial communication. Default: 115200.
+            mcu_auto_connect: If True, automatically connect to MCU on initialization.
+                If False, connection must be done manually. Default: True.
         """
         super().__init__(config)
         self.camera_resolution = camera_resolution
@@ -46,6 +56,27 @@ class JetsonHalServer(HalServerBase):
         # Track last commanded joint positions for state echo (placeholder)
         self._last_joint_positions: Optional[np.ndarray] = None
         self._action_dim = 12  # Default action dimension (12 DOF for Unitree Go2)
+        
+        # Initialize Krabby MCU SDK for standardized command application
+        self._mcusdk: Optional[KrabbyMCUSDK] = None
+        try:
+            self._mcusdk = KrabbyMCUSDK(
+                port=mcu_port,
+                baud=mcu_baud,
+                auto_connect=mcu_auto_connect,
+            )
+            logger.info("KrabbyMCUSDK initialized for JetsonHalServer")
+        except (ImportError, RuntimeError) as e:
+            logger.warning(
+                f"KrabbyMCUSDK not available: {e}. "
+                "MCU commands will not be sent. Install firmware package to enable MCU control."
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to initialize KrabbyMCUSDK: {e}. "
+                "MCU commands will not be sent. Check MCU connection and configuration.",
+                exc_info=True
+            )
 
     def initialize_camera(self) -> None:
         """Initialize ZED camera.
@@ -302,14 +333,9 @@ class JetsonHalServer(HalServerBase):
         """Apply joint command to actuators.
         
         **Synchronous method** that applies commands **immediately** (no queuing).
-        Applies the provided command directly to the robot actuators. Does not perform
-        any background work to keep the robot moving - the main loop must call this
-        method regularly at the target control rate (typically 100 Hz).
-        
-        Currently a placeholder implementation that:
-        - Stores the command for state echo
-        - Logs the command with timestamp
-        - Does not actually apply to motors (placeholder for future implementation)
+        Applies the provided command directly to the robot actuators via MCU SDK.
+        Does not perform any background work to keep the robot moving - the main loop
+        must call this method regularly at the target control rate (typically 100 Hz).
         
         The robot continues moving based on the last applied command until the next
         command is received. If this method is not called regularly, the robot will
@@ -323,11 +349,6 @@ class JetsonHalServer(HalServerBase):
         """
         if command is None:
             raise RuntimeError("Command cannot be None")
-        
-        # Validate actuators are initialized (placeholder check)
-        if self.actuator_sink is None:
-            # This is expected for now (placeholder), but log for debugging
-            pass
 
         # Extract joint positions array from command
         joint_positions = command.joint_positions
@@ -336,28 +357,40 @@ class JetsonHalServer(HalServerBase):
         if len(joint_positions) == 0:
             raise RuntimeError("Received empty joint command")
         
-        # Store command for state echo (placeholder: echo joint state from last commanded targets)
+        # Store command for state echo (echo joint state from last commanded targets)
         # This allows set_observation() to echo back the commanded positions as current state
         self._last_joint_positions = joint_positions.copy()
         self._action_dim = len(joint_positions)
 
-        # Log command with timestamp (as specified in requirements)
-        timestamp_ns = time.time_ns()
-        logger.info(
-            f"[JOINT COMMAND] timestamp={timestamp_ns}, "
-            f"joint_pos={joint_positions.tolist()}, "
-            f"shape={joint_positions.shape}, "
-            f"dtype={joint_positions.dtype}"
-        )
-
-        # Apply to actuators (placeholder, real implementation in future)
-        # Example:
-        # if self.actuator_sink is not None:
-        #     self.actuator_sink.set_joint_positions(joint_positions)
+        # Apply command via MCU SDK if available
+        if self._mcusdk is not None:
+            try:
+                self._mcusdk.apply_command(command)
+            except Exception as e:
+                logger.error(
+                    f"Error applying command via MCU SDK: {e}. "
+                    "Command logged but not sent to MCU.",
+                    exc_info=True
+                )
+                raise e
+        else:
+            # MCU SDK not available - log command for debugging
+            logger.debug(
+                f"[JOINT COMMAND] MCU SDK not available. Command not sent. "
+                f"timestamp={command.timestamp_ns}, "
+                f"joint_pos={joint_positions.tolist()}, "
+                f"shape={joint_positions.shape}, "
+                f"dtype={joint_positions.dtype}"
+            )
 
     def close(self) -> None:
-        """Close camera and all server resources."""
-        # Close camera first
+        """Close camera, MCU connection, and all server resources."""
+        # Close MCU SDK first
+        if self._mcusdk is not None:
+            self._mcusdk.close()
+            self._mcusdk = None
+        
+        # Close camera
         if self.zed_camera is not None:
             self.zed_camera.close()
             self.zed_camera = None
