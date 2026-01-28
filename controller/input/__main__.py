@@ -186,7 +186,8 @@ Examples:
         "--monitor",
         type=int,
         nargs="?",
-        const=None,
+        const=0,        # use first device when no DEVICE_ID is given
+        default=None,   # no monitoring if flag is absent
         metavar="DEVICE_ID",
         help="Monitor a gamepad device and stream normalized states. "
              "If DEVICE_ID is not provided, uses first available device.",

@@ -135,9 +135,6 @@ def initialize_pygame_if_needed():
     On macOS, pygame must be initialized in the main thread before background
     threads can use it. This ensures proper initialization for cross-platform pygame usage.
     """
-    import platform
-    if platform.system() != "Darwin":
-        return
     
     try:
         import pygame
@@ -167,9 +164,6 @@ def pump_pygame_events_if_needed(last_pump_time):
     On macOS, pygame requires event pumping in the main thread for joystick
     state updates. This function handles that requirement.
     """
-    import platform
-    if platform.system() != "Darwin":
-        return
     
     try:
         import pygame
