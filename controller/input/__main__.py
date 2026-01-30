@@ -47,7 +47,7 @@ def list_devices() -> None:
     devices = InputController.list_devices()
     
     if not devices:
-        print("No gamepad devices found.")
+        print("No controller-capable devices found.")
         print("\nTroubleshooting:")
         print("1. Make sure your gamepad is connected (USB or Bluetooth)")
         print("2. On Linux, you may need to pair Bluetooth devices:")
@@ -58,7 +58,7 @@ def list_devices() -> None:
         print("   - Log out and back in for group changes to take effect")
         return
     
-    print(f"Found {len(devices)} gamepad device(s):\n")
+    print(f"Found {len(devices)} controller-capable device(s):\n")
     for i, device in enumerate(devices):
         print(f"  [{i}] {device['name']}")
         print(f"      Path: {device['path']}")
@@ -87,11 +87,11 @@ def monitor_device(device_id: Optional[int], update_rate_hz: float) -> None:
         # Check for available devices first
         devices = InputController.list_devices()
         if not devices:
-            logger.error("No gamepad devices found. Please connect a gamepad and try again.")
+            logger.error("No controller-capable devices found. Please connect a gamepad and try again.")
             logger.info("Run with --list to see available devices.")
             sys.exit(1)
         
-        # Validate device_id if provided
+        # Validate device_id if provided (index into list of controller-capable devices)
         if device_id is not None:
             if device_id < 0 or device_id >= len(devices):
                 logger.error(
@@ -100,13 +100,15 @@ def monitor_device(device_id: Optional[int], update_rate_hz: float) -> None:
                 )
                 sys.exit(1)
             device_name = devices[device_id]["name"]
+            real_device_id = devices[device_id]["device_id"]
         else:
             device_id = 0
             device_name = devices[0]["name"] if devices else "Unknown"
-        
-        # Start controller
+            real_device_id = devices[0]["device_id"] if devices else 0
+
+        # Start controller (real_device_id is the joystick index for SDL2 Controller)
         logger.info(f"Starting InputController for device [{device_id}]: {device_name}")
-        controller.start(device_id=device_id, update_rate_hz=update_rate_hz)
+        controller.start(device_id=real_device_id, update_rate_hz=update_rate_hz)
         
         # Give controller a moment to initialize
         time.sleep(0.1)
@@ -135,7 +137,7 @@ def monitor_device(device_id: Optional[int], update_rate_hz: float) -> None:
         import pygame
         
         while controller._running and (controller._thread is None or controller._thread.is_alive()):
-            # Pump events in main thread to update joystick state 
+            # Pump events in main thread to update controller state
             pygame.event.pump()
 
             state = controller.get_state()

@@ -150,7 +150,14 @@ def initialize_pygame_if_needed():
             logger.info("Pygame joystick subsystem initialized")
         else:
             logger.info("Pygame joystick subsystem already initialized")
-            
+
+        import pygame._sdl2.controller as sdl2_controller
+        if not sdl2_controller.get_init():
+            sdl2_controller.init()
+            logger.info("SDL2 controller subsystem initialized")
+        else:
+            logger.info("SDL2 controller subsystem already initialized")
+
         logger.info("Pygame fully initialized in main thread - safe for background threads to use")
     except Exception as e:
         logger.error(f"Failed to initialize pygame in main thread: {e}", exc_info=True)
@@ -176,25 +183,27 @@ def pump_pygame_events_if_needed(last_pump_time):
         pass  # Silently ignore errors
 
 
-def log_joystick_info(input_controller):
-    """Log joystick information if available."""
-    if not hasattr(input_controller, '_joystick') or input_controller._joystick is None:
+def log_controller_info(input_controller):
+    """Log SDL2 controller information if available."""
+    if not hasattr(input_controller, '_controller') or input_controller._controller is None:
         return
-    
+
     try:
         import pygame
-        joystick = input_controller._joystick
-        logger.info(f"Joystick info: name={joystick.get_name()}, num_buttons={joystick.get_numbuttons()}, num_axes={joystick.get_numaxes()}")
-        if joystick.get_numbuttons() > 0:
-            logger.info(f"Sample button states: B7={joystick.get_button(7) if joystick.get_numbuttons() > 7 else 'N/A'}, "
-                       f"B9={joystick.get_button(9) if joystick.get_numbuttons() > 9 else 'N/A'}, "
-                       f"B10={joystick.get_button(10) if joystick.get_numbuttons() > 10 else 'N/A'}")
-        if joystick.get_numaxes() > 0:
-            logger.info(f"Sample axis values: A0={joystick.get_axis(0):.2f}, A1={joystick.get_axis(1):.2f}, "
-                       f"A4={joystick.get_axis(4) if joystick.get_numaxes() > 4 else 'N/A':.2f}, "
-                       f"A5={joystick.get_axis(5) if joystick.get_numaxes() > 5 else 'N/A':.2f}")
+        controller = input_controller._controller
+        name = controller.as_joystick().get_name()
+        logger.info(f"Controller info (SDL2): name={name}")
+        logger.info(
+            f"Sample axis (logical): LX={controller.get_axis(pygame.CONTROLLER_AXIS_LEFTX) / 32768.0:.2f}, "
+            f"LY={controller.get_axis(pygame.CONTROLLER_AXIS_LEFTY) / 32768.0:.2f}, "
+            f"TRIGGERLEFT={controller.get_axis(pygame.CONTROLLER_AXIS_TRIGGERLEFT) / 32768.0:.2f}"
+        )
+        logger.info(
+            f"Sample buttons: LB={controller.get_button(pygame.CONTROLLER_BUTTON_LEFTSHOULDER)}, "
+            f"RB={controller.get_button(pygame.CONTROLLER_BUTTON_RIGHTSHOULDER)}"
+        )
     except Exception as e:
-        logger.warning(f"Could not read joystick directly: {e}")
+        logger.warning(f"Could not read controller directly: {e}")
 
 
 def main():
@@ -265,17 +274,17 @@ def main():
         logger.info(f"Initial state - LT:{state.LT}, LB:{state.LB}, LS:{state.LS}, RS:{state.RS}, RT:{state.RT}, RB:{state.RB}")
         logger.info(f"Initial sticks - LX:{state.LX:.2f}, LY:{state.LY:.2f}, RX:{state.RX:.2f}, RY:{state.RY:.2f}")
         logger.info(f"Initial control data: hip_up_down={control_data.hip_up_down:.2f}, knee_out_in={control_data.knee_out_in:.2f}, hip_yaw={control_data.hip_yaw:.2f}")
-        log_joystick_info(input_controller)
+        log_controller_info(input_controller)
     except Exception as e:
         logger.warning(f"Could not get initial InputController state: {e}")
     
-    # Check if gamepad is detected (pygame-based detection)
+    # Check if gamepad is detected (SDL2 controller)
     gamepad_detected = False
-    if hasattr(input_controller, '_joystick') and input_controller._joystick is not None:
+    if hasattr(input_controller, '_controller') and input_controller._controller is not None:
         gamepad_detected = True
-    
+
     if not gamepad_detected:
-        logger.error("No gamepad detected. Please connect a gamepad and try again. Make sure pygame is installed: pip install pygame")
+        logger.error("No controller detected. Please connect a gamepad and try again. Make sure pygame is installed: pip install pygame")
         logger.error("Exiting script - gamepad is required for this test.")
         return
     
