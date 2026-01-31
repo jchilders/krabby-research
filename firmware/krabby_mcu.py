@@ -5,7 +5,7 @@ import threading
 import logging
 from typing import Dict, Optional
 from serial.tools import list_ports
-from interfaces.joint_telemetry import JointTelemetry
+from firmware.interfaces.joint_telemetry import JointTelemetry
 
 import keyboard
 
