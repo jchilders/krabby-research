@@ -89,7 +89,8 @@ def main():
         hal_server.initialize()
 
         # Initialize hardware (camera, sensors, actuators)
-        hal_server.initialize_camera()
+        # TODO: Re-enable camera initialization once ZED SDK/pyzed is properly configured
+        # hal_server.initialize_camera()
         hal_server.initialize_sensors()
         hal_server.initialize_actuators()
 

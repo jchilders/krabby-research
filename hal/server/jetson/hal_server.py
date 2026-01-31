@@ -236,18 +236,17 @@ class JetsonHalServer(HalServerBase):
         Constructs HardwareObservations from raw sensor data.
         Extracts:
         - Joint positions from state vector (echoed from last command)
-        - Depth maps from ZED camera
-        - RGB images if available from ZED camera
+        - Depth maps from ZED camera (if available)
+        - RGB images if available from ZED camera (if available)
         
         Base class will loop until observation is published or throw if client isn't consuming.
-        """
-        # Validate camera is initialized (required for policy operation)
-        if self.zed_camera is None:
-            raise RuntimeError(
-                "ZED camera not initialized. "
-                "Camera must be initialized via initialize_camera() before calling set_observation()."
-            )
         
+        Note: Camera initialization is optional for basic infrastructure testing.
+        If camera is not initialized, placeholder values (zeros) will be used for
+        depth and RGB images. WARNING: These placeholder values are NOT suitable
+        for actual policy inference - the model requires real depth/scan features.
+        For production deployment, camera MUST be initialized.
+        """
         # Build state vector (required for publishing observations)
         state_vector = self._build_state_vector()
         if state_vector is None:
@@ -260,13 +259,40 @@ class JetsonHalServer(HalServerBase):
         # Format: base_pos(3), base_quat(4), base_lin_vel(3), base_ang_vel(3),
         #         joint_pos(ACTION_DIM), joint_vel(ACTION_DIM)
         # Total: 3 + 4 + 3 + 3 = 13 before joint positions
+        base_pos = state_vector[0:3]
+        base_quat = state_vector[3:7]  # (x, y, z, w) format
+        base_lin_vel = state_vector[7:10]
+        base_ang_vel = state_vector[10:13]
         joint_pos = state_vector[13:13+self._action_dim]
+        joint_vel = state_vector[13+self._action_dim:13+2*self._action_dim]
         
         # Pad or truncate joint positions to 12 DOF (Krabby has 12 joints)
         # HardwareObservations expects exactly 12 joint positions
         joint_positions = np.zeros(12, dtype=np.float32)
         num_joints = min(len(joint_pos), 12)
         joint_positions[:num_joints] = joint_pos[:num_joints].astype(np.float32)
+        
+        # Pad or truncate joint velocities to 12 DOF
+        joint_velocities = np.zeros(12, dtype=np.float32)
+        num_joints_vel = min(len(joint_vel), 12)
+        joint_velocities[:num_joints_vel] = joint_vel[:num_joints_vel].astype(np.float32)
+        
+        # Extract base velocities (body frame) - for now use world frame values as placeholder
+        # TODO: Transform to body frame when real IMU data is available
+        base_ang_vel_b = base_ang_vel.astype(np.float32)
+        base_lin_vel_b = base_lin_vel.astype(np.float32)
+        
+        # Base quaternion (world frame, x,y,z,w format)
+        base_quat_w = base_quat.astype(np.float32)
+        
+        # Contact forces (placeholder - 5 values, normalized to [-0.5, 0.5])
+        contact_forces = np.zeros(5, dtype=np.float32)
+        
+        # Previous action (from last command or zeros if none)
+        previous_action = np.zeros(12, dtype=np.float32)
+        if self._last_joint_positions is not None:
+            num_prev = min(len(self._last_joint_positions), 12)
+            previous_action[:num_prev] = self._last_joint_positions[:num_prev].astype(np.float32)
 
         # Get camera data from ZED camera
         # ZED camera provides depth features for model input, but we also need
@@ -324,6 +350,12 @@ class JetsonHalServer(HalServerBase):
             camera_height=camera_height,
             camera_width=camera_width,
             timestamp_ns=time.time_ns(),
+            base_ang_vel_b=base_ang_vel_b,
+            base_lin_vel_b=base_lin_vel_b,
+            base_quat_w=base_quat_w,
+            joint_velocities=joint_velocities,
+            contact_forces=contact_forces,
+            previous_action=previous_action,
         )
 
         # Publish hardware observation via base-class publisher

@@ -10,7 +10,7 @@ from typing import Optional, Type
 
 import numpy as np
 import torch
-from isaaclab.utils.math import euler_xyz_from_quat, wrap_to_pi
+from compute.parkour.utils.math import euler_xyz_from_quat, wrap_to_pi
 
 from hal.client.data_structures.hardware import HardwareObservations
 from hal.client.observation.types import NavigationCommand
