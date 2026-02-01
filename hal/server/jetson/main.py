@@ -21,6 +21,7 @@ from hal.server import HalServerConfig
 from hal.server.jetson import JetsonHalServer
 from compute.parkour.inference_client import ParkourInferenceClient
 from compute.parkour.policy_interface import ModelWeights
+from compute.parkour.model_definition import DEFAULT_MODEL_OBSERVATION_DEFINITION
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,7 +36,6 @@ def main():
 
     # Model arguments
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
-    parser.add_argument("--action_dim", type=int, required=True, help="Action dimension")
     parser.add_argument("--obs_dim", type=int, required=True, help="Observation dimension")
     parser.add_argument("--control_rate", type=float, default=100.0, help="Control loop rate in Hz")
     parser.add_argument(
@@ -61,6 +61,8 @@ def main():
     )
 
     args = parser.parse_args()
+
+    model_definition = DEFAULT_MODEL_OBSERVATION_DEFINITION
 
     # Running flag for graceful shutdown
     running = True
@@ -105,10 +107,9 @@ def main():
             command_endpoint=args.command_bind,
         )
 
-        # Create model weights configuration
         model_weights = ModelWeights(
             checkpoint_path=args.checkpoint,
-            action_dim=args.action_dim,
+            action_dim=model_definition.action_dim,
             obs_dim=args.obs_dim,
         )
 

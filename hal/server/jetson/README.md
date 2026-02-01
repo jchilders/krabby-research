@@ -57,7 +57,6 @@ After installation, use the `krabby-hal-server-jetson` command:
 ```bash
 krabby-hal-server-jetson \
   --checkpoint /path/to/model.pt \
-  --action_dim 12 \
   --obs_dim 753 \
   --control_rate 100.0 \
   --device cuda
@@ -68,7 +67,6 @@ krabby-hal-server-jetson \
 ```bash
 python -m hal.server.jetson.main \
   --checkpoint /path/to/model.pt \
-  --action_dim 12 \
   --obs_dim 753
 ```
 
@@ -76,7 +74,6 @@ python -m hal.server.jetson.main \
 
 **Required:**
 - `--checkpoint`: Path to model checkpoint file
-- `--action_dim`: Action dimension (typically 12)
 - `--obs_dim`: Observation dimension (typically 753)
 
 **Optional:**

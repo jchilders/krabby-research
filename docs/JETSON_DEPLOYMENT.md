@@ -145,7 +145,6 @@ docker run --rm --runtime=nvidia \
     -v /dev:/dev \
     krabby-locomotion:latest \
     --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --action_dim 12 \
     --obs_dim 753 \
     --inference_device cuda \
     --control_rate 100.0
@@ -167,7 +166,6 @@ docker run --rm --runtime=nvidia \
     --device /dev/video0 \
     krabby-locomotion:latest \
     --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --action_dim 12 \
     --obs_dim 753 \
     --inference_device cuda \
     --control_rate 100.0
@@ -185,7 +183,6 @@ docker run --rm --runtime=nvidia \
     -v /dev:/dev \
     krabby-locomotion:latest \
     --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --action_dim 12 \
     --obs_dim 753 \
     --inference_device cuda \
     --control_rate 100.0
@@ -206,7 +203,6 @@ docker run --rm --runtime=nvidia \
     --name hal-server \
     krabby-locomotion:latest \
     --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --action_dim 12 \
     --obs_dim 753 \
     --inference_device cuda \
     --observation_bind tcp://*:6001 \
@@ -220,7 +216,6 @@ docker run --rm --runtime=nvidia \
     --name hal-client \
     krabby-locomotion:latest \
     --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --action_dim 12 \
     --obs_dim 753 \
     --observation_endpoint tcp://hal-server:6001 \
     --command_endpoint tcp://hal-server:6002 \
