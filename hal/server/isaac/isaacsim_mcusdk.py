@@ -42,21 +42,20 @@ class IsaacSimMCUSDK:
             
         Returns:
             Normalized joint positions as numpy array.
-            Shape: (18,) - always returns 18 joints (pads 12-joint commands with zeros).
+            Shape: (n,) per robot definition (12 quad, 18 hex).
             Values are normalized PWM values: -1.0 (move in at max speed) to 1.0 (move out at max speed),
             with 0.0 meaning keep joint in current position.
             
         Raises:
-            ValueError: If command is invalid or has wrong number of joints.
+            ValueError: If command is invalid.
         """
         
-        # Extract joint positions array from command
+        # Extract joint positions array from command (length from robot definition)
         command_array = command.joint_positions
         
-        # Validate joint positions shape (should be 18 for hexapod)
-        if command_array.shape[0] != 18:
+        if command_array.ndim != 1 or command_array.size == 0:
             raise ValueError(
-                f"Expected 18 joints, got {command_array.shape[0]} joints"
+                f"joint_positions must be 1D non-empty, got shape {command_array.shape}"
             )
         
         # TODO: Add actual IsaacSim code to control prismatic joints here.

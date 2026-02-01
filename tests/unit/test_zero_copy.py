@@ -14,26 +14,36 @@ import pytest
 import torch
 
 from hal.client.observation.types import NavigationCommand
-from compute.parkour.parkour_types import (
-    InferenceResponse,
-    NUM_PROP,
-    NUM_SCAN,
-    NUM_PRIV_EXPLICIT,
-    NUM_PRIV_LATENT,
-    HISTORY_DIM,
-    OBS_DIM,
-    ParkourModelIO,
-    ParkourObservation,
+from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
+from compute.parkour.parkour_types import InferenceResponse, ParkourModelIO, ParkourObservation
+from hal.server.robot_definition import (
+    ObservationScalingDefinition,
+    RobotDefinition,
 )
+
+_TEST_ROBOT = RobotDefinition(
+    name="test_robot",
+    legs=("FL", "FR", "RL", "RR"),
+    joint_types=("hip_yaw", "hip_pitch", "knee"),
+    observation_scaling=ObservationScalingDefinition(
+        base_ang_vel=0.25,
+        joint_vel=0.05,
+        base_lin_vel=2.0,
+    ),
+)
+
+
+@pytest.fixture
+def observation_dimensions():
+    return PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(_TEST_ROBOT)
 
 
 class TestNumpyToTorchZeroCopy:
     """Test zero-copy numpy to torch tensor conversion."""
 
-    def test_torch_from_numpy_shares_memory_contiguous_float32(self):
+    def test_torch_from_numpy_shares_memory_contiguous_float32(self, observation_dimensions):
         """Verify torch.from_numpy() shares memory with C-contiguous float32 arrays."""
-        # Create C-contiguous float32 array
-        arr = np.zeros(OBS_DIM, dtype=np.float32)
+        arr = np.zeros(observation_dimensions.obs_dim, dtype=np.float32)
         assert arr.flags["C_CONTIGUOUS"], "Array should be C-contiguous"
         assert arr.dtype == np.float32, "Array should be float32"
 
@@ -48,10 +58,10 @@ class TestNumpyToTorchZeroCopy:
         tensor[1] = 99.0
         assert arr[1] == 99.0, "Numpy array should reflect changes to tensor (shared memory)"
 
-    def test_torch_from_numpy_requires_contiguous_for_zero_copy(self):
+    def test_torch_from_numpy_requires_contiguous_for_zero_copy(self, observation_dimensions):
         """Verify torch.from_numpy() works best with C-contiguous arrays."""
-        # Create non-contiguous array by taking every other element
-        arr_base = np.zeros(OBS_DIM * 2, dtype=np.float32)
+        obs_dim = observation_dimensions.obs_dim
+        arr_base = np.zeros(obs_dim * 2, dtype=np.float32)
         arr_non_contig = arr_base[::2]  # Every other element
         assert not arr_non_contig.flags["C_CONTIGUOUS"], "Array should not be C-contiguous"
 
@@ -70,10 +80,9 @@ class TestNumpyToTorchZeroCopy:
         arr_contig[0] = 42.0
         assert tensor_contig[0].item() == 42.0, "Contiguous array should share memory with tensor"
 
-    def test_torch_from_numpy_copies_when_not_float32(self):
+    def test_torch_from_numpy_copies_when_not_float32(self, observation_dimensions):
         """Verify conversion handles non-float32 arrays correctly."""
-        # Create float64 array
-        arr = np.zeros(OBS_DIM, dtype=np.float64)
+        arr = np.zeros(observation_dimensions.obs_dim, dtype=np.float64)
         assert arr.dtype == np.float64, "Array should be float64"
 
         # Convert to float32 (creates copy)
@@ -84,32 +93,27 @@ class TestNumpyToTorchZeroCopy:
         arr[0] = 42.0
         assert tensor[0].item() == 0.0, "Tensor should not be affected by float64 array changes"
 
-    def test_policy_interface_observation_conversion(self):
+    def test_policy_interface_observation_conversion(self, observation_dimensions):
         """Test that policy interface converts observations with zero-copy when possible."""
-        from compute.parkour.policy_interface import ParkourPolicyModel
+        d = observation_dimensions
+        obs_array = np.zeros(d.obs_dim, dtype=np.float32)
+        assert obs_array.flags["C_CONTIGUOUS"]
 
-        # Create observation in training format (C-contiguous, float32)
-        obs_array = np.zeros(OBS_DIM, dtype=np.float32)
-        assert obs_array.flags["C_CONTIGUOUS"], "Observation should be C-contiguous"
-
-        # Create ParkourModelIO
         nav_cmd = NavigationCommand.create_now()
         observation = ParkourObservation(
             timestamp_ns=1,
-            schema_version="1.0",
             observation=obs_array,
+            observation_dimensions=d,
         )
         model_io = ParkourModelIO(
             timestamp_ns=1,
-            schema_version="1.0",
             nav_cmd=nav_cmd,
             observation=observation,
         )
 
-        # Create a mock policy model to test conversion
         class MockPolicyModel:
-            def __init__(self):
-                self.obs_dim = OBS_DIM
+            def __init__(self, obs_dim):
+                self.obs_dim = obs_dim
                 self.device = torch.device("cpu")
 
             def _build_observation_tensor(self, io):
@@ -121,7 +125,7 @@ class TestNumpyToTorchZeroCopy:
                     obs_array = obs_array.astype(np.float32, copy=False)
                 return torch.from_numpy(obs_array).to(self.device).unsqueeze(0)
 
-        model = MockPolicyModel()
+        model = MockPolicyModel(d.obs_dim)
         tensor = model._build_observation_tensor(model_io)
 
         # Verify they share memory
@@ -247,58 +251,56 @@ class TestActionTensorZeroCopy:
 class TestObservationViewMethods:
     """Test that observation view methods return zero-copy views."""
 
-    def test_get_proprioceptive_returns_view(self):
+    def test_get_proprioceptive_returns_view(self, observation_dimensions):
         """Verify get_proprioceptive() returns a view, not a copy."""
-        obs_array = np.zeros(OBS_DIM, dtype=np.float32)
-        obs = ParkourObservation(timestamp_ns=1, observation=obs_array)
-
+        d = observation_dimensions
+        obs_array = np.zeros(d.obs_dim, dtype=np.float32)
+        obs = ParkourObservation(
+            timestamp_ns=1,
+            observation=obs_array,
+            observation_dimensions=d,
+        )
         prop = obs.get_proprioceptive()
-
-        # Modify view
         prop[0] = 42.0
-        assert obs_array[0] == 42.0, "Original array should reflect changes (view, not copy)"
-
-        # Modify original
+        assert obs_array[0] == 42.0
         obs_array[1] = 99.0
-        assert prop[1] == 99.0, "View should reflect changes to original array"
+        assert prop[1] == 99.0
 
-    def test_get_scan_returns_view(self):
+    def test_get_scan_returns_view(self, observation_dimensions):
         """Verify get_scan() returns a view, not a copy."""
-        obs_array = np.zeros(OBS_DIM, dtype=np.float32)
-        obs = ParkourObservation(timestamp_ns=1, observation=obs_array)
-
+        d = observation_dimensions
+        obs_array = np.zeros(d.obs_dim, dtype=np.float32)
+        obs = ParkourObservation(
+            timestamp_ns=1,
+            observation=obs_array,
+            observation_dimensions=d,
+        )
         scan = obs.get_scan()
-
-        # Verify it's a view
         scan[0] = 42.0
-        expected_idx = NUM_PROP
-        assert obs_array[expected_idx] == 42.0, "Original array should reflect changes (view)"
+        assert obs_array[d.num_prop] == 42.0
 
-    def test_all_view_methods_return_views(self):
+    def test_all_view_methods_return_views(self, observation_dimensions):
         """Verify all view methods return views, not copies."""
-        obs_array = np.zeros(OBS_DIM, dtype=np.float32)
-        obs = ParkourObservation(timestamp_ns=1, observation=obs_array)
-
-        # Test all view methods
+        d = observation_dimensions
+        obs_array = np.zeros(d.obs_dim, dtype=np.float32)
+        obs = ParkourObservation(
+            timestamp_ns=1,
+            observation=obs_array,
+            observation_dimensions=d,
+        )
         prop = obs.get_proprioceptive()
         scan = obs.get_scan()
         priv_explicit = obs.get_priv_explicit()
         priv_latent = obs.get_priv_latent()
         history = obs.get_history()
-
-        # Modify each view and verify original array is affected
         prop[0] = 1.0
         assert obs_array[0] == 1.0
-
         scan[0] = 2.0
-        assert obs_array[NUM_PROP] == 2.0
-
+        assert obs_array[d.num_prop] == 2.0
         priv_explicit[0] = 3.0
-        assert obs_array[NUM_PROP + NUM_SCAN] == 3.0
-
+        assert obs_array[d.num_prop + d.num_scan] == 3.0
         priv_latent[0] = 4.0
-        assert obs_array[NUM_PROP + NUM_SCAN + NUM_PRIV_EXPLICIT] == 4.0
-
+        assert obs_array[d.num_prop + d.num_scan + d.num_priv_explicit] == 4.0
         history[0] = 5.0
-        assert obs_array[-HISTORY_DIM] == 5.0
+        assert obs_array[-d.history_dim] == 5.0
 

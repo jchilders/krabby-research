@@ -24,8 +24,9 @@ import torch
 import yaml
 from rsl_rl.env import VecEnv
 
+from compute.parkour.model_definition import ObservationDimensions
 from compute.parkour.modules.on_policy_runner_with_extractor import OnPolicyRunnerWithExtractor
-from compute.parkour.parkour_types import InferenceResponse, OBS_DIM, ParkourModelIO
+from compute.parkour.parkour_types import InferenceResponse, ParkourModelIO
 
 logger = logging.getLogger(__name__)
 
@@ -36,15 +37,15 @@ class ModelWeights:
 
     Attributes:
         checkpoint_path: Path to checkpoint file (.pt or .pth)
-        config_path: Path to agent config file (agent.yaml) - optional, will try to find in checkpoint dir
-        action_dim: Expected action dimension (typically 12)
-        obs_dim: Expected observation dimension
+        observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
+        config_path: Path to agent config file (agent.yaml)
+        action_dim: Expected action dimension
     """
 
     checkpoint_path: str
+    observation_dimensions: ObservationDimensions
+    action_dim: int
     config_path: Optional[str] = None
-    action_dim: int = 12
-    obs_dim: int = OBS_DIM
 
 
 class MinimalVecEnvStub(VecEnv):
@@ -138,7 +139,7 @@ class ParkourPolicyModel:
         self.weights = weights
         self.device = torch.device(device)
         self.action_dim = weights.action_dim
-        self.obs_dim = weights.obs_dim
+        self.obs_dim = weights.observation_dimensions.obs_dim
 
         # Load checkpoint path
         checkpoint_path = Path(weights.checkpoint_path)
@@ -224,19 +225,14 @@ class ParkourPolicyModel:
             except Exception as e:
                 logger.warning(f"Failed to load config from {config_file}: {e}")
 
-        # Fallback: create minimal config dict
         logger.warning(
-            f"Config file not found, using minimal config. "
+            f"Config file not found, building from observation dimensions. "
             f"Expected at: {checkpoint_dir / 'params' / 'agent.yaml'}"
         )
-        return self._create_minimal_config()
+        return self._create_minimal_config(self.weights.observation_dimensions)
 
-    def _create_minimal_config(self) -> dict:
-        """Create minimal config dict for OnPolicyRunnerWithExtractor.
-
-        Returns:
-            Minimal config dict
-        """
+    def _create_minimal_config(self, dims: ObservationDimensions) -> dict:
+        """Build minimal config dict from observation dimensions."""
         return {
             "algorithm": {
                 "class_name": "PPOWithExtractor",
@@ -259,10 +255,10 @@ class ParkourPolicyModel:
             },
             "estimator": {
                 "class_name": "DefaultEstimator",
-                "num_prop": 53,
-                "num_scan": 132,
-                "num_priv_explicit": 9,
-                "num_priv_latent": 29,
+                "num_prop": dims.num_prop,
+                "num_scan": dims.num_scan,
+                "num_priv_explicit": dims.num_priv_explicit,
+                "num_priv_latent": dims.num_priv_latent,
                 "hidden_dims": [128, 64],
                 "learning_rate": 2.0e-4,
                 "train_with_estimated_states": False,
@@ -270,11 +266,11 @@ class ParkourPolicyModel:
             "depth_encoder": None,
             "policy": {
                 "class_name": "ActorCriticRMA",
-                "num_prop": 53,
-                "num_scan": 132,
-                "num_priv_explicit": 9,
-                "num_priv_latent": 29,
-                "num_hist": 10,
+                "num_prop": dims.num_prop,
+                "num_scan": dims.num_scan,
+                "num_priv_explicit": dims.num_priv_explicit,
+                "num_priv_latent": dims.num_priv_latent,
+                "num_hist": dims.num_hist,
                 "actor_hidden_dims": [512, 256, 128],
                 "critic_hidden_dims": [512, 256, 128],
                 "scan_encoder_dims": [128, 64, 32],
@@ -284,7 +280,7 @@ class ParkourPolicyModel:
                     "class_name": "Actor",
                     "state_history_encoder": {
                         "class_name": "StateHistoryEncoder",
-                        "channel_size": 10,
+                        "channel_size": dims.num_hist,
                     },
                 },
             },
@@ -303,7 +299,7 @@ class ParkourPolicyModel:
             io: ParkourModelIO input with observation in training format
 
         Returns:
-            Observation tensor of shape (1, OBS_DIM) for batch inference
+            Observation tensor of shape (1, obs_dim) for batch inference
 
         Raises:
             ValueError: If input is invalid or incomplete

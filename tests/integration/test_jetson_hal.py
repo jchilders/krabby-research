@@ -12,10 +12,20 @@ logger = logging.getLogger(__name__)
 from hal.client.client import HalClient
 from hal.client.config import HalClientConfig, HalServerConfig
 from hal.client.observation.types import NavigationCommand
+from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
 from compute.testing.inference_test_runner import InferenceTestRunner
 from hal.server.jetson.camera import ZedCamera, create_zed_camera
 from hal.server.jetson import JetsonHalServer
+from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+
+
+@pytest.fixture
+def jetson_observation_dims():
+    """Observation dimensions and action_dim for Jetson (Krabby Hex + parkour model)."""
+    model_def = PARKOUR_MODEL_OBSERVATION_DEFINITION
+    obs_dims = model_def.get_observation_dimensions(KRABBY_HEX_DEFINITION)
+    return obs_dims, model_def.action_dim
 
 
 @pytest.fixture
@@ -37,9 +47,14 @@ def hal_client_config():
 
 
 @pytest.mark.jetson
-def test_jetson_hal_server_initialization(hal_server_config):
+def test_jetson_hal_server_initialization(hal_server_config, jetson_observation_dims):
     """Test Jetson HAL server initialization with inproc endpoints."""
-    hal_server = JetsonHalServer(hal_server_config)
+    obs_dims, action_dim = jetson_observation_dims
+    hal_server = JetsonHalServer(
+        hal_server_config,
+        observation_dimensions=obs_dims,
+        action_dim=action_dim,
+    )
     hal_server.initialize()
 
     hal_server.set_debug(True)
@@ -67,33 +82,33 @@ def test_jetson_hal_server_camera_initialization(hal_server_config):
 
 
 @pytest.mark.jetson
-def test_jetson_hal_server_observation_publishing(hal_server_config, hal_client_config):
+def test_jetson_hal_server_observation_publishing(
+    hal_server_config, hal_client_config, jetson_observation_dims
+):
     """Test observation publishing from Jetson HAL server."""
     import zmq
-    
-    # Use shared context for inproc connections
-    # Setup HAL server with shared context
-    hal_server = JetsonHalServer(hal_server_config)
+
+    obs_dims, action_dim = jetson_observation_dims
+    hal_server = JetsonHalServer(
+        hal_server_config,
+        observation_dimensions=obs_dims,
+        action_dim=action_dim,
+    )
     hal_server.initialize()
 
     hal_server.set_debug(True)
 
-    # Mock camera to return depth features
     mock_camera = MagicMock(spec=ZedCamera)
     mock_camera.is_ready.return_value = True
-    mock_camera.get_depth_features.return_value = None  # Will be set below
+    mock_camera.get_depth_features.return_value = None
     hal_server.zed_camera = mock_camera
 
-    # Setup HAL client with server's transport context
     hal_client = HalClient(hal_client_config, context=hal_server.get_transport_context())
     hal_client.initialize()
 
     hal_client.set_debug(True)
 
-    # Mock depth features (NUM_SCAN = 132)
-    from compute.parkour.parkour_types import NUM_SCAN
-
-    depth_features = np.array([1.0, 2.0, 3.0] * 44, dtype=np.float32)[:NUM_SCAN]  # 132 features
+    depth_features = np.array([1.0, 2.0, 3.0] * 44, dtype=np.float32)[: obs_dims.num_scan]
     mock_camera.get_depth_features.return_value = depth_features
 
     # Mock state vector
@@ -124,13 +139,18 @@ def test_jetson_hal_server_observation_publishing(hal_server_config, hal_client_
 
 
 @pytest.mark.jetson
-def test_jetson_hal_server_joint_command_application(hal_server_config, hal_client_config):
+def test_jetson_hal_server_joint_command_application(
+    hal_server_config, hal_client_config, jetson_observation_dims
+):
     """Test joint command application in Jetson HAL server."""
     import zmq
-    
-    # Use shared context for inproc connections
-    # Setup HAL server with shared context
-    hal_server = JetsonHalServer(hal_server_config)
+
+    obs_dims, action_dim = jetson_observation_dims
+    hal_server = JetsonHalServer(
+        hal_server_config,
+        observation_dimensions=obs_dims,
+        action_dim=action_dim,
+    )
     hal_server.initialize()
 
     hal_server.set_debug(True)
@@ -166,7 +186,7 @@ def test_jetson_hal_server_joint_command_application(hal_server_config, hal_clie
 
     # Map inference response to hardware joint positions
     from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
-    mapper = ParkourLocomotionToHWMapper(model_action_dim=12)
+    mapper = ParkourLocomotionToHWMapper(robot_definition=KRABBY_HEX_DEFINITION)
     joint_positions = mapper.map(inference_response, observation_timestamp_ns=time.time_ns())
     
     # Send command
@@ -186,23 +206,26 @@ def test_jetson_hal_server_joint_command_application(hal_server_config, hal_clie
 
 
 @pytest.mark.jetson
-def test_jetson_hal_server_end_to_end_with_game_loop(hal_server_config, hal_client_config):
+def test_jetson_hal_server_end_to_end_with_game_loop(
+    hal_server_config, hal_client_config, jetson_observation_dims
+):
     """Test end-to-end integration with inference logic (game loop)."""
     import zmq
-    
-    # Use shared context for inproc connections
-    hal_server = JetsonHalServer(hal_server_config)
+
+    obs_dims, action_dim = jetson_observation_dims
+    hal_server = JetsonHalServer(
+        hal_server_config,
+        observation_dimensions=obs_dims,
+        action_dim=action_dim,
+    )
     hal_server.initialize()
 
     hal_server.set_debug(True)
 
-    # Mock camera
     mock_camera = MagicMock(spec=ZedCamera)
     mock_camera.is_ready.return_value = True
 
-    from compute.parkour.parkour_types import NUM_SCAN
-
-    depth_features = np.zeros(NUM_SCAN, dtype=np.float32)
+    depth_features = np.zeros(obs_dims.num_scan, dtype=np.float32)
     depth_features[0:64] = 1.0  # Set first 64 features
     mock_camera.get_depth_features.return_value = depth_features
     hal_server.zed_camera = mock_camera
@@ -244,7 +267,9 @@ def test_jetson_hal_server_end_to_end_with_game_loop(hal_server_config, hal_clie
             )
 
     model = MockPolicyModel()
-    test_runner = InferenceTestRunner(model, hal_client, control_rate_hz=100.0)
+    test_runner = InferenceTestRunner(
+        model, hal_client, control_rate_hz=100.0, robot_definition=KRABBY_HEX_DEFINITION
+    )
 
     # Set navigation command on test runner
     nav_cmd = NavigationCommand.create_now()
@@ -268,13 +293,12 @@ def test_jetson_hal_server_end_to_end_with_game_loop(hal_server_config, hal_clie
             from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
             from compute.parkour.parkour_types import ParkourModelIO
             
-            mapper = HWObservationsToParkourMapper()
+            mapper = HWObservationsToParkourMapper(obs_dims)
             parkour_obs = mapper.map(hw_obs, nav_cmd=nav_cmd)
             
             # Build model IO (preserve timestamp from observation)
             model_io = ParkourModelIO(
                 timestamp_ns=parkour_obs.timestamp_ns,
-                schema_version=parkour_obs.schema_version,
                 nav_cmd=nav_cmd,
                 observation=parkour_obs,
             )
@@ -284,7 +308,7 @@ def test_jetson_hal_server_end_to_end_with_game_loop(hal_server_config, hal_clie
                 if inference_result.success:
                     # Map inference response to hardware joint positions
                     from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
-                    mapper = ParkourLocomotionToHWMapper(model_action_dim=12)
+                    mapper = ParkourLocomotionToHWMapper(robot_definition=KRABBY_HEX_DEFINITION)
                     joint_positions = mapper.map(inference_result, observation_timestamp_ns=hw_obs.timestamp_ns)
                     hal_client.put_joint_command(joint_positions)
 
@@ -331,19 +355,24 @@ def test_jetson_hal_server_inference_runner(hal_server_config):
 
 
 @pytest.mark.jetson
-def test_jetson_hal_server_network_communication():
+def test_jetson_hal_server_network_communication(jetson_observation_dims):
     """Test network communication (x86 → Jetson simulation).
 
     This test simulates network communication by using TCP endpoints.
     Note: In production, Jetson uses inproc, but this tests TCP capability.
     """
     import threading
-    # Use TCP endpoints for network simulation
+
+    obs_dims, action_dim = jetson_observation_dims
     server_config = HalServerConfig(
         observation_bind="tcp://*:8001",
         command_bind="tcp://*:8002",
     )
-    server = JetsonHalServer(server_config)
+    server = JetsonHalServer(
+        server_config,
+        observation_dimensions=obs_dims,
+        action_dim=action_dim,
+    )
     server.initialize()
 
     server.set_debug(True)
@@ -417,7 +446,7 @@ def test_jetson_hal_server_network_communication():
 
     # Map inference response to hardware joint positions
     from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
-    mapper = ParkourLocomotionToHWMapper(model_action_dim=12)
+    mapper = ParkourLocomotionToHWMapper(robot_definition=KRABBY_HEX_DEFINITION)
     joint_positions = mapper.map(inference_response, observation_timestamp_ns=time.time_ns())
     
     client.put_joint_command(joint_positions)
@@ -432,12 +461,18 @@ def test_jetson_hal_server_network_communication():
 
 
 @pytest.mark.jetson
-def test_jetson_hal_server_camera_error_handling(hal_server_config):
+def test_jetson_hal_server_camera_error_handling(
+    hal_server_config, jetson_observation_dims
+):
     """Test error handling when camera fails."""
     import zmq
-    
-    # Use shared context for inproc connections
-    hal_server = JetsonHalServer(hal_server_config)
+
+    obs_dims, action_dim = jetson_observation_dims
+    hal_server = JetsonHalServer(
+        hal_server_config,
+        observation_dimensions=obs_dims,
+        action_dim=action_dim,
+    )
     hal_server.initialize()
 
     hal_server.set_debug(True)
@@ -474,24 +509,28 @@ def test_jetson_hal_server_state_error_handling(hal_server_config):
 
 
 @pytest.mark.jetson
-def test_jetson_hal_server_sustained_bidirectional_messaging(hal_server_config, hal_client_config):
+def test_jetson_hal_server_sustained_bidirectional_messaging(
+    hal_server_config, hal_client_config, jetson_observation_dims
+):
     """Test sustained bidirectional messaging without drops or disconnects.
-    
+
     This test verifies sustained operation for 3 seconds (300 cycles at 100 Hz)
     with bidirectional messaging (server publishes, client receives and sends commands).
     Reduced from 30 seconds to 3 seconds for faster test execution while still
     verifying sustained operation, drop rate, and rate maintenance.
     """
     import zmq
-    
-    # Use shared context for inproc connections
-    # Setup HAL server with shared context
-    hal_server = JetsonHalServer(hal_server_config)
+
+    obs_dims, action_dim = jetson_observation_dims
+    hal_server = JetsonHalServer(
+        hal_server_config,
+        observation_dimensions=obs_dims,
+        action_dim=action_dim,
+    )
     hal_server.initialize()
 
     hal_server.set_debug(True)
 
-    # Setup HAL client with shared context
     hal_client = HalClient(hal_client_config, context=hal_server.get_transport_context())
     hal_client.initialize()
 
@@ -499,12 +538,9 @@ def test_jetson_hal_server_sustained_bidirectional_messaging(hal_server_config, 
 
     time.sleep(0.1)
 
-    # Mock camera to return depth features
     mock_camera = MagicMock(spec=ZedCamera)
     mock_camera.is_ready.return_value = True
-    from compute.parkour.parkour_types import NUM_SCAN
-
-    depth_features = np.zeros(NUM_SCAN, dtype=np.float32)
+    depth_features = np.zeros(obs_dims.num_scan, dtype=np.float32)
     mock_camera.get_depth_features.return_value = depth_features
     hal_server.zed_camera = mock_camera
 
@@ -570,7 +606,6 @@ def test_jetson_hal_server_sustained_bidirectional_messaging(hal_server_config, 
                 
                 model_io = ParkourModelIO(
                     timestamp_ns=parkour_obs.timestamp_ns,
-                    schema_version=parkour_obs.schema_version,
                     nav_cmd=nav_cmd,
                     observation=parkour_obs,
                 )
@@ -590,7 +625,7 @@ def test_jetson_hal_server_sustained_bidirectional_messaging(hal_server_config, 
                 )
                 # Map inference response to hardware joint positions
                 from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
-                mapper = ParkourLocomotionToHWMapper(model_action_dim=12)
+                mapper = ParkourLocomotionToHWMapper(robot_definition=KRABBY_HEX_DEFINITION)
                 joint_positions = mapper.map(response, observation_timestamp_ns=hw_obs.timestamp_ns)
                 hal_client.put_joint_command(joint_positions)
                 commands_sent += 1
@@ -647,22 +682,26 @@ def test_jetson_hal_server_sustained_bidirectional_messaging(hal_server_config, 
 
 
 @pytest.mark.jetson
-def test_jetson_hal_server_joystick_input_integration(hal_server_config, hal_client_config):
+def test_jetson_hal_server_joystick_input_integration(
+    hal_server_config, hal_client_config, jetson_observation_dims
+):
     """Test joystick input integration with HAL client.
-    
+
     This test simulates joystick input by sending navigation commands
     and verifies they are properly received and used in the control loop.
     """
     import zmq
-    
-    # Use shared context for inproc connections
-    # Setup HAL server with shared context
-    hal_server = JetsonHalServer(hal_server_config)
+
+    obs_dims, action_dim = jetson_observation_dims
+    hal_server = JetsonHalServer(
+        hal_server_config,
+        observation_dimensions=obs_dims,
+        action_dim=action_dim,
+    )
     hal_server.initialize()
 
     hal_server.set_debug(True)
 
-    # Setup HAL client with shared context
     hal_client = HalClient(hal_client_config, context=hal_server.get_transport_context())
     hal_client.initialize()
 
@@ -670,12 +709,9 @@ def test_jetson_hal_server_joystick_input_integration(hal_server_config, hal_cli
 
     time.sleep(0.1)
 
-    # Mock camera
     mock_camera = MagicMock(spec=ZedCamera)
     mock_camera.is_ready.return_value = True
-    from compute.parkour.parkour_types import NUM_SCAN
-
-    depth_features = np.zeros(NUM_SCAN, dtype=np.float32)
+    depth_features = np.zeros(obs_dims.num_scan, dtype=np.float32)
     mock_camera.get_depth_features.return_value = depth_features
     hal_server.zed_camera = mock_camera
 
@@ -716,16 +752,14 @@ def test_jetson_hal_server_joystick_input_integration(hal_server_config, hal_cli
             continue
 
         # Map hardware observation and build model IO with navigation command
-        # Pass navigation command so it's included in the observation
         from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
         from compute.parkour.parkour_types import ParkourModelIO
-        
-        mapper = HWObservationsToParkourMapper()
+
+        mapper = HWObservationsToParkourMapper(obs_dims)
         parkour_obs = mapper.map(hw_obs, nav_cmd=nav_cmd)
         
         model_io = ParkourModelIO(
             timestamp_ns=parkour_obs.timestamp_ns,
-            schema_version=parkour_obs.schema_version,
             nav_cmd=nav_cmd,
             observation=parkour_obs,
         )
@@ -750,9 +784,14 @@ def test_jetson_hal_server_joystick_input_integration(hal_server_config, hal_cli
 
 
 @pytest.mark.jetson
-def test_jetson_hal_server_cleanup(hal_server_config):
+def test_jetson_hal_server_cleanup(hal_server_config, jetson_observation_dims):
     """Test proper cleanup of resources."""
-    hal_server = JetsonHalServer(hal_server_config)
+    obs_dims, action_dim = jetson_observation_dims
+    hal_server = JetsonHalServer(
+        hal_server_config,
+        observation_dimensions=obs_dims,
+        action_dim=action_dim,
+    )
     hal_server.initialize()
 
     hal_server.set_debug(True)

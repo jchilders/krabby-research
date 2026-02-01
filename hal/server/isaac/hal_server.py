@@ -4,6 +4,8 @@ import logging
 import time
 from typing import Optional
 
+from hal.server.robot_definition import RobotDefinition
+
 import numpy as np
 import torch
 from scipy.ndimage import zoom
@@ -22,13 +24,14 @@ class IsaacSimHalServer(HalServerBase):
     Applies joint commands received via HAL to the environment.
     """
 
-    def __init__(self, config: HalServerConfig, env=None):
+    def __init__(self, config: HalServerConfig, env=None, robot_definition: Optional[RobotDefinition] = None):
         """Initialize IsaacSim HAL server.
         
         Args:
             config: HAL server configuration
             env: IsaacSim environment. If provided, environment component
                 references will be cached via _cache_references().
+            robot_definition: Robot definition (quad 12 joints). Used for command slice and observation sizes.
         
         Note:
             If env is provided, this will call _cache_references() to extract
@@ -36,6 +39,7 @@ class IsaacSimHalServer(HalServerBase):
         """
         super().__init__(config)
         self.env = env
+        self.robot_definition = robot_definition
         self.scene = None
         self.robot = None
         self.observation_manager = None
@@ -46,7 +50,8 @@ class IsaacSimHalServer(HalServerBase):
         self._latest_obs_dict = None
         self._latest_obs_tensor = None
         # Track last applied action to use as previous_action in next observation
-        self._last_applied_action = np.zeros(12, dtype=np.float32)
+        action_dim = robot_definition.get_total_joint_count() if robot_definition else 12
+        self._last_applied_action = np.zeros(action_dim, dtype=np.float32)
         # Track last published observation to detect duplicates
         self._last_published_obs_vals = None
         
@@ -477,18 +482,21 @@ class IsaacSimHalServer(HalServerBase):
         
         # Use standardized SDK to get normalized PWM values as numpy array
         action_np = self._mcusdk.apply_command(command, num_envs=num_envs)
-        
+        # Slice to this robot's joint count (quad 12, hex 18)
+        action_dim = self.robot_definition.get_total_joint_count() if self.robot_definition else 12
+        action_np = action_np[:action_dim].astype(np.float32)
+
         # Convert to torch tensor for compatibility with env.step() and calling code
         device = getattr(unwrapped_env, 'device', torch.device("cpu"))
         action = torch.from_numpy(action_np).to(device=device, dtype=torch.float32)
         
         # Add batch dimension if needed (env.step() expects (num_envs, action_dim))
         if action.ndim == 1:
-            action = action.unsqueeze(0)  # Shape: (1, 18)
+            action = action.unsqueeze(0)  # Shape: (1, 12)
         
         # Expand to num_envs if needed
         if action.shape[0] == 1 and num_envs > 1:
-            action = action.expand(num_envs, -1)  # Shape: (num_envs, 18)
+            action = action.expand(num_envs, -1)  # Shape: (num_envs, 12)
 
         return action
 

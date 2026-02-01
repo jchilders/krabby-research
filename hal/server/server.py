@@ -14,7 +14,6 @@ from hal.server.config import HalServerConfig  # Internal import - config is in 
 logger = logging.getLogger(__name__)
 
 # Schema version for messages
-SCHEMA_VERSION = "1.0"
 
 # Topics for PUB/SUB channels
 TOPIC_OBSERVATION = b"observation"  # Complete observation in training format
@@ -133,7 +132,7 @@ class HalServerBase:
     def set_observation(self, hw_obs: "HardwareObservations") -> None:
         """Set/publish hardware observation to clients.
 
-        Sends topic-prefixed multipart message: [topic, schema_version, ...hw_obs_parts]
+        Sends topic-prefixed multipart message: [topic, ...hw_obs_parts]
         The timestamp is included in the hw_obs metadata, so no separate timestamp is needed.
 
         Args:
@@ -150,24 +149,16 @@ class HalServerBase:
         if not isinstance(hw_obs, HardwareObservations):
             raise ValueError(f"hw_obs must be HardwareObservations, got {type(hw_obs)}")
 
-        # Serialize hardware observation
         topic = TOPIC_OBSERVATION
-        schema_version = SCHEMA_VERSION.encode("utf-8")
         hw_obs_parts = hw_obs.to_bytes()
 
-        # Debug logging (conditional to avoid overhead when disabled)
         if self._debug_enabled:
             logger.debug(
                 f"[ZMQ SEND] observation: topic={topic.decode('utf-8')}, "
-                f"schema={schema_version.decode('utf-8')}, "
                 f"timestamp_ns={hw_obs.timestamp_ns}"
             )
 
-        # Send multipart message: [topic, schema_version, ...hw_obs_parts]
-        # Timestamp is already included in hw_obs metadata
-        self.observation_socket.send_multipart(
-            [topic, schema_version] + hw_obs_parts, zmq.NOBLOCK
-        )
+        self.observation_socket.send_multipart([topic] + hw_obs_parts, zmq.NOBLOCK)
         if self._debug_enabled:
             logger.debug(f"[ZMQ SEND] observation: message sent successfully, timestamp={hw_obs.timestamp_ns}")
 

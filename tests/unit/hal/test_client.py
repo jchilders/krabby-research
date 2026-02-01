@@ -14,6 +14,7 @@ from hal.client.config import HalClientConfig
 from hal.server import HalServerConfig
 from hal.client.data_structures.hardware import HardwareObservations
 from hal.client.observation.types import NavigationCommand
+from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
 from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
 from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
 from compute.parkour.parkour_types import InferenceResponse, ParkourModelIO
@@ -161,8 +162,8 @@ def test_hal_client_put_joint_command():
         timing_breakdown=[],
     )
 
-    # Map to hardware joint positions
-    mapper = ParkourLocomotionToHWMapper(model_action_dim=12)
+    # Map to hardware joint positions (quad: 12 joints from robot definition)
+    mapper = ParkourLocomotionToHWMapper(robot_definition=KRABBY_QUAD_DEFINITION)
     joint_positions = mapper.map(inference_response, observation_timestamp_ns=time.time_ns())
 
     # Server needs to be waiting before client sends (PUSH/PULL pattern)

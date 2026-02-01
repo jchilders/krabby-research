@@ -8,16 +8,13 @@ from typing import Optional
 import numpy as np
 import zmq
 
-from compute.parkour.parkour_types import (
-    NUM_PROP,
-    NUM_SCAN,
-    NUM_PRIV_EXPLICIT,
-    NUM_PRIV_LATENT,
-    HISTORY_DIM,
-    OBS_DIM,
+from compute.parkour.model_definition import (
+    PARKOUR_MODEL_OBSERVATION_DEFINITION,
+    ObservationDimensions,
 )
 from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
 from hal.client.data_structures.hardware import HardwareObservations
+from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,29 +33,41 @@ def format_vector(vec: np.ndarray, name: str = "vec") -> str:
     return f"[{vec[0]:.4f}, {vec[1]:.4f}, {vec[2]:.4f}]"
 
 
-def dump_observation_details(observation: np.ndarray, action_dim: int = 12):
+def dump_observation_details(
+    observation: np.ndarray,
+    observation_dimensions: ObservationDimensions,
+    action_dim: int,
+):
     """Dump detailed breakdown of observation array.
 
     Args:
         observation: Complete observation array in training format
+        observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
         action_dim: Action dimension (for joint positions/velocities)
     """
-    if len(observation) != OBS_DIM:
-        print(f"  ⚠️  Warning: Observation length {len(observation)} != expected {OBS_DIM}")
+    d = observation_dimensions
+    if len(observation) != d.obs_dim:
+        print(f"  ⚠️  Warning: Observation length {len(observation)} != expected {d.obs_dim}")
         return
 
-    # Extract components
-    proprioceptive = observation[:NUM_PROP]
-    scan = observation[NUM_PROP : NUM_PROP + NUM_SCAN]
-    priv_explicit = observation[NUM_PROP + NUM_SCAN : NUM_PROP + NUM_SCAN + NUM_PRIV_EXPLICIT]
-    priv_latent = observation[
-        NUM_PROP + NUM_SCAN + NUM_PRIV_EXPLICIT : NUM_PROP + NUM_SCAN + NUM_PRIV_EXPLICIT + NUM_PRIV_LATENT
+    proprioceptive = observation[: d.num_prop]
+    scan = observation[d.num_prop : d.num_prop + d.num_scan]
+    priv_explicit = observation[
+        d.num_prop + d.num_scan : d.num_prop + d.num_scan + d.num_priv_explicit
     ]
-    history = observation[-HISTORY_DIM:]
+    priv_latent = observation[
+        d.num_prop
+        + d.num_scan
+        + d.num_priv_explicit : d.num_prop
+        + d.num_scan
+        + d.num_priv_explicit
+        + d.num_priv_latent
+    ]
+    history = observation[-d.history_dim :]
 
     print(f"\n  Observation Breakdown:")
-    print(f"    Total Dimension: {OBS_DIM}")
-    print(f"    Proprioceptive ({NUM_PROP}):")
+    print(f"    Total Dimension: {d.obs_dim}")
+    print(f"    Proprioceptive ({d.num_prop}):")
     print(f"      Root angular velocity (body frame): {format_vector(proprioceptive[0:3])}")
     print(f"      IMU (roll, pitch): [{proprioceptive[3]:.4f}, {proprioceptive[4]:.4f}]")
     print(f"      Delta yaw: {proprioceptive[6]:.4f}")
@@ -74,36 +83,38 @@ def dump_observation_details(observation: np.ndarray, action_dim: int = 12):
         joint_vel = proprioceptive[13 + action_dim : 13 + 2 * action_dim]
         print(f"      Joint velocities ({action_dim}): min={joint_vel.min():.4f}, max={joint_vel.max():.4f}, mean={joint_vel.mean():.4f}")
 
-    print(f"    Scan Features ({NUM_SCAN}):")
+    print(f"    Scan Features ({d.num_scan}):")
     print(f"      Min: {scan.min():.4f}, Max: {scan.max():.4f}, Mean: {scan.mean():.4f}")
     print(f"      First 5: {scan[:5]}")
     print(f"      Last 5: {scan[-5:]}")
 
-    print(f"    Privileged Explicit ({NUM_PRIV_EXPLICIT}):")
+    print(f"    Privileged Explicit ({d.num_priv_explicit}):")
     print(f"      Base linear velocity (world): {format_vector(priv_explicit[0:3])}")
 
-    print(f"    Privileged Latent ({NUM_PRIV_LATENT}):")
+    print(f"    Privileged Latent ({d.num_priv_latent}):")
     print(f"      Body mass: {priv_latent[0]:.4f}")
     print(f"      Body COM: {format_vector(priv_latent[1:4])}")
     print(f"      Friction: {priv_latent[4]:.4f}")
 
-    print(f"    History ({HISTORY_DIM}):")
+    print(f"    History ({d.history_dim}):")
     print(f"      Min: {history.min():.4f}, Max: {history.max():.4f}, Mean: {history.mean():.4f}")
 
 
 def dump_hal_state(
     observation_endpoint: str,
+    observation_dimensions: ObservationDimensions,
+    action_dim: int,
     command_endpoint: Optional[str] = None,
-    action_dim: int = 12,
     verbose: bool = False,
 ):
     """Dump current HAL server state.
 
     Args:
         observation_endpoint: Observation endpoint (required)
+        observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
         command_endpoint: Command endpoint (optional)
-        action_dim: Action dimension for joint parsing (default 12)
-        verbose: Show detailed breakdown (default False)
+        action_dim: Action dimension for joint parsing
+        verbose: Show detailed breakdown
     """
     context = zmq.Context()
 
@@ -122,31 +133,28 @@ def dump_hal_state(
 
     if obs_sub.poll(1000, zmq.POLLIN):
         parts = obs_sub.recv_multipart()
-        if len(parts) >= 8:
+        if len(parts) >= 2:
             topic = parts[0].decode("utf-8")
-            schema_version = parts[1].decode("utf-8")
-            
-            # Deserialize hardware observation
-            hw_obs_parts = parts[2:8]
+            hw_obs_parts = parts[1:]
             try:
                 hw_obs = HardwareObservations.from_bytes(hw_obs_parts)
                 
-                # Map to model observation format for display
-                mapper = HWObservationsToParkourMapper()
+                mapper = HWObservationsToParkourMapper(observation_dimensions)
                 model_obs = mapper.map(hw_obs)
                 observation = model_obs.observation
 
                 print(f"\n📊 Observation:")
                 print(f"  Topic: {topic}")
-                print(f"  Schema Version: {schema_version}")
                 timestamp_s = hw_obs.timestamp_ns / 1e9
                 print(f"  Timestamp: {hw_obs.timestamp_ns} ns ({timestamp_s:.6f} s)")
                 print(f"  Shape: {observation.shape}")
                 print(f"  Dtype: {observation.dtype}")
                 print(f"  Stats: min={observation.min():.3f}, max={observation.max():.3f}, mean={observation.mean():.3f}")
 
-                if verbose and len(observation) == OBS_DIM:
-                    dump_observation_details(observation, action_dim)
+                if verbose and len(observation) == observation_dimensions.obs_dim:
+                    dump_observation_details(
+                        observation, observation_dimensions, action_dim
+                    )
             except Exception as e:
                 print(f"\n📊 Observation: Error deserializing - {e}")
     else:
@@ -212,12 +220,6 @@ Examples:
         help="Command endpoint (default: tcp://localhost:6002)",
     )
     parser.add_argument(
-        "--action_dim",
-        type=int,
-        default=12,
-        help="Action dimension for joint parsing (default: 12)",
-    )
-    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -225,11 +227,15 @@ Examples:
     )
 
     args = parser.parse_args()
-
+    model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
+    observation_dimensions = model_definition.get_observation_dimensions(
+        KRABBY_HEX_DEFINITION
+    )
     dump_hal_state(
         observation_endpoint=args.observation_endpoint,
+        observation_dimensions=observation_dimensions,
+        action_dim=model_definition.action_dim,
         command_endpoint=args.command_endpoint,
-        action_dim=args.action_dim,
         verbose=args.verbose,
     )
 

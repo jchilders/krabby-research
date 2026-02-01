@@ -17,8 +17,14 @@ from hal.client.client import HalClient
 from hal.client.config import HalClientConfig
 from hal.server import HalServerConfig
 from hal.client.observation.types import NavigationCommand
+from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
 from compute.testing.inference_test_runner import InferenceTestRunner
+from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+
+_TEST_OBS_DIMS = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+    KRABBY_QUAD_DEFINITION
+)
 
 
 @pytest.fixture
@@ -126,9 +132,8 @@ def test_isaacsim_hal_server_camera_publishing(mock_isaac_env, hal_server_config
 
     # Mock observation manager to return complete observation in training format
     # Use non-zero values to pass validation (all-zero observations are rejected)
-    from compute.parkour.parkour_types import OBS_DIM
     hal_server.observation_manager = MagicMock()
-    obs_tensor = torch.ones(OBS_DIM, dtype=torch.float32) * 0.1  # Non-zero values
+    obs_tensor = torch.ones(_TEST_OBS_DIMS.obs_dim, dtype=torch.float32) * 0.1  # Non-zero values
     hal_server.observation_manager.compute = MagicMock(return_value={"policy": obs_tensor})
     hal_server.env.device = torch.device("cpu")
 
@@ -163,9 +168,8 @@ def test_isaacsim_hal_server_state_publishing(mock_isaac_env, hal_server_config,
 
     # Mock observation manager to return complete observation in training format
     # Use non-zero values to pass validation (all-zero observations are rejected)
-    from compute.parkour.parkour_types import OBS_DIM
     hal_server.observation_manager = MagicMock()
-    obs_tensor = torch.ones(OBS_DIM, dtype=torch.float32) * 0.1  # Non-zero values
+    obs_tensor = torch.ones(_TEST_OBS_DIMS.obs_dim, dtype=torch.float32) * 0.1  # Non-zero values
     hal_server.observation_manager.compute = MagicMock(return_value={"policy": obs_tensor})
     hal_server.env.device = torch.device("cpu")
 
@@ -250,13 +254,12 @@ def test_isaacsim_hal_server_end_to_end_with_game_loop(mock_isaac_env, hal_serve
     # Mock observation manager to return complete observation in training format
     # Use non-zero values to pass validation (all-zero observations are rejected)
     # Vary observations to avoid duplicates
-    from compute.parkour.parkour_types import OBS_DIM
     import torch
     counter = [0]  # Use list to allow modification in closure
     
     def mock_compute_observations():
         # Return varying observations to avoid duplicates
-        obs_tensor = torch.ones(OBS_DIM, dtype=torch.float32) * 0.1
+        obs_tensor = torch.ones(_TEST_OBS_DIMS.obs_dim, dtype=torch.float32) * 0.1
         # Modify first few elements with counter to ensure uniqueness
         obs_tensor[0] = 0.1 + (counter[0] % 100) * 0.01
         obs_tensor[1] = 0.1 + ((counter[0] // 10) % 100) * 0.01
@@ -292,7 +295,9 @@ def test_isaacsim_hal_server_end_to_end_with_game_loop(mock_isaac_env, hal_serve
     model = MockPolicyModel()
 
     # Setup inference test runner (simulates game loop)
-    test_runner = InferenceTestRunner(model, hal_client, control_rate_hz=100.0)
+    test_runner = InferenceTestRunner(
+        model, hal_client, control_rate_hz=100.0, robot_definition=KRABBY_QUAD_DEFINITION
+    )
 
     # Set navigation command on test runner
     nav_cmd = NavigationCommand.create_now()
@@ -394,9 +399,8 @@ def test_isaacsim_hal_server_behavior_matches_baseline(mock_isaac_env, hal_serve
     hal_server.set_debug(True)
 
     # Mock observation manager to return valid observations
-    from compute.parkour.parkour_types import OBS_DIM
     hal_server.observation_manager = MagicMock()
-    obs_tensor = torch.ones(OBS_DIM, dtype=torch.float32) * 0.1  # Non-zero values
+    obs_tensor = torch.ones(_TEST_OBS_DIMS.obs_dim, dtype=torch.float32) * 0.1  # Non-zero values
     hal_server.observation_manager.compute = MagicMock(return_value={"policy": obs_tensor})
     hal_server.env.device = torch.device("cpu")
 
@@ -447,9 +451,8 @@ def test_isaacsim_hal_server_with_real_zmq_communication(mock_isaac_env, hal_ser
 
     # Mock observation manager to return complete observation in training format
     # Use non-zero values to pass validation (all-zero observations are rejected)
-    from compute.parkour.parkour_types import OBS_DIM
     hal_server.observation_manager = MagicMock()
-    obs_tensor = torch.ones(OBS_DIM, dtype=torch.float32) * 0.1  # Non-zero values
+    obs_tensor = torch.ones(_TEST_OBS_DIMS.obs_dim, dtype=torch.float32) * 0.1  # Non-zero values
     hal_server.observation_manager.compute = MagicMock(return_value={"policy": obs_tensor})
 
     # Publish observation
@@ -486,7 +489,7 @@ def test_isaacsim_hal_server_with_real_zmq_communication(mock_isaac_env, hal_ser
     
     # Map inference response to hardware joint positions
     from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
-    mapper = ParkourLocomotionToHWMapper(model_action_dim=12)
+    mapper = ParkourLocomotionToHWMapper(robot_definition=KRABBY_QUAD_DEFINITION)
     joint_positions = mapper.map(inference_response, observation_timestamp_ns=time.time_ns())
     
     # Send command
@@ -514,13 +517,12 @@ def test_isaacsim_hal_server_observation_rate(mock_isaac_env, hal_server_config,
 
     # Mock observation manager to return valid observations
     # Use a counter to avoid duplicate observations
-    from compute.parkour.parkour_types import OBS_DIM
     import torch
     counter = [0]  # Use list to allow modification in closure
     
     def mock_compute_observations():
         # Return slightly different observations each time to avoid duplicates
-        obs_tensor = torch.ones(OBS_DIM, dtype=torch.float32) * (0.1 + counter[0] * 0.0001)
+        obs_tensor = torch.ones(_TEST_OBS_DIMS.obs_dim, dtype=torch.float32) * (0.1 + counter[0] * 0.0001)
         counter[0] += 1
         return {"policy": obs_tensor}
     
@@ -594,7 +596,6 @@ def test_isaacsim_hal_server_100_consecutive_command_cycles(mock_isaac_env, hal_
 
     # Mock observation manager to return valid, randomized observations
     # Randomize to prevent duplicate observation detection (atol=1e-6)
-    from compute.parkour.parkour_types import OBS_DIM
     import torch
     
     # Use random seed for reproducibility but ensure each observation is unique
@@ -602,12 +603,12 @@ def test_isaacsim_hal_server_100_consecutive_command_cycles(mock_isaac_env, hal_
     step_counter = [0]
     
     def mock_compute_observations():
-        # Return observation in training format: (num_envs, OBS_DIM)
+        # Return observation in training format: (num_envs, _TEST_OBS_DIMS.obs_dim)
         # Use randomized values to ensure uniqueness (duplicate check uses np.allclose with atol=1e-6)
         # Add random noise to all elements to ensure no duplicates
         rng_state = rng.get_state()
         rng.seed(42 + step_counter[0])  # Different seed for each step
-        obs_array = rng.randn(OBS_DIM).astype(np.float32) * 0.1
+        obs_array = rng.randn(_TEST_OBS_DIMS.obs_dim).astype(np.float32) * 0.1
         rng.set_state(rng_state)
         obs_tensor = torch.from_numpy(obs_array).unsqueeze(0)  # Add batch dimension
         # Ensure non-zero to pass validation
@@ -633,20 +634,20 @@ def test_isaacsim_hal_server_100_consecutive_command_cycles(mock_isaac_env, hal_
         command_endpoint=hal_server_config.command_bind,
     )
 
-    # Use checkpoint from test assets
     checkpoint_path = "/workspace/test_assets/checkpoints/unitree_go2_parkour_teacher.pt"
-    
-    # Create model weights with real checkpoint
+    observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+        KRABBY_QUAD_DEFINITION,
+    )
     model_weights = ModelWeights(
         checkpoint_path=checkpoint_path,
+        observation_dimensions=observation_dimensions,
         action_dim=12,
-        obs_dim=OBS_DIM,
     )
-
-    # Create parkour inference client (matching main.py)
     parkour_client = ParkourInferenceClient(
         hal_client_config=hal_client_config_for_inference,
         model_weights=model_weights,
+        observation_dimensions=observation_dimensions,
+        robot_definition=KRABBY_QUAD_DEFINITION,
         control_rate=100.0,
         device="cpu",
         transport_context=transport_context,
@@ -773,7 +774,6 @@ def test_isaacsim_hal_server_full_parkour_eval_simulation(mock_isaac_env, hal_se
     hal_server.set_debug(True)
 
     # Mock observation manager
-    from compute.parkour.parkour_types import OBS_DIM
     import torch
     
     # Use a counter to avoid duplicate observations
@@ -781,7 +781,7 @@ def test_isaacsim_hal_server_full_parkour_eval_simulation(mock_isaac_env, hal_se
     
     def mock_compute_observations():
         # Return observation in training format with some variation
-        obs_tensor = torch.ones(1, OBS_DIM, dtype=torch.float32) * 0.1
+        obs_tensor = torch.ones(1, _TEST_OBS_DIMS.obs_dim, dtype=torch.float32) * 0.1
         # Modify first few elements with counter to ensure uniqueness
         obs_tensor[0, 0] = 0.1 + (counter[0] % 100) * 0.01
         obs_tensor[0, 1] = 0.1 + ((counter[0] // 10) % 100) * 0.01
@@ -806,21 +806,21 @@ def test_isaacsim_hal_server_full_parkour_eval_simulation(mock_isaac_env, hal_se
         command_endpoint=hal_server_config.command_bind,
     )
 
-    # Use checkpoint from test assets (available in Docker test environment)
     from pathlib import Path
     checkpoint_path = "/workspace/test_assets/checkpoints/unitree_go2_parkour_teacher.pt"
-    
-    # Create model weights with real checkpoint
+    observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+        KRABBY_QUAD_DEFINITION,
+    )
     model_weights = ModelWeights(
         checkpoint_path=checkpoint_path,
+        observation_dimensions=observation_dimensions,
         action_dim=12,
-        obs_dim=OBS_DIM,
     )
-
-    # Create parkour inference client (matching main.py)
     parkour_client = ParkourInferenceClient(
         hal_client_config=hal_client_config_for_inference,
         model_weights=model_weights,
+        observation_dimensions=observation_dimensions,
+        robot_definition=KRABBY_QUAD_DEFINITION,
         control_rate=100.0,
         device="cpu",
         transport_context=transport_context,
@@ -955,14 +955,13 @@ def test_isaacsim_hal_server_interface_matches_evaluation_baseline(mock_isaac_en
     hal_server.set_debug(True)
 
     # Mock observation manager to return observations in the same format as evaluation.py
-    from compute.parkour.parkour_types import OBS_DIM
     import torch
     
     def mock_compute_observations():
         # evaluation.py uses: obs, extras = env.get_observations()
         # which returns obs_dict["policy"] from observation_manager.compute()
         # Use non-zero values to pass validation (all-zero observations are rejected)
-        obs_tensor = torch.ones(1, OBS_DIM, dtype=torch.float32) * 0.1
+        obs_tensor = torch.ones(1, _TEST_OBS_DIMS.obs_dim, dtype=torch.float32) * 0.1
         return {"policy": obs_tensor}
     
     hal_server.observation_manager = MagicMock()
@@ -975,7 +974,7 @@ def test_isaacsim_hal_server_interface_matches_evaluation_baseline(mock_isaac_en
     
     obs_tensor = obs_dict["policy"]
     assert isinstance(obs_tensor, torch.Tensor), "Observation must be torch.Tensor"
-    assert obs_tensor.shape == (1, OBS_DIM), f"Observation shape must be (1, {OBS_DIM})"
+    assert obs_tensor.shape == (1, _TEST_OBS_DIMS.obs_dim), f"Observation shape must be (1, {_TEST_OBS_DIMS.obs_dim})"
     assert obs_tensor.dtype == torch.float32, "Observation dtype must be float32"
 
     # Verify command format matches evaluation.py expectations

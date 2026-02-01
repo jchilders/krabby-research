@@ -12,9 +12,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from compute.parkour.model_definition import (
+    PARKOUR_MODEL_OBSERVATION_DEFINITION,
+    ObservationDimensions,
+)
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
 from hal.client.observation.types import NavigationCommand
-from compute.parkour.parkour_types import ParkourModelIO, ParkourObservation, OBS_DIM
+from compute.parkour.parkour_types import ParkourModelIO, ParkourObservation
+from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,30 +28,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def create_dummy_model_io(action_dim: int, obs_dim: int) -> ParkourModelIO:
-    """Create dummy model IO for testing.
-
-    Args:
-        action_dim: Action dimension
-        obs_dim: Observation dimension (should be OBS_DIM = 753)
-
-    Returns:
-        Model IO with dummy data
-    """
+def create_dummy_model_io(observation_dimensions: ObservationDimensions) -> ParkourModelIO:
+    """Create dummy model IO for testing."""
     nav_cmd = NavigationCommand.create_now(vx=0.0, vy=0.0, yaw_rate=0.0)
-
-    # Create complete observation array in training format
-    observation_array = np.zeros(obs_dim, dtype=np.float32)
-
+    observation_array = np.zeros(observation_dimensions.obs_dim, dtype=np.float32)
     observation = ParkourObservation(
         timestamp_ns=time.time_ns(),
-        schema_version="1.0",
         observation=observation_array,
+        observation_dimensions=observation_dimensions,
     )
 
     return ParkourModelIO(
         timestamp_ns=time.time_ns(),
-        schema_version="1.0",
         nav_cmd=nav_cmd,
         observation=observation,
     )
@@ -54,40 +47,26 @@ def create_dummy_model_io(action_dim: int, obs_dim: int) -> ParkourModelIO:
 
 def benchmark_inference(
     checkpoint_path: str,
-    action_dim: int,
-    obs_dim: int,
+    observation_dimensions: ObservationDimensions,
     device: str = "cuda",
     num_iterations: int = 100,
     warmup_iterations: int = 10,
+    action_dim: int = 12,
 ):
-    """Benchmark inference latency.
-
-    Args:
-        checkpoint_path: Path to checkpoint file
-        action_dim: Action dimension
-        obs_dim: Observation dimension
-        device: Device to use ("cuda" or "cpu")
-        num_iterations: Number of inference iterations to benchmark
-        warmup_iterations: Number of warmup iterations
-
-    Returns:
-        Dictionary with benchmark results
-    """
+    """Benchmark inference latency."""
+    d = observation_dimensions
     logger.info(f"Benchmarking inference on {device}")
     logger.info(f"Checkpoint: {checkpoint_path}")
-    logger.info(f"Action dim: {action_dim}, Obs dim: {obs_dim}")
+    logger.info(f"Action dim: {action_dim}, Obs dim: {d.obs_dim}")
     logger.info(f"Iterations: {num_iterations} (warmup: {warmup_iterations})")
 
-    # Load model
     weights = ModelWeights(
         checkpoint_path=checkpoint_path,
+        observation_dimensions=observation_dimensions,
         action_dim=action_dim,
-        obs_dim=obs_dim,
     )
     model = ParkourPolicyModel(weights, device=device)
-
-    # Create dummy input
-    model_io = create_dummy_model_io(action_dim, obs_dim)
+    model_io = create_dummy_model_io(observation_dimensions)
 
     # Warmup
     logger.info("Running warmup iterations...")
@@ -167,21 +146,21 @@ def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Benchmark inference latency")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to checkpoint file")
-    parser.add_argument("--action_dim", type=int, required=True, help="Action dimension")
-    parser.add_argument("--obs_dim", type=int, required=True, help="Observation dimension")
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"], help="Device to use")
     parser.add_argument("--iterations", type=int, default=100, help="Number of benchmark iterations")
     parser.add_argument("--warmup", type=int, default=10, help="Number of warmup iterations")
 
     args = parser.parse_args()
-
+    observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions_for_checkpoint(
+        args.checkpoint, KRABBY_HEX_DEFINITION
+    )
     results = benchmark_inference(
         checkpoint_path=args.checkpoint,
-        action_dim=args.action_dim,
-        obs_dim=args.obs_dim,
+        observation_dimensions=observation_dimensions,
         device=args.device,
         num_iterations=args.iterations,
         warmup_iterations=args.warmup,
+        action_dim=PARKOUR_MODEL_OBSERVATION_DEFINITION.action_dim,
     )
 
     # Exit with error if latency too high

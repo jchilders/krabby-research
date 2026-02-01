@@ -2,7 +2,8 @@
 
 This mapper converts raw hardware sensor data into the format expected by
 the Parkour policy model. It uses zero-copy operations where possible to
-minimize data copying.
+minimize data copying. Layout and sizes come from robot + model definitions
+(ObservationDimensions).
 """
 
 import logging
@@ -10,58 +11,43 @@ from typing import Optional, Type
 
 import numpy as np
 import torch
+from compute.parkour.model_definition import ObservationDimensions
 from compute.parkour.utils.math import euler_xyz_from_quat, wrap_to_pi
 
 from hal.client.data_structures.hardware import HardwareObservations
 from hal.client.observation.types import NavigationCommand
-from compute.parkour.parkour_types import (
-    NUM_PROP,
-    NUM_SCAN,
-    NUM_PRIV_EXPLICIT,
-    NUM_PRIV_LATENT,
-    NUM_HIST,
-    HISTORY_DIM,
-    OBS_DIM,
-    ParkourObservation,
-    TeacherObservation,
-)
+from compute.parkour.parkour_types import ParkourObservation, TeacherObservation
 
 logger = logging.getLogger(__name__)
 
 
 class HWObservationsToParkourMapper:
     """Maps hardware observations to Parkour model format.
-    
-    Uses zero-copy operations where possible to minimize data copying.
-    Only copies when structural transformation is required.
-    
-    Zero-copy guarantees:
-    - Large arrays (RGB, depth) are processed but may require copies for
-      feature extraction (depends on preprocessing pipeline)
-    - Joint positions can be views if source is compatible
-    - Final observation array is constructed from parts (may require copy)
-    
-    The mapper implements the full feature extraction pipeline matching the
-    training environment's observation structure.
+
+    Uses observation_dimensions (from robot + model definitions) for all
+    array sizes and layout. Zero-copy where possible.
     """
-    
-    def __init__(self):
-        """Initialize the mapper with history buffer."""
-        # History buffer: stores last NUM_HIST proprioceptive observations
-        # Shape: (NUM_HIST, NUM_PROP) = (10, 53) = 530 dims
-        self._history_buffer = np.zeros((NUM_HIST, NUM_PROP), dtype=np.float32)
+
+    def __init__(self, observation_dimensions: ObservationDimensions):
+        """Initialize the mapper with observation layout from definitions.
+
+        Args:
+            observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
+        """
+        d = observation_dimensions
+        self._dims = observation_dimensions
+        self._history_buffer = np.zeros((d.num_hist, d.num_prop), dtype=np.float32)
         self._episode_step = 0
-        # Previous action: stores last joint command (12 dims)
-        self._previous_action = np.zeros(12, dtype=np.float32)
+        self._previous_action = np.zeros(d.observation_joint_count, dtype=np.float32)
     
     def set_previous_action(self, action: np.ndarray) -> None:
         """Set the previous action for history tracking.
-        
+
         Args:
-            action: Previous joint command (12 dims, will be truncated/padded if needed)
+            action: Previous joint command (truncated/padded to observation_joint_count)
         """
-        num_dims = min(12, len(action))
-        self._previous_action[:num_dims] = action[:num_dims]
+        n = min(self._dims.observation_joint_count, len(action))
+        self._previous_action[:n] = action[:n]
     
     def map(self, hw_obs: HardwareObservations, nav_cmd: Optional[NavigationCommand] = None, observation_type: Type[ParkourObservation] = TeacherObservation) -> ParkourObservation:
         """Map hardware observations to model format.
@@ -84,8 +70,8 @@ class HWObservationsToParkourMapper:
         priv_latent = self._extract_priv_latent(hw_obs)
         history = self._extract_history(proprioceptive)
         
-        # Create observation from parts (use specified observation type)
         return observation_type.from_parts(
+            self._dims,
             proprioceptive=proprioceptive,
             scan=scan,
             priv_explicit=priv_explicit,
@@ -111,16 +97,17 @@ class HWObservationsToParkourMapper:
         - [24:36] joint velocities * 0.05 - 12 joints
         - [36:48] previous action (last joint command) - 12 joints
         - [48:52] contact forces (4 feet, normalized to [-0.5, 0.5])
-        - [52]    (padding if needed)
         
         Args:
             hw_obs: Hardware observations
             nav_cmd: Optional navigation command to include in proprioceptive features
             
         Returns:
-            Proprioceptive features array of shape (NUM_PROP,)
+            Proprioceptive features array of shape (num_prop,)
         """
-        proprioceptive = np.zeros(NUM_PROP, dtype=np.float32)
+        num_prop = self._dims.num_prop
+        num_joints = self._dims.observation_joint_count
+        proprioceptive = np.zeros(num_prop, dtype=np.float32)
         
         # [0:3] Base angular velocity (body frame) * 0.25
         proprioceptive[0:3] = hw_obs.base_ang_vel_b * 0.25
@@ -165,27 +152,24 @@ class HWObservationsToParkourMapper:
         # Use flat_terrain_flag from HardwareObservations (extracted from environment)
         proprioceptive[11] = float(hw_obs.flat_terrain_flag)
         
-        # [12:24] Joint positions (relative to default) - 12 joints
-        # NOTE: HardwareObservations has 12 joints, matching training
-        # HAL server now extracts the exact 12 joints from observation manager
-        # Use first 12 joints (already in correct format from observation manager)
-        num_joints = min(12, len(hw_obs.joint_positions))
-        proprioceptive[12:12+num_joints] = hw_obs.joint_positions[:num_joints]
-        
-        # [24:36] Joint velocities * 0.05 - 12 joints
-        # HAL server now extracts joint velocities with * 0.05 already applied from observation manager
-        # So we use them directly (no need to multiply by 0.05 again)
-        num_joints = min(12, len(hw_obs.joint_velocities))
-        proprioceptive[24:24+num_joints] = hw_obs.joint_velocities[:num_joints]
-        
-        # [36:48] Previous action (last joint command) - 12 joints
-        # Use previous_action from hardware observations (always provided by HAL server)
-        proprioceptive[36:48] = hw_obs.previous_action
-        
-        # [48:53] Contact forces (5 values from environment, normalized to [-0.5, 0.5])
-        # The environment observation has 5 contact values (indices 48-52)
-        num_contact = min(5, len(hw_obs.contact_forces))
-        proprioceptive[48:48+num_contact] = hw_obs.contact_forces[:num_contact]
+        # [12:12+num_joints] Joint positions (relative to default)
+        n = min(num_joints, len(hw_obs.joint_positions))
+        proprioceptive[12 : 12 + n] = hw_obs.joint_positions[:n]
+
+        # [24:24+num_joints] Joint velocities * 0.05 (HAL may already apply scaling)
+        n = min(num_joints, len(hw_obs.joint_velocities))
+        proprioceptive[24 : 24 + n] = hw_obs.joint_velocities[:n]
+
+        # [36:36+num_joints] Previous action (last joint command)
+        n = min(num_joints, len(hw_obs.previous_action))
+        proprioceptive[36 : 36 + n] = hw_obs.previous_action[:n]
+
+        # Contact forces: start at 12 + 3*num_joints, count = num_prop - 12 - 3*num_joints
+        contact_count = num_prop - 12 - 3 * num_joints
+        contact_start = 12 + 3 * num_joints
+        n = min(max(0, contact_count), len(hw_obs.contact_forces))
+        if contact_count > 0:
+            proprioceptive[contact_start : contact_start + n] = hw_obs.contact_forces[:n]
         
         return proprioceptive
     
@@ -203,41 +187,29 @@ class HWObservationsToParkourMapper:
             hw_obs: Hardware observations
             
         Returns:
-            Scan features array of shape (NUM_SCAN,)
+            Scan features array of shape (num_scan,)
         """
-        # Check if scan_features is available (extracted from observation manager)
-        # This ensures exact matching with the environment's measured_heights
-        if hasattr(hw_obs, 'scan_features') and hw_obs.scan_features is not None:
+        num_scan = self._dims.num_scan
+        if hasattr(hw_obs, "scan_features") and hw_obs.scan_features is not None:
             scan_features = hw_obs.scan_features
-            if len(scan_features) == NUM_SCAN:
+            if len(scan_features) == num_scan:
                 return scan_features.astype(np.float32)
-            elif len(scan_features) > NUM_SCAN:
-                return scan_features[:NUM_SCAN].astype(np.float32)
-            else:
-                # Pad with zeros if shorter
-                features = np.zeros(NUM_SCAN, dtype=np.float32)
-                features[:len(scan_features)] = scan_features.astype(np.float32)
-                return features
-        
-        # Fallback: reconstruct from depth_map (for backward compatibility)
-        # This should not be used in normal operation when HAL server provides scan_features
+            elif len(scan_features) > num_scan:
+                return scan_features[:num_scan].astype(np.float32)
+            features = np.zeros(num_scan, dtype=np.float32)
+            features[: len(scan_features)] = scan_features.astype(np.float32)
+            return features
+
         height, width = hw_obs.depth_map.shape
-        
-        # Sample points from depth image to simulate ray-casting
-        # Use a grid pattern that covers the image
-        # Calculate grid dimensions that approximate NUM_SCAN
-        grid_rows = int(np.sqrt(NUM_SCAN))
-        grid_cols = (NUM_SCAN + grid_rows - 1) // grid_rows  # Ceiling division
-        
-        features = np.zeros(NUM_SCAN, dtype=np.float32)
-        
+        grid_rows = int(np.sqrt(num_scan))
+        grid_cols = (num_scan + grid_rows - 1) // grid_rows
+        features = np.zeros(num_scan, dtype=np.float32)
         row_indices = np.linspace(0, height - 1, grid_rows, dtype=np.int32)
         col_indices = np.linspace(0, width - 1, grid_cols, dtype=np.int32)
-        
         idx = 0
         for row in row_indices:
             for col in col_indices:
-                if idx >= NUM_SCAN:
+                if idx >= num_scan:
                     break
                 # Get depth value at this point
                 depth_value = hw_obs.depth_map[row, col]
@@ -249,11 +221,10 @@ class HWObservationsToParkourMapper:
                 height_measurement = np.clip(depth_value - 0.3, -1.0, 1.0)
                 features[idx] = height_measurement
                 idx += 1
-            if idx >= NUM_SCAN:
+            if idx >= num_scan:
                 break
-        
         return features
-    
+
     def _extract_priv_explicit(self, hw_obs: HardwareObservations) -> np.ndarray:
         """Extract privileged explicit features from hardware observations.
         
@@ -270,12 +241,9 @@ class HWObservationsToParkourMapper:
             hw_obs: Hardware observations
             
         Returns:
-            Privileged explicit features array of shape (NUM_PRIV_EXPLICIT,)
+            Privileged explicit features array of shape (num_priv_explicit,)
         """
-        # Privileged explicit features are estimated by the estimator network
-        # during inference, so we return zeros here
-        # The estimator will fill them in based on proprioceptive features
-        return np.zeros(NUM_PRIV_EXPLICIT, dtype=np.float32)
+        return np.zeros(self._dims.num_priv_explicit, dtype=np.float32)
     
     def _extract_priv_latent(self, hw_obs: HardwareObservations) -> np.ndarray:
         """Extract privileged latent features from hardware observations.
@@ -292,45 +260,34 @@ class HWObservationsToParkourMapper:
             hw_obs: Hardware observations
             
         Returns:
-            Privileged latent features array of shape (NUM_PRIV_LATENT,)
+            Privileged latent features array of shape (num_priv_latent,)
         """
-        # If privileged latent is available (simulation), use it
+        n = self._dims.num_priv_latent
         if hw_obs.privileged_latent is not None:
-            if hw_obs.privileged_latent.shape != (NUM_PRIV_LATENT,):
-                raise ValueError(f"privileged_latent shape {hw_obs.privileged_latent.shape} != ({NUM_PRIV_LATENT},)")
+            if hw_obs.privileged_latent.shape != (n,):
+                raise ValueError(f"privileged_latent shape {hw_obs.privileged_latent.shape} != ({n},)")
             return hw_obs.privileged_latent.astype(np.float32)
-        
-        # On real hardware, privileged latent is not available
-        # Return zeros (policy encoder will infer from proprioceptive observations)
-        return np.zeros(NUM_PRIV_LATENT, dtype=np.float32)
+        return np.zeros(n, dtype=np.float32)
     
     def _extract_history(self, proprioceptive: np.ndarray) -> np.ndarray:
         """Extract history features from previous proprioceptive observations.
         
-        Matches training format: 530 dims (NUM_HIST * NUM_PROP)
-        - Stores last NUM_HIST (10) proprioceptive observations
-        - On episode start (step <= 1), fills buffer with current observation
-        - Otherwise, shifts buffer and appends current observation
-        
+        Matches training format: history_dim = num_hist * num_prop (from observation_dimensions).
+        Stores last num_hist proprioceptive observations; on episode start fills buffer
+        with current observation, otherwise shifts buffer and appends current.
+
         Args:
-            proprioceptive: Current proprioceptive observation (NUM_PROP,)
+            proprioceptive: Current proprioceptive observation (num_prop,)
             
         Returns:
-            History features array of shape (HISTORY_DIM,)
+            History features array of shape (history_dim,)
         """
-        # Update history buffer
-        # On episode start (step <= 1), fill buffer with current observation
-        # Otherwise, shift buffer and append current observation
+        num_hist = self._dims.num_hist
         if self._episode_step <= 1:
-            # Fill buffer with current observation
-            for i in range(NUM_HIST):
+            for i in range(num_hist):
                 self._history_buffer[i] = proprioceptive.copy()
         else:
-            # Shift buffer and append current observation
             self._history_buffer[:-1] = self._history_buffer[1:]
             self._history_buffer[-1] = proprioceptive.copy()
-        
         self._episode_step += 1
-        
-        # Return flattened history buffer
         return self._history_buffer.flatten()

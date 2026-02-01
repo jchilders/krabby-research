@@ -12,8 +12,9 @@ from hal.client.client import HalClient
 from hal.server import HalServerBase
 from hal.client.config import HalClientConfig, HalServerConfig
 from hal.client.observation.types import NavigationCommand
-from compute.parkour.parkour_types import OBS_DIM
 from hal.client.data_structures.hardware import HardwareObservations
+from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
+from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 from compute.testing.inference_test_runner import InferenceTestRunner
 from tests.helpers import create_dummy_hw_obs
 
@@ -178,7 +179,9 @@ def test_game_loop_basic_functionality(hal_setup):
     model = MockPolicyModel(action_dim=12, inference_time_ms=5.0)
 
     # Setup inference test runner (simulates game loop)
-    test_runner = InferenceTestRunner(model, client, control_rate_hz=100.0)
+    test_runner = InferenceTestRunner(
+        model, client, control_rate_hz=100.0, robot_definition=KRABBY_HEX_DEFINITION
+    )
 
     # Set navigation command on test runner (not client)
     nav_cmd = NavigationCommand.create_now()
@@ -208,80 +211,73 @@ def test_game_loop_basic_functionality(hal_setup):
 
 def test_game_loop_observation_tensor_correctness(hal_setup):
     """Test that observation tensor structure matches training format exactly.
-    
-    Verifies:
-    - Total observation dimension (OBS_DIM = 753)
-    - Component dimensions (prop=53, scan=132, priv_explicit=9, priv_latent=29, history=530)
-    - View methods correctly extract each component
-    - Data type is float32
+
+    Verifies total obs_dim and component dimensions from definitions,
+    view methods, and float32 dtype.
     """
-    from compute.parkour.parkour_types import (
-        NUM_PROP,
-        NUM_SCAN,
-        NUM_PRIV_EXPLICIT,
-        NUM_PRIV_LATENT,
-        HISTORY_DIM,
+    observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+        KRABBY_HEX_DEFINITION
     )
-    
+    d = observation_dimensions
+
     server, client = hal_setup
 
-    # Create hardware observation with test data
-    hw_obs = create_dummy_hw_obs(
-        camera_height=480, camera_width=640
-    )
-    # Fill joint positions with test pattern
+    hw_obs = create_dummy_hw_obs(camera_height=480, camera_width=640)
     hw_obs.joint_positions[:] = 1.0
-    
-    # Publish hardware observation
+
     server.set_observation(hw_obs)
     time.sleep(0.1)
-    # Poll with timeout to receive observation
     received_hw_obs = client.poll(timeout_ms=1000)
-    
-    # Verify hardware observation was received
+
     assert received_hw_obs is not None, "Hardware observation should be received"
-    
-    # Verify hardware observation structure
-    assert received_hw_obs.joint_positions.shape == (12,), \
+    assert received_hw_obs.joint_positions.shape == (12,), (
         f"Joint positions shape should be (12,), got {received_hw_obs.joint_positions.shape}"
-    assert received_hw_obs.joint_positions.dtype == np.float32, \
+    )
+    assert received_hw_obs.joint_positions.dtype == np.float32, (
         f"Joint positions dtype should be float32, got {received_hw_obs.joint_positions.dtype}"
-    
-    # Map to ParkourObservation to verify structure
+    )
+
     from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
-    mapper = HWObservationsToParkourMapper()
+
+    mapper = HWObservationsToParkourMapper(observation_dimensions)
     parkour_obs = mapper.map(received_hw_obs)
-    
-    # Verify ParkourObservation structure
-    assert parkour_obs.observation.shape == (OBS_DIM,), \
-        f"ParkourObservation shape should be ({OBS_DIM},), got {parkour_obs.observation.shape}"
-    assert parkour_obs.observation.dtype == np.float32, \
+
+    assert parkour_obs.observation.shape == (d.obs_dim,), (
+        f"ParkourObservation shape should be ({d.obs_dim},), got {parkour_obs.observation.shape}"
+    )
+    assert parkour_obs.observation.dtype == np.float32, (
         f"ParkourObservation dtype should be float32, got {parkour_obs.observation.dtype}"
-    
-    # Verify component dimensions using view methods
+    )
+
     prop = parkour_obs.get_proprioceptive()
-    assert prop.shape == (NUM_PROP,), \
-        f"Proprioceptive shape should be ({NUM_PROP},), got {prop.shape}"
-    
+    assert prop.shape == (d.num_prop,), (
+        f"Proprioceptive shape should be ({d.num_prop},), got {prop.shape}"
+    )
     scan = parkour_obs.get_scan()
-    assert scan.shape == (NUM_SCAN,), \
-        f"Scan shape should be ({NUM_SCAN},), got {scan.shape}"
-    
+    assert scan.shape == (d.num_scan,), (
+        f"Scan shape should be ({d.num_scan},), got {scan.shape}"
+    )
     priv_explicit = parkour_obs.get_priv_explicit()
-    assert priv_explicit.shape == (NUM_PRIV_EXPLICIT,), \
-        f"Privileged explicit shape should be ({NUM_PRIV_EXPLICIT},), got {priv_explicit.shape}"
-    
+    assert priv_explicit.shape == (d.num_priv_explicit,), (
+        f"Privileged explicit shape should be ({d.num_priv_explicit},), got {priv_explicit.shape}"
+    )
     priv_latent = parkour_obs.get_priv_latent()
-    assert priv_latent.shape == (NUM_PRIV_LATENT,), \
-        f"Privileged latent shape should be ({NUM_PRIV_LATENT},), got {priv_latent.shape}"
-    
+    assert priv_latent.shape == (d.num_priv_latent,), (
+        f"Privileged latent shape should be ({d.num_priv_latent},), got {priv_latent.shape}"
+    )
     history = parkour_obs.get_history()
-    assert history.shape == (HISTORY_DIM,), \
-        f"History shape should be ({HISTORY_DIM},), got {history.shape}"
-    
-    # Verify total dimension matches sum of components
-    total_dim = NUM_PROP + NUM_SCAN + NUM_PRIV_EXPLICIT + NUM_PRIV_LATENT + HISTORY_DIM
-    assert total_dim == OBS_DIM, \
-        f"Component dimensions sum to {total_dim}, but OBS_DIM is {OBS_DIM}"
+    assert history.shape == (d.history_dim,), (
+        f"History shape should be ({d.history_dim},), got {history.shape}"
+    )
+    total_dim = (
+        d.num_prop
+        + d.num_scan
+        + d.num_priv_explicit
+        + d.num_priv_latent
+        + d.history_dim
+    )
+    assert total_dim == d.obs_dim, (
+        f"Component dimensions sum to {total_dim}, but obs_dim is {d.obs_dim}"
+    )
 
 

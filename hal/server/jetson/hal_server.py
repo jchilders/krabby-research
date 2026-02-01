@@ -14,8 +14,7 @@ from hal.client.data_structures.hardware import HardwareObservations, JointComma
 from hal.server.jetson.camera import ZedCamera, create_zed_camera
 from hal.server.jetson.krabby_mcusdk import KrabbyMCUSDK
 
-# Import model-specific constant here (HAL server knows about model requirements)
-from compute.parkour.parkour_types import NUM_SCAN
+from compute.parkour.model_definition import ObservationDimensions
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +29,8 @@ class JetsonHalServer(HalServerBase):
     def __init__(
         self,
         config: HalServerConfig,
+        observation_dimensions: ObservationDimensions,
+        action_dim: int,
         camera_resolution: tuple[int, int] = (640, 480),
         camera_fps: int = 30,
         mcu_port: Optional[str] = None,
@@ -40,22 +41,23 @@ class JetsonHalServer(HalServerBase):
 
         Args:
             config: HAL server configuration
-            camera_resolution: ZED camera resolution (width, height). Default (640, 480)
-            camera_fps: ZED camera FPS. Default 30
+            observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
+            action_dim: Action dimension (model output joint count)
+            camera_resolution: ZED camera resolution (width, height)
+            camera_fps: ZED camera FPS
             mcu_port: Serial port for MCU connection. If None, uses default from MCU SDK.
-            mcu_baud: Baud rate for MCU serial communication. Default: 115200.
+            mcu_baud: Baud rate for MCU serial communication.
             mcu_auto_connect: If True, automatically connect to MCU on initialization.
-                If False, connection must be done manually. Default: True.
         """
         super().__init__(config)
+        self.observation_dimensions = observation_dimensions
+        self.action_dim = action_dim
         self.camera_resolution = camera_resolution
         self.camera_fps = camera_fps
         self.zed_camera: Optional[ZedCamera] = None
         self.state_source = None  # IMU/encoders (placeholder, real implementation in future)
         self.actuator_sink = None  # Motors (placeholder, real implementation in future)
-        # Track last commanded joint positions for state echo (placeholder)
         self._last_joint_positions: Optional[np.ndarray] = None
-        self._action_dim = 12  # Default action dimension (12 DOF for Unitree Go2)
         
         # Initialize Krabby MCU SDK for standardized command application
         self._mcusdk: Optional[KrabbyMCUSDK] = None
@@ -88,7 +90,7 @@ class JetsonHalServer(HalServerBase):
             resolution=self.camera_resolution,
             fps=self.camera_fps,
             depth_mode="PERFORMANCE",
-            depth_feature_dim=NUM_SCAN,  # Use model-specific constant (132 for parkour)
+            depth_feature_dim=self.observation_dimensions.num_scan,
         )
 
         if self.zed_camera is None:
@@ -213,10 +215,10 @@ class JetsonHalServer(HalServerBase):
             joint_pos = self._last_joint_positions.astype(np.float32)
         else:
             # If no commands received yet, use zeros
-            joint_pos = np.zeros(self._action_dim, dtype=np.float32)
+            joint_pos = np.zeros(self.action_dim, dtype=np.float32)
 
         # Joint velocities: (0, 0, ...) - zero velocities (PLACEHOLDER - requires encoders)
-        joint_vel = np.zeros(self._action_dim, dtype=np.float32)
+        joint_vel = np.zeros(self.action_dim, dtype=np.float32)
 
         # Concatenate into state vector
         state_vector = np.concatenate([
@@ -263,8 +265,8 @@ class JetsonHalServer(HalServerBase):
         base_quat = state_vector[3:7]  # (x, y, z, w) format
         base_lin_vel = state_vector[7:10]
         base_ang_vel = state_vector[10:13]
-        joint_pos = state_vector[13:13+self._action_dim]
-        joint_vel = state_vector[13+self._action_dim:13+2*self._action_dim]
+        joint_pos = state_vector[13:13+self.action_dim]
+        joint_vel = state_vector[13+self.action_dim:13+2*self.action_dim]
         
         # Pad or truncate joint positions to 12 DOF (Krabby has 12 joints)
         # HardwareObservations expects exactly 12 joint positions
@@ -392,7 +394,6 @@ class JetsonHalServer(HalServerBase):
         # Store command for state echo (echo joint state from last commanded targets)
         # This allows set_observation() to echo back the commanded positions as current state
         self._last_joint_positions = joint_positions.copy()
-        self._action_dim = len(joint_positions)
 
         # Apply command via MCU SDK if available
         if self._mcusdk is not None:

@@ -110,8 +110,12 @@ def create_mock_isaac_env():
     
     # Mock observation manager
     env.observation_manager = MagicMock()
-    from compute.parkour.parkour_types import OBS_DIM
-    obs_tensor = torch.ones(OBS_DIM, dtype=torch.float32) * 0.1
+    from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
+    from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+    obs_dims = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+        KRABBY_QUAD_DEFINITION
+    )
+    obs_tensor = torch.ones(obs_dims.obs_dim, dtype=torch.float32) * 0.1
     env.observation_manager.compute = MagicMock(return_value={"policy": obs_tensor})
     
     # Mock action manager

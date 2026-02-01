@@ -54,10 +54,12 @@ class MockRobot:
 
 class MockObservationManager:
     """Minimal observation manager mock."""
-    
+
     def compute(self):
-        OBS_DIM = 753
-        obs_tensor = torch.ones(OBS_DIM, dtype=torch.float32) * 0.1
+        obs_dims = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+            KRABBY_QUAD_DEFINITION
+        )
+        obs_tensor = torch.ones(obs_dims.obs_dim, dtype=torch.float32) * 0.1
         return {"policy": obs_tensor}
 
 

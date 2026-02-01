@@ -361,9 +361,10 @@ def run_test_isaacsim_hal_server_with_real_isaaclab():
         )
         logger.info("[STEP] HAL server config created")
         
+        from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
         # Create and initialize HAL server with real environment
         logger.info("[STEP] Creating IsaacSimHalServer...")
-        hal_server = IsaacSimHalServer(hal_server_config, env=env)
+        hal_server = IsaacSimHalServer(hal_server_config, env=env, robot_definition=KRABBY_QUAD_DEFINITION)
         logger.info("[STEP] IsaacSimHalServer created, calling initialize()...")
         hal_server.initialize()
         logger.info("[STEP] HAL server initialized successfully")
@@ -418,7 +419,7 @@ def run_test_inference_latency_requirement():
     Requires PARKOUR_CHECKPOINT_PATH environment variable to be set to the checkpoint file path.
     
     Run this test with:
-        PARKOUR_CHECKPOINT_PATH=/workspace/test_assets/checkpoints/checkpoint.pt \
+        PARKOUR_CHECKPOINT_PATH=/workspace/test_assets/checkpoints \
         PYTHONUNBUFFERED=1 timeout 600 docker run --rm --gpus all \
             --entrypoint /workspace/run_test_runner.sh \
             krabby-isaacsim:latest \
@@ -501,26 +502,28 @@ def run_test_inference_latency_requirement():
         server.initialize()
         logger.info("[STEP] HAL server initialized")
         
-        # Create model weights config
+        from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
+        from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
         current_step = "[STEP] Loading model checkpoint..."
         logger.info(current_step)
+        observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions_for_checkpoint(
+            checkpoint_path, KRABBY_QUAD_DEFINITION
+        )
         weights = ModelWeights(
             checkpoint_path=str(checkpoint_path),
+            observation_dimensions=observation_dimensions,
             action_dim=12,
-            obs_dim=753,  # num_prop(53) + num_scan(132) + num_priv_explicit(9) + num_priv_latent(29) + history(530)
         )
-        
-        # Create HAL client config for inference client
         client_config = HalClientConfig(
             observation_endpoint="inproc://test_obs_latency",
             command_endpoint="inproc://test_cmd_latency",
         )
-        
-        # Create and initialize ParkourInferenceClient (policy interface instance)
         logger.info("[STEP] Creating ParkourInferenceClient...")
         inference_client = ParkourInferenceClient(
             hal_client_config=client_config,
             model_weights=weights,
+            observation_dimensions=observation_dimensions,
+            robot_definition=KRABBY_QUAD_DEFINITION,
             control_rate=100.0,
             device=device,
             transport_context=server.get_transport_context(),

@@ -13,9 +13,25 @@ import numpy as np
 import pytest
 import torch
 
+from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
 from hal.client.observation.types import NavigationCommand
-from compute.parkour.parkour_types import InferenceResponse, OBS_DIM, ParkourModelIO, ParkourObservation
+from compute.parkour.parkour_types import InferenceResponse, ParkourModelIO, ParkourObservation
+from hal.server.robot_definition import (
+    ObservationScalingDefinition,
+    RobotDefinition,
+)
+
+_TEST_ROBOT = RobotDefinition(
+    name="test_robot",
+    legs=("FL", "FR", "RL", "RR"),
+    joint_types=("hip_yaw", "hip_pitch", "knee"),
+    observation_scaling=ObservationScalingDefinition(
+        base_ang_vel=0.25,
+        joint_vel=0.05,
+        base_lin_vel=2.0,
+    ),
+)
 
 
 def _find_checkpoint_path() -> Path:
@@ -75,25 +91,24 @@ class TestParkourPolicyModel:
         except FileNotFoundError as e:
             pytest.fail(str(e))
 
-        # Create model weights config
+        observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+            _TEST_ROBOT
+        )
         weights = ModelWeights(
             checkpoint_path=str(checkpoint_path),
+            observation_dimensions=observation_dimensions,
             action_dim=12,
-            obs_dim=753,  # num_prop(53) + num_scan(132) + num_priv_explicit(9) + num_priv_latent(29) + history(530)
         )
-
-        # Try to load the model (this will use OnPolicyRunnerWithExtractor)
         try:
-            model = ParkourPolicyModel(weights, device="cpu")  # Use CPU for testing
+            model = ParkourPolicyModel(weights, device="cpu")
         except Exception as e:
             pytest.fail(f"Failed to load checkpoint: {e}")
 
-        # Create a synthetic observation in training format
-        obs_array = np.random.randn(OBS_DIM).astype(np.float32)
+        obs_array = np.random.randn(observation_dimensions.obs_dim).astype(np.float32)
         observation = ParkourObservation(
             timestamp_ns=time.time_ns(),
-            schema_version="1.0",
             observation=obs_array,
+            observation_dimensions=observation_dimensions,
         )
         
         nav_cmd = NavigationCommand.create_now(vx=1.0, vy=0.0, yaw_rate=0.0)

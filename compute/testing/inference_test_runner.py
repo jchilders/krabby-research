@@ -27,6 +27,7 @@ from hal.client.config import HalClientConfig
 from hal.client.observation.types import NavigationCommand
 from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
 from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
+from compute.parkour.model_definition import ObservationDimensions
 from compute.parkour.parkour_types import ParkourModelIO
 from compute.parkour.policy_interface import ModelWeights
 from compute.parkour.inference_client import ParkourInferenceClient
@@ -58,18 +59,21 @@ class InferenceTestRunner:
         self,
         model,  # Any model with inference(model_io) method
         hal_client: HalClient,
-        control_rate_hz: float = 100.0,
+        control_rate_hz: float,
+        robot_definition,
     ):
         """Initialize inference test runner.
 
         Args:
             model: Policy model for inference (must have inference(model_io) method)
             hal_client: HAL client for communication
-            control_rate_hz: Control loop rate in Hz (default 100.0)
+            control_rate_hz: Control loop rate in Hz
+            robot_definition: Robot definition (command joint count = get_total_joint_count())
         """
         self.model = model
         self.hal_client = hal_client
         self.control_rate_hz = control_rate_hz
+        self.robot_definition = robot_definition
         self.period_s = 1.0 / control_rate_hz
         self.running = False
         self.nav_cmd: Optional[NavigationCommand] = None
@@ -127,10 +131,8 @@ class InferenceTestRunner:
                     mapper = HWObservationsToParkourMapper()
                     model_obs = mapper.map(hw_obs, nav_cmd=nav_cmd)
                     
-                    # Build model IO
                     model_io = ParkourModelIO(
                         timestamp_ns=model_obs.timestamp_ns,
-                        schema_version=model_obs.schema_version,
                         nav_cmd=nav_cmd,
                         observation=model_obs,
                     )
@@ -148,7 +150,7 @@ class InferenceTestRunner:
                         self.last_inference_result = inference_result
 
                         # Map inference response to hardware joint positions
-                        mapper = ParkourLocomotionToHWMapper(model_action_dim=self.model.action_dim)
+                        mapper = ParkourLocomotionToHWMapper(robot_definition=self.robot_definition)
                         joint_positions = mapper.map(inference_result, observation_timestamp_ns=hw_obs.timestamp_ns)
 
                         # Put command to HAL
@@ -191,27 +193,25 @@ class InferenceTestRunner:
 
 def run_inference_test(
     checkpoint_path: str,
-    action_dim: int,
-    obs_dim: int,
+    observation_dimensions: ObservationDimensions,
+    robot_definition,
     hal_endpoints: dict,
-    control_rate_hz: float = 100.0,
-    device: str = "cuda",
-    transport_context: Optional[zmq.Context] = None,
+    control_rate_hz: float,
+    device: str,
+    transport_context: Optional[zmq.Context],
+    action_dim: int,
 ) -> None:
     """Run inference test using ParkourInferenceClient.
 
-    This uses the production ParkourInferenceClient to ensure the test
-    uses the same code path as production. Follows the sequencing pattern
-    from the single latency test (without warmup).
-
     Args:
         checkpoint_path: Path to model checkpoint
-        action_dim: Action dimension
-        obs_dim: Observation dimension
+        observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
+        robot_definition: Robot definition (command joint count = get_total_joint_count())
         hal_endpoints: Dictionary with 'observation' and 'command' endpoints
         control_rate_hz: Control loop rate in Hz
         device: Device to run inference on
-        transport_context: Optional ZMQ context for inproc connections
+        transport_context: ZMQ context for inproc connections, or None for TCP
+        action_dim: Action dimension (from model definition)
     """
     global _running
     
@@ -226,19 +226,18 @@ def run_inference_test(
         command_endpoint=hal_endpoints["command"],
     )
 
-    # Create model weights config
     logger.info(f"[STEP] Loading model checkpoint from {checkpoint_path}...")
     model_weights = ModelWeights(
         checkpoint_path=checkpoint_path,
+        observation_dimensions=observation_dimensions,
         action_dim=action_dim,
-        obs_dim=obs_dim,
     )
-
-    # Create and initialize ParkourInferenceClient
     logger.info("[STEP] Creating ParkourInferenceClient...")
     inference_client = ParkourInferenceClient(
         hal_client_config=hal_client_config,
         model_weights=model_weights,
+        observation_dimensions=observation_dimensions,
+        robot_definition=robot_definition,
         control_rate=control_rate_hz,
         device=device,
         transport_context=transport_context,

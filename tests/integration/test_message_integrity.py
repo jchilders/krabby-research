@@ -10,7 +10,15 @@ from hal.client.client import HalClient
 from hal.server import HalServerBase
 from hal.client.config import HalClientConfig, HalServerConfig
 from hal.client.data_structures.hardware import HardwareObservations
+from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
+from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 from tests.helpers import create_dummy_hw_obs
+
+
+def _observation_dimensions():
+    return PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+        KRABBY_HEX_DEFINITION
+    )
 
 
 def test_corrupt_message_handling():
@@ -43,7 +51,7 @@ def test_corrupt_message_handling():
     time.sleep(0.01)
 
     # Send malformed message (wrong number of parts)
-    publisher.send(b"observation")  # Only topic, missing schema_version and payload
+    publisher.send(b"observation")  # Only topic, missing payload
 
     # Poll should handle gracefully
     client.poll(timeout_ms=1000)
@@ -91,9 +99,8 @@ def test_malformed_binary_payload():
 
     # Send message with invalid payload (not float32 array)
     topic = b"observation"
-    schema_version = b"1.0"
     invalid_payload = b"not a float32 array"
-    publisher.send_multipart([topic, schema_version, invalid_payload])
+    publisher.send_multipart([topic, invalid_payload])
 
     # Poll should handle gracefully
     client.poll(timeout_ms=1000)
@@ -215,81 +222,29 @@ def test_graceful_error_handling():
     server.close()
 
 
-def test_schema_version_validation():
-    """Test schema version validation."""
-    server_config = HalServerConfig(
-        observation_bind="inproc://test_observation_schema",
-        command_bind="inproc://test_command_schema",
-    )
-    server = HalServerBase(server_config)
-    server.initialize()
-
-    server.set_debug(True)
-
-    client_config = HalClientConfig(
-        observation_endpoint="inproc://test_observation_schema",
-        command_endpoint="inproc://test_command_schema",
-    )
-    client = HalClient(client_config)
-    client.initialize()
-
-    client.set_debug(True)
-
-    time.sleep(0.1)
-
-    # Send message with unsupported schema version
-    from compute.parkour.parkour_types import OBS_DIM
-    
-    context = zmq.Context()
-    publisher = context.socket(zmq.PUB)
-    publisher.bind("inproc://test_observation_schema")  # observation endpoint
-    # Use a small high-water mark to exercise buffer behavior (match server config)
-    publisher.setsockopt(zmq.SNDHWM, 1)
-    # Small delay for socket to be ready
-    time.sleep(0.01)
-
-    topic = b"observation"
-    unsupported_schema = b"2.0"  # Unsupported version
-    payload = np.zeros(OBS_DIM, dtype=np.float32).tobytes()
-    publisher.send_multipart([topic, unsupported_schema, payload])
-
-    client.poll(timeout_ms=1000)
-
-    # Client should log warning but not crash
-    # Latest observation should remain None (unsupported schema rejected)
-
-    publisher.close()
-    context.term()
-    client.close()
-    server.close()
-
-
 def test_required_fields_validation():
     """Test validation of required fields."""
     from hal.client.observation.types import NavigationCommand
-    from compute.parkour.parkour_types import ParkourModelIO, ParkourObservation, OBS_DIM
+    from compute.parkour.parkour_types import ParkourModelIO, ParkourObservation
 
-    # Test that incomplete model_io is rejected
+    obs_dims = _observation_dimensions()
     incomplete_io = ParkourModelIO(
         timestamp_ns=time.time_ns(),
-        schema_version="1.0",
-        nav_cmd=None,  # Missing
-        observation=None,  # Missing
+        nav_cmd=None,
+        observation=None,
     )
 
     assert not incomplete_io.is_complete()
 
-    # Test that complete model_io is accepted
     nav_cmd = NavigationCommand.create_now()
     observation = ParkourObservation(
         timestamp_ns=time.time_ns(),
-        schema_version="1.0",
-        observation=np.zeros(OBS_DIM, dtype=np.float32),
+        observation=np.zeros(obs_dims.obs_dim, dtype=np.float32),
+        observation_dimensions=obs_dims,
     )
 
     complete_io = ParkourModelIO(
         timestamp_ns=time.time_ns(),
-        schema_version="1.0",
         nav_cmd=nav_cmd,
         observation=observation,
     )
@@ -300,23 +255,21 @@ def test_required_fields_validation():
 def test_timestamp_synchronization():
     """Test that is_synchronized() correctly validates timestamp synchronization."""
     from hal.client.observation.types import NavigationCommand
-    from compute.parkour.parkour_types import ParkourModelIO, ParkourObservation, OBS_DIM
-    import time
+    from compute.parkour.parkour_types import ParkourModelIO, ParkourObservation
 
-    # Test synchronized timestamps (within 10ms default)
+    obs_dims = _observation_dimensions()
     base_time_ns = time.time_ns()
     nav_cmd = NavigationCommand.create_now()
     nav_cmd.timestamp_ns = base_time_ns
-    
+
     observation = ParkourObservation(
-        timestamp_ns=base_time_ns + 5_000_000,  # 5ms difference
-        schema_version="1.0",
-        observation=np.zeros(OBS_DIM, dtype=np.float32),
+        timestamp_ns=base_time_ns + 5_000_000,
+        observation=np.zeros(obs_dims.obs_dim, dtype=np.float32),
+        observation_dimensions=obs_dims,
     )
     
     synchronized_io = ParkourModelIO(
         timestamp_ns=base_time_ns,
-        schema_version="1.0",
         nav_cmd=nav_cmd,
         observation=observation,
     )
@@ -324,16 +277,14 @@ def test_timestamp_synchronization():
     assert synchronized_io.is_synchronized(), "Timestamps within 10ms should be synchronized"
     assert synchronized_io.is_synchronized(max_age_ns=10_000_000), "Should pass with default 10ms threshold"
     
-    # Test unsynchronized timestamps (more than 10ms apart)
     observation_unsync = ParkourObservation(
-        timestamp_ns=base_time_ns + 15_000_000,  # 15ms difference
-        schema_version="1.0",
-        observation=np.zeros(OBS_DIM, dtype=np.float32),
+        timestamp_ns=base_time_ns + 15_000_000,
+        observation=np.zeros(obs_dims.obs_dim, dtype=np.float32),
+        observation_dimensions=obs_dims,
     )
     
     unsynchronized_io = ParkourModelIO(
         timestamp_ns=base_time_ns,
-        schema_version="1.0",
         nav_cmd=nav_cmd,
         observation=observation_unsync,
     )
@@ -341,16 +292,14 @@ def test_timestamp_synchronization():
     assert not unsynchronized_io.is_synchronized(), "Timestamps >10ms apart should not be synchronized"
     assert unsynchronized_io.is_synchronized(max_age_ns=20_000_000), "Should pass with 20ms threshold"
     
-    # Test with custom threshold
     observation_custom = ParkourObservation(
-        timestamp_ns=base_time_ns + 5_000_000,  # 5ms difference
-        schema_version="1.0",
-        observation=np.zeros(OBS_DIM, dtype=np.float32),
+        timestamp_ns=base_time_ns + 5_000_000,
+        observation=np.zeros(obs_dims.obs_dim, dtype=np.float32),
+        observation_dimensions=obs_dims,
     )
     
     custom_io = ParkourModelIO(
         timestamp_ns=base_time_ns,
-        schema_version="1.0",
         nav_cmd=nav_cmd,
         observation=observation_custom,
     )
@@ -358,16 +307,14 @@ def test_timestamp_synchronization():
     # 5ms (5_000_000 ns) is > 1ms (1_000_000 ns) threshold, so should fail
     assert not custom_io.is_synchronized(max_age_ns=1_000_000), "5ms > 1ms threshold should fail"
     
-    # Test edge case: exactly at threshold
     observation_exact = ParkourObservation(
-        timestamp_ns=base_time_ns + 10_000_000,  # Exactly 10ms
-        schema_version="1.0",
-        observation=np.zeros(OBS_DIM, dtype=np.float32),
+        timestamp_ns=base_time_ns + 10_000_000,
+        observation=np.zeros(obs_dims.obs_dim, dtype=np.float32),
+        observation_dimensions=obs_dims,
     )
     
     exact_io = ParkourModelIO(
         timestamp_ns=base_time_ns,
-        schema_version="1.0",
         nav_cmd=nav_cmd,
         observation=observation_exact,
     )
@@ -378,7 +325,6 @@ def test_timestamp_synchronization():
     # Test that incomplete IO is not synchronized
     incomplete_io = ParkourModelIO(
         timestamp_ns=base_time_ns,
-        schema_version="1.0",
         nav_cmd=None,
         observation=None,
     )
@@ -395,19 +341,14 @@ def test_timestamp_synchronization_realistic_sequence():
     3. The nav_cmd timestamp becomes stale, causing synchronization failures
     """
     from hal.client.observation.types import NavigationCommand
-    from compute.parkour.parkour_types import ParkourModelIO, ParkourObservation, OBS_DIM
+    from compute.parkour.parkour_types import ParkourModelIO, ParkourObservation
     from hal.client.data_structures.hardware import HardwareObservations
     from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
-    import time
-    
-    # Simulate the actual sequence from the latency test
-    # Step 1: Create nav_cmd once (like in test_runner.py)
+
+    obs_dims = _observation_dimensions()
     nav_cmd = NavigationCommand.create_now()
     nav_cmd_timestamp = nav_cmd.timestamp_ns
-    
-    # Step 2: Simulate observations arriving continuously (like from publish_loop at 100Hz)
-    # Each observation has a fresh timestamp from set_observation()
-    mapper = HWObservationsToParkourMapper()
+    mapper = HWObservationsToParkourMapper(obs_dims)
     
     # First observation: arrives quickly, should be synchronized
     time.sleep(0.001)  # 1ms delay
@@ -431,7 +372,6 @@ def test_timestamp_synchronization_realistic_sequence():
     parkour_obs_1 = mapper.map(hw_obs_1, nav_cmd=nav_cmd)
     model_io_1 = ParkourModelIO(
         timestamp_ns=parkour_obs_1.timestamp_ns,
-        schema_version=parkour_obs_1.schema_version,
         nav_cmd=nav_cmd,  # Same nav_cmd with old timestamp
         observation=parkour_obs_1,
     )
@@ -467,7 +407,6 @@ def test_timestamp_synchronization_realistic_sequence():
         parkour_obs = mapper.map(hw_obs, nav_cmd=nav_cmd)  # Still using same nav_cmd
         model_io = ParkourModelIO(
             timestamp_ns=parkour_obs.timestamp_ns,
-            schema_version=parkour_obs.schema_version,
             nav_cmd=nav_cmd,  # Same nav_cmd with old timestamp
             observation=parkour_obs,
         )

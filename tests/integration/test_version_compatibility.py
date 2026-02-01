@@ -9,18 +9,15 @@ from hal.client.client import HalClient
 from hal.server import HalServerBase
 from hal.client.config import HalClientConfig, HalServerConfig
 from hal.client.observation.types import NavigationCommand
-from compute.parkour.parkour_types import ParkourObservation, OBS_DIM
+from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
+from compute.parkour.parkour_types import ParkourObservation
 from hal.client.data_structures.hardware import HardwareObservations
+from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 from tests.helpers import create_dummy_hw_obs
 
 
-def test_reading_older_schema_versions():
-    """Test reading older schema versions (forward compatibility)."""
-    import zmq
-    
-    # Use shared context for inproc connections
-    # For now, we only support schema version "1.0"
-    # This test verifies that we can handle version checking
+def test_observation_receive():
+    """Test receiving observation via HAL (server set_observation, client poll)."""
     server_config = HalServerConfig(
         observation_bind="inproc://test_observation_old",
         command_bind="inproc://test_command_old",
@@ -39,7 +36,6 @@ def test_reading_older_schema_versions():
 
     client.set_debug(True)
 
-    # Send message with schema version "1.0" (current)
     hw_obs = create_dummy_hw_obs(
         camera_height=480, camera_width=640
     )
@@ -65,9 +61,7 @@ def test_forward_compatibility_unknown_fields():
     # Create command with current schema
     nav_cmd = NavigationCommand.create_now(vx=1.0, vy=0.0, yaw_rate=0.5)
 
-    # Verify it has all required fields
     assert nav_cmd.timestamp_ns > 0
-    assert nav_cmd.schema_version == "1.0"
     assert nav_cmd.vx == 1.0
     assert nav_cmd.vy == 0.0
     assert nav_cmd.yaw_rate == 0.5
@@ -101,30 +95,27 @@ def test_action_dim_mismatch_detection():
     response_correct.validate_action_dim(12)  # Should not raise
 
 
-def test_schema_version_compatibility_check():
-    """Test schema version compatibility checking."""
+def test_model_io_complete():
+    """Test ParkourModelIO is_complete() with valid observation and nav_cmd."""
     from compute.parkour.parkour_types import ParkourModelIO
     from hal.client.observation.types import NavigationCommand
 
-    # Create components with same schema version
+    obs_dims = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+        KRABBY_HEX_DEFINITION
+    )
     nav_cmd = NavigationCommand.create_now()
     observation = ParkourObservation(
         timestamp_ns=time.time_ns(),
-        schema_version="1.0",
-        observation=np.zeros(OBS_DIM, dtype=np.float32),
+        observation=np.zeros(obs_dims.obs_dim, dtype=np.float32),
+        observation_dimensions=obs_dims,
     )
-
-    # Should work with compatible versions
     model_io = ParkourModelIO(
         timestamp_ns=time.time_ns(),
-        schema_version="1.0",
         nav_cmd=nav_cmd,
         observation=observation,
     )
-
     assert model_io.is_complete()
 
-    # Test with mismatched schema versions (should be detected in build_model_io)
     import zmq
     
     shared_context2 = zmq.Context()

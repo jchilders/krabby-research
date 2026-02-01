@@ -21,7 +21,8 @@ from hal.server import HalServerConfig
 from hal.server.jetson import JetsonHalServer
 from compute.parkour.inference_client import ParkourInferenceClient
 from compute.parkour.policy_interface import ModelWeights
-from compute.parkour.model_definition import DEFAULT_MODEL_OBSERVATION_DEFINITION
+from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
+from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,7 +37,6 @@ def main():
 
     # Model arguments
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
-    parser.add_argument("--obs_dim", type=int, required=True, help="Observation dimension")
     parser.add_argument("--control_rate", type=float, default=100.0, help="Control loop rate in Hz")
     parser.add_argument(
         "--inference_device",
@@ -62,7 +62,11 @@ def main():
 
     args = parser.parse_args()
 
-    model_definition = DEFAULT_MODEL_OBSERVATION_DEFINITION
+    model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
+    robot_definition = KRABBY_HEX_DEFINITION
+    observation_dimensions = model_definition.get_observation_dimensions_for_checkpoint(
+        args.checkpoint, robot_definition
+    )
 
     # Running flag for graceful shutdown
     running = True
@@ -87,7 +91,11 @@ def main():
         )
 
         # Create and initialize HAL server
-        hal_server = JetsonHalServer(hal_server_config)
+        hal_server = JetsonHalServer(
+            hal_server_config,
+            observation_dimensions=observation_dimensions,
+            action_dim=model_definition.action_dim,
+        )
         hal_server.initialize()
 
         # Initialize hardware (camera, sensors, actuators)
@@ -109,14 +117,15 @@ def main():
 
         model_weights = ModelWeights(
             checkpoint_path=args.checkpoint,
+            observation_dimensions=observation_dimensions,
             action_dim=model_definition.action_dim,
-            obs_dim=args.obs_dim,
         )
 
-        # Create parkour inference client
         parkour_client = ParkourInferenceClient(
             hal_client_config=hal_client_config,
             model_weights=model_weights,
+            observation_dimensions=observation_dimensions,
+            robot_definition=robot_definition,
             control_rate=args.control_rate,
             device=args.inference_device,
             transport_context=transport_context,

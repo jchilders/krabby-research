@@ -16,10 +16,6 @@ logger = logging.getLogger(__name__)
 # Topics for PUB/SUB channels
 TOPIC_OBSERVATION = b"observation"  # Complete observation in training format
 
-# Schema version
-SCHEMA_VERSION = "1.0"
-
-
 class HalClient:
     """HAL client for subscribing to observations and sending commands.
 
@@ -139,7 +135,7 @@ class HalClient:
 
         Raises:
             RuntimeError: If client not initialized
-            ValueError: If message format is invalid (wrong schema version, wrong number of parts)
+            ValueError: If message format is invalid (wrong number of parts)
         """
         if not self._initialized:
             raise RuntimeError("Client not initialized. Call initialize() first.")
@@ -148,32 +144,14 @@ class HalClient:
         if self.observation_socket.poll(timeout_ms, zmq.POLLIN):
             try:
                 parts = self.observation_socket.recv_multipart(zmq.NOBLOCK)
-                if len(parts) >= 3:
-                    topic, schema_version_bytes = parts[0], parts[1]
-                    schema_version = schema_version_bytes.decode("utf-8")
-
-                    # Debug logging (conditional to avoid overhead when disabled)
+                if len(parts) >= 2:
+                    topic = parts[0]
+                    hw_obs_parts = parts[1:]
                     if self._debug_enabled:
                         logger.debug(
                             f"[ZMQ RECV] observation: topic={topic.decode('utf-8')}, "
-                            f"schema={schema_version}, "
                             f"num_parts={len(parts)}"
                         )
-
-                    # Validate schema version
-                    if schema_version != SCHEMA_VERSION:
-                        error_msg = f"Unsupported schema version: {schema_version}, expected {SCHEMA_VERSION}"
-                        logger.error(f"[ZMQ RECV] observation: {error_msg}")
-                        raise ValueError(error_msg)
-
-                    # Expected format: [topic, schema_version, ...hw_obs_parts]
-                    # hw_obs_parts format:
-                    #   - 12 parts: standard format (metadata + 11 arrays, no optional fields)
-                    #   - 13 parts: extended format (metadata + 12 arrays, includes scan_features OR privileged_latent)
-                    #   - 14 parts: full format (metadata + 13 arrays, includes scan_features + privileged_latent)
-                    # Total message: 2 (topic + schema) + hw_obs_parts
-                    # Timestamp is included in hw_obs metadata, no separate timestamp part
-                    hw_obs_parts = parts[2:]
                     if len(hw_obs_parts) not in (12, 13, 14):
                         error_msg = f"Invalid number of hw_obs parts: {len(hw_obs_parts)}, expected 12 (standard), 13 (extended), or 14 (full). Total message parts: {len(parts)}"
                         logger.error(f"[ZMQ RECV] observation: {error_msg}")

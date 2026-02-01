@@ -1,8 +1,8 @@
 """Mapper from Parkour model output to hardware format.
 
 This mapper converts model inference output (joint locomotion embedding)
-into hardware joint position commands. It uses zero-copy operations where
-possible.
+into hardware joint position commands. Output length is given by the
+robot definition (quad 12, hex 18).
 """
 
 import logging
@@ -12,34 +12,26 @@ import torch
 
 from compute.parkour.parkour_types import InferenceResponse
 from hal.client.data_structures.hardware import JointCommand
+from hal.server.robot_definition import RobotDefinition
 
 logger = logging.getLogger(__name__)
 
-# Real Krabby has 18 DOF (joints), but we use 12 for now to match model/environment
-KRABBY_JOINT_COUNT = 12
-
 
 class ParkourLocomotionToHWMapper:
-    """Maps Parkour model output to hardware format.
-    
-    Converts model navigation/locomotion output to hardware joint positions.
-    This is a 1:1 mapping since model and hardware both use 12 DOF.
-    
-    Zero-copy guarantees:
-    - If model outputs 12 joints directly, can use view
-    - Timestamp is always copied (scalar)
-    
-    Note: The model outputs ACTION_DIM joints (12 for quadruped).
-    Hardware has 12 joints, so this is a 1:1 mapping.
+    """Maps Parkour model output to hardware joint commands per robot definition.
+
+    Command length is robot_definition.get_total_joint_count() (12 quad, 18 hex).
+    If model output is shorter, pads with zeros; if longer, slices to command length.
     """
-    
-    def __init__(self, model_action_dim: int = 12):
+
+    def __init__(self, robot_definition: RobotDefinition):
         """Initialize the mapper.
-        
+
         Args:
-            model_action_dim: Action dimension from the model (typically 12)
+            robot_definition: Robot definition; output length = get_total_joint_count()
         """
-        self.model_action_dim = model_action_dim
+        self.robot_definition = robot_definition
+        self._command_joint_count = robot_definition.get_total_joint_count()
     
     def map(self, model_output: InferenceResponse, observation_timestamp_ns: int) -> JointCommand:
         """Map model output to hardware joint positions.
@@ -82,9 +74,12 @@ class ParkourLocomotionToHWMapper:
         if action_array.dtype != np.float32:
             action_array = action_array.astype(np.float32)
         
-        # Map to 12 joints (1:1 mapping)
-        joint_positions = self._map_to_krabby_joints(action_array)
-        
+        # Map model output to command length per robot definition (pad if hex)
+        model_joints = self._map_to_krabby_joints(action_array)
+        n = self._command_joint_count
+        joint_positions = np.zeros(n, dtype=np.float32)
+        joint_positions[: len(model_joints)] = model_joints
+
         return JointCommand(
             joint_positions=joint_positions,
             timestamp_ns=model_output.timestamp_ns,
@@ -92,33 +87,12 @@ class ParkourLocomotionToHWMapper:
         )
     
     def _map_to_krabby_joints(self, model_action: np.ndarray) -> np.ndarray:
-        """Map model action to Krabby 12-joint positions.
-        
-        Args:
-            model_action: Model action array (shape: ACTION_DIM,)
-            
-        Returns:
-            Joint positions array (shape: 12,)
-        """
-        if len(model_action) != self.model_action_dim:
-            raise ValueError(
-                f"Model action dimension {len(model_action)} != expected {self.model_action_dim}"
-            )
-        
-        # Model outputs 12 joints directly, use as-is (1:1 mapping)
-        if self.model_action_dim == KRABBY_JOINT_COUNT:
-            # Can use view if compatible, otherwise copy
-            if model_action.shape == (KRABBY_JOINT_COUNT,) and model_action.dtype == np.float32:
-                # Try to use view if contiguous
-                if model_action.flags["C_CONTIGUOUS"]:
-                    return model_action
-                else:
-                    return np.ascontiguousarray(model_action, dtype=np.float32)
-            else:
-                return np.asarray(model_action, dtype=np.float32)
-        
-        # Should not reach here if model_action_dim == 12 and KRABBY_JOINT_COUNT == 12
-        raise ValueError(
-            f"Model action dimension {self.model_action_dim} != hardware joint count {KRABBY_JOINT_COUNT}"
-        )
+        """Copy model action to float32 array; length may be <= command joint count (pad in map())."""
+        if len(model_action) == 0:
+            raise ValueError("Model action cannot be empty")
+        if len(model_action) > self._command_joint_count:
+            model_action = model_action[: self._command_joint_count]
+        if model_action.dtype == np.float32 and model_action.flags["C_CONTIGUOUS"]:
+            return model_action
+        return np.ascontiguousarray(model_action, dtype=np.float32)
 

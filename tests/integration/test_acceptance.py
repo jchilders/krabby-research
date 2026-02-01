@@ -21,26 +21,35 @@ from hal.client.client import HalClient
 from hal.server import HalServerBase
 from hal.client.config import HalClientConfig, HalServerConfig
 from hal.client.observation.types import NavigationCommand
-from compute.parkour.parkour_types import ParkourObservation, OBS_DIM
+from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
+from compute.parkour.parkour_types import ParkourObservation
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
+from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 from compute.testing.inference_test_runner import InferenceTestRunner
 from tests.helpers import create_dummy_hw_obs
+
+
+def _observation_dimensions():
+    return PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+        KRABBY_HEX_DEFINITION
+    )
 
 
 class ProtoHalServer(HalServerBase):
     """Proto HAL server for testing - publishes synthetic observations in training format.
 
-    This is a minimal HAL server that publishes observations matching the training format
-    exactly: [num_prop(53), num_scan(132), num_priv_explicit(9), num_priv_latent(29), history(530)]
+    Observation layout comes from model + robot definitions (observation_dimensions).
     """
 
-    def __init__(self, config: HalServerConfig):
+    def __init__(self, config: HalServerConfig, observation_dimensions):
         """Initialize proto HAL server.
-        
+
         Args:
             config: HAL server configuration
+            observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
         """
         super().__init__(config)
+        self._observation_dimensions = observation_dimensions
         self.tick_count = 0
         self._running = False
         self._publish_thread: Optional[threading.Thread] = None
@@ -102,42 +111,29 @@ class ProtoHalServer(HalServerBase):
     def publish_observation(self):
         """Set/publish synthetic observation in training format.
 
-        Creates observation array matching training format:
-        [num_prop(53), num_scan(132), num_priv_explicit(9), num_priv_latent(29), history(530)]
-        
-        Note: This method name is kept for backward compatibility in tests.
-        It calls set_observation() on the base class.
+        Creates observation array from observation_dimensions (model + robot definitions).
         """
-        from compute.parkour.parkour_types import OBS_DIM
+        d = self._observation_dimensions
+        obs_array = np.zeros(d.obs_dim, dtype=np.float32)
 
-        # Create synthetic observation in training format
-        obs_array = np.zeros(OBS_DIM, dtype=np.float32)
-
-        # Fill with synthetic data (simple patterns for testing)
-        num_prop = 53
-        num_scan = 132
-        num_priv_explicit = 9
-        num_priv_latent = 29
-        history_dim = 530
-
-        obs_array[:num_prop] = np.sin(np.arange(num_prop) * 0.1).astype(np.float32)
-        obs_array[num_prop : num_prop + num_scan] = np.cos(
-            np.arange(num_scan) * 0.05
+        obs_array[: d.num_prop] = np.sin(np.arange(d.num_prop) * 0.1).astype(np.float32)
+        obs_array[d.num_prop : d.num_prop + d.num_scan] = np.cos(
+            np.arange(d.num_scan) * 0.05
         ).astype(np.float32)
         obs_array[
-            num_prop + num_scan : num_prop + num_scan + num_priv_explicit
-        ] = np.random.randn(num_priv_explicit).astype(np.float32)
+            d.num_prop + d.num_scan : d.num_prop + d.num_scan + d.num_priv_explicit
+        ] = np.random.randn(d.num_priv_explicit).astype(np.float32)
         obs_array[
-            num_prop
-            + num_scan
-            + num_priv_explicit : num_prop
-            + num_scan
-            + num_priv_explicit
-            + num_priv_latent
-        ] = np.random.randn(num_priv_latent).astype(np.float32)
+            d.num_prop
+            + d.num_scan
+            + d.num_priv_explicit : d.num_prop
+            + d.num_scan
+            + d.num_priv_explicit
+            + d.num_priv_latent
+        ] = np.random.randn(d.num_priv_latent).astype(np.float32)
         obs_array[
-            num_prop + num_scan + num_priv_explicit + num_priv_latent :
-        ] = np.random.randn(history_dim).astype(np.float32)
+            d.num_prop + d.num_scan + d.num_priv_explicit + d.num_priv_latent :
+        ] = np.random.randn(d.history_dim).astype(np.float32)
 
         # Create hardware observation from the observation array
         # For testing, we'll create a dummy hardware observation
@@ -147,7 +143,6 @@ class ProtoHalServer(HalServerBase):
         hw_obs = create_dummy_hw_obs(
             camera_height=480, camera_width=640
         )
-        # Copy joint positions from obs_array (first 12 elements if available)
         num_joints = min(12, len(obs_array))
         hw_obs.joint_positions[:num_joints] = obs_array[:num_joints].astype(np.float32)
         
@@ -183,7 +178,8 @@ def proto_hal_setup():
         observation_bind="inproc://test_obs_proto",
         command_bind="inproc://test_cmd_proto",
     )
-    server = ProtoHalServer(server_config)
+    observation_dimensions = _observation_dimensions()
+    server = ProtoHalServer(server_config, observation_dimensions)
     server.initialize()
 
     client_config = HalClientConfig(
@@ -239,7 +235,9 @@ def test_100_tick_execution_with_proto_hal(proto_hal_setup):
             )
 
     model = MockPolicyModel()
-    test_runner = InferenceTestRunner(model, client, control_rate_hz=100.0)
+    test_runner = InferenceTestRunner(
+        model, client, control_rate_hz=100.0, robot_definition=KRABBY_HEX_DEFINITION
+    )
 
     # Set navigation command on test runner
     nav_cmd = NavigationCommand.create_now(vx=1.0, vy=0.0, yaw_rate=0.0)

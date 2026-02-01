@@ -110,13 +110,21 @@ class TestIsaacSimMCUSDKErrorHandling:
         with pytest.raises(AttributeError):
             self.sdk.apply_command(None)  # type: ignore
 
-    def test_apply_command_wrong_joint_count(self):
-        """Test that apply_command raises ValueError for wrong joint count."""
-        # JointCommand validation catches wrong joint count before apply_command
-        # Try to create JointCommand with 12 joints instead of 18
-        with pytest.raises(ValueError, match="joint_positions shape.*!=.*18"):
-            JointCommand(
-                joint_positions=np.zeros(12, dtype=np.float32),
-                timestamp_ns=time.time_ns(),
-                observation_timestamp_ns=time.time_ns(),
-            )
+    def test_apply_command_accepts_12_or_18_joints(self):
+        """Test that apply_command accepts 12 (quad) or 18 (hex) joints per robot definition."""
+        # Quad: 12 joints
+        cmd_12 = JointCommand(
+            joint_positions=np.zeros(12, dtype=np.float32),
+            timestamp_ns=time.time_ns(),
+            observation_timestamp_ns=time.time_ns(),
+        )
+        result_12 = self.sdk.apply_command(cmd_12, num_envs=1)
+        assert result_12.shape == (12,)
+        # Hex: 18 joints
+        cmd_18 = JointCommand(
+            joint_positions=np.zeros(18, dtype=np.float32),
+            timestamp_ns=time.time_ns(),
+            observation_timestamp_ns=time.time_ns(),
+        )
+        result_18 = self.sdk.apply_command(cmd_18, num_envs=1)
+        assert result_18.shape == (18,)

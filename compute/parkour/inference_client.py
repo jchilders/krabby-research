@@ -23,17 +23,12 @@ from hal.client.client import HalClient
 from hal.client.config import HalClientConfig
 from hal.client.observation.types import NavigationCommand
 from hal.client.data_structures.hardware import JointCommand
+from compute.parkour.model_definition import ObservationDimensions
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
 from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
 from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
-from compute.parkour.parkour_types import NUM_PROP, NUM_PRIV_EXPLICIT, NUM_SCAN, ParkourModelIO, TeacherObservation
-
-from hal.client.config import HalClientConfig
-from hal.client.observation.types import NavigationCommand
-from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
-from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
-from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
-from compute.parkour.parkour_types import NUM_PROP, NUM_PRIV_EXPLICIT, NUM_SCAN, ParkourModelIO
+from compute.parkour.parkour_types import ParkourModelIO, TeacherObservation
+from hal.server.robot_definition import RobotDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +49,8 @@ class ParkourInferenceClient(HalClient):
         self,
         hal_client_config: HalClientConfig,
         model_weights: ModelWeights,
+        observation_dimensions: ObservationDimensions,
+        robot_definition: RobotDefinition,
         control_rate: float = 100.0,
         device: str = "cuda",
         transport_context: Optional[zmq.Context] = None,
@@ -64,29 +61,28 @@ class ParkourInferenceClient(HalClient):
         Args:
             hal_client_config: HAL client configuration
             model_weights: Model weights configuration
+            observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
+            robot_definition: Robot definition; command joint count = get_total_joint_count()
             control_rate: Control loop rate in Hz
             device: Device for inference ("cuda" or "cpu")
             transport_context: ZMQ context for inproc connections (required for inproc)
             use_env_observations: If True, use environment observations directly instead of hardware observations
-                                 (for comparison testing - bypasses hardware observation mapping)
         """
-        # Initialize base HalClient
         super().__init__(hal_client_config, context=transport_context)
-        
         self.model_weights = model_weights
+        self.observation_dimensions = observation_dimensions
+        self.robot_definition = robot_definition
         self.control_rate = control_rate
         self.device = device
         self.use_env_observations = use_env_observations
-
         self.model: Optional[ParkourPolicyModel] = None
         self.nav_cmd: Optional[NavigationCommand] = None
         self._inference_initialized = False
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        # Initialize mapper immediately (maintains history buffer across steps)
-        # Only used if use_env_observations is False
-        self._mapper = HWObservationsToParkourMapper() if not use_env_observations else None
-        # Store environment reference for direct observation access (if use_env_observations is True)
+        self._mapper = (
+            HWObservationsToParkourMapper(observation_dimensions) if not use_env_observations else None
+        )
         self._env = None
 
     def initialize(self) -> None:
@@ -138,24 +134,20 @@ class ParkourInferenceClient(HalClient):
         # Get estimator from policy model
         estimator = self.model.runner.get_estimator_inference_policy(device=str(self.device))
         
-        # Apply estimator to proprioceptive features (first num_prop dimensions)
+        d = self.observation_dimensions
         with torch.inference_mode():
-            estimator_output = estimator(obs_tensor[:, :NUM_PROP])
-        
-        # Update privileged explicit features in the observation tensor (in-place, matching play script)
-        priv_explicit_start = NUM_PROP + NUM_SCAN
-        priv_explicit_end = priv_explicit_start + NUM_PRIV_EXPLICIT
+            estimator_output = estimator(obs_tensor[:, : d.num_prop])
+        priv_explicit_start = d.num_prop + d.num_scan
+        priv_explicit_end = priv_explicit_start + d.num_priv_explicit
         obs_tensor[:, priv_explicit_start:priv_explicit_end] = estimator_output
         
-        # Build model IO from observation tensor
         model_obs = TeacherObservation(
-            observation=obs_tensor[0].cpu().numpy(),  # Take first env, convert to numpy
             timestamp_ns=time.time_ns(),
-            schema_version="1.0",
+            observation_dimensions=self.observation_dimensions,
+            observation=obs_tensor[0].cpu().numpy(),
         )
         model_io = ParkourModelIO(
             timestamp_ns=model_obs.timestamp_ns,
-            schema_version=model_obs.schema_version,
             nav_cmd=NavigationCommand.create_now(),
             observation=model_obs,
         )
@@ -167,7 +159,7 @@ class ParkourInferenceClient(HalClient):
             raise RuntimeError(f"Inference failed: {inference_result.error_message}")
         
         # Map inference response to hardware joint positions
-        hw_mapper = ParkourLocomotionToHWMapper(model_action_dim=self.model.action_dim)
+        hw_mapper = ParkourLocomotionToHWMapper(self.robot_definition)
         joint_cmd = hw_mapper.map(inference_result, observation_timestamp_ns=model_obs.timestamp_ns)
         
         # Update timestamp to current time
@@ -224,14 +216,11 @@ class ParkourInferenceClient(HalClient):
         # Convert observation to torch tensor for estimator
         obs_tensor = torch.from_numpy(model_obs.observation).unsqueeze(0).to(self.device)
         
-        # Apply estimator to proprioceptive features (first num_prop dimensions)
+        d = self.observation_dimensions
         with torch.inference_mode():
-            estimator_output = estimator(obs_tensor[:, :NUM_PROP])
-        
-        # Update privileged explicit features in the observation array
-        # Position: num_prop + num_scan to num_prop + num_scan + num_priv_explicit
-        priv_explicit_start = NUM_PROP + NUM_SCAN
-        priv_explicit_end = priv_explicit_start + NUM_PRIV_EXPLICIT
+            estimator_output = estimator(obs_tensor[:, : d.num_prop])
+        priv_explicit_start = d.num_prop + d.num_scan
+        priv_explicit_end = priv_explicit_start + d.num_priv_explicit
         model_obs.observation[priv_explicit_start:priv_explicit_end] = estimator_output.cpu().numpy()[0]
         
         # Update both observation and nav_cmd timestamps to use the captured timestamp
@@ -239,10 +228,8 @@ class ParkourInferenceClient(HalClient):
         model_obs.timestamp_ns = current_timestamp_ns
         nav_cmd.timestamp_ns = current_timestamp_ns
 
-        # Build model IO (preserve timestamp from observation)
         model_io = ParkourModelIO(
             timestamp_ns=model_obs.timestamp_ns,
-            schema_version=model_obs.schema_version,
             nav_cmd=nav_cmd,
             observation=model_obs,
         )
@@ -255,7 +242,7 @@ class ParkourInferenceClient(HalClient):
             return False
 
         # Map inference response to hardware joint positions
-        hw_mapper = ParkourLocomotionToHWMapper(model_action_dim=self.model.action_dim)
+        hw_mapper = ParkourLocomotionToHWMapper(self.robot_definition)
         joint_cmd = hw_mapper.map(inference_result, observation_timestamp_ns=hw_obs.timestamp_ns)
         
         # Update timestamp to current time
@@ -264,9 +251,9 @@ class ParkourInferenceClient(HalClient):
         # Send command back to HAL server (using inherited method)
         self.put_joint_command(joint_cmd)
         
-        # Update mapper with previous action for next step
-        # Extract action from joint command (first 12 joints)
-        action_array = joint_cmd.joint_positions[:12]
+        # Update mapper with previous action for next step (model uses observation_joint_count)
+        n = self.observation_dimensions.observation_joint_count
+        action_array = joint_cmd.joint_positions[:n]
         self._mapper.set_previous_action(action_array)
         
         return True

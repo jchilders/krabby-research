@@ -3,93 +3,42 @@
 import pytest
 
 from compute.parkour.model_definition import (
+    PARKOUR_MODEL_OBSERVATION_DEFINITION,
     ModelObservationDefinition,
-    load_model_definition,
+)
+from hal.server.robot_definition import (
+    ObservationScalingDefinition,
+    RobotDefinition,
+)
+
+_TEST_ROBOT = RobotDefinition(
+    name="test_robot",
+    legs=("FL", "FR", "RL", "RR"),
+    joint_types=("hip_yaw", "hip_pitch", "knee"),
+    observation_scaling=ObservationScalingDefinition(
+        base_ang_vel=0.25,
+        joint_vel=0.05,
+        base_lin_vel=2.0,
+    ),
 )
 
 
-def test_load_model_definition_raises_when_file_missing(tmp_path):
-    """load_model_definition raises FileNotFoundError when params/model_definition.py is missing."""
-    checkpoint = tmp_path / "model.pt"
-    checkpoint.touch()
-
-    with pytest.raises(FileNotFoundError) as exc_info:
-        load_model_definition(checkpoint)
-
-    assert "params/model_definition.py" in str(exc_info.value)
-
-
-def test_load_model_definition_raises_when_checkpoint_dir_has_no_params(tmp_path):
-    """load_model_definition raises FileNotFoundError when params dir does not exist."""
-    checkpoint = tmp_path / "model.pt"
-    checkpoint.touch()
-
-    with pytest.raises(FileNotFoundError):
-        load_model_definition(checkpoint)
-
-
-def test_load_model_definition_returns_definition_from_python_file(tmp_path):
-    """load_model_definition returns ModelObservationDefinition from params/model_definition.py."""
-    checkpoint = tmp_path / "model.pt"
-    checkpoint.touch()
-    params_dir = tmp_path / "params"
-    params_dir.mkdir()
-    definition_py = params_dir / "model_definition.py"
-    definition_py.write_text('''from compute.parkour.model_definition import ModelObservationDefinition
-
-model_observation_definition = ModelObservationDefinition(
-    num_scan=132,
-    num_priv_explicit=9,
-    num_priv_latent=29,
-    num_hist=10,
-    action_dim=12,
-)
-''')
-
-    result = load_model_definition(checkpoint)
-
-    assert isinstance(result, ModelObservationDefinition)
-    assert result.num_scan == 132
-    assert result.num_priv_explicit == 9
-    assert result.num_priv_latent == 29
-    assert result.num_hist == 10
-    assert result.action_dim == 12
-
-
-def test_load_model_definition_custom_action_dim(tmp_path):
-    """load_model_definition loads custom action_dim from Python file."""
-    checkpoint = tmp_path / "model.pt"
-    checkpoint.touch()
-    params_dir = tmp_path / "params"
-    params_dir.mkdir()
-    (params_dir / "model_definition.py").write_text('''from compute.parkour.model_definition import ModelObservationDefinition
-
-model_observation_definition = ModelObservationDefinition(
-    num_scan=132,
-    num_priv_explicit=9,
-    num_priv_latent=29,
-    num_hist=10,
-    action_dim=18,
-)
-''')
-
-    result = load_model_definition(checkpoint)
-
-    assert result.action_dim == 18
-
-
-def test_load_model_definition_raises_when_variable_missing(tmp_path):
-    """load_model_definition raises AttributeError when model_observation_definition not defined."""
-    checkpoint = tmp_path / "model.pt"
-    checkpoint.touch()
-    params_dir = tmp_path / "params"
-    params_dir.mkdir()
-    (params_dir / "model_definition.py").write_text("# empty file, no model_observation_definition\n")
-
-    with pytest.raises(AttributeError) as exc_info:
-        load_model_definition(checkpoint)
-
-    assert "model_observation_definition" in str(exc_info.value)
+def test_model_definition_get_observation_dimensions():
+    """ModelObservationDefinition.get_observation_dimensions returns ObservationDimensions."""
+    model = PARKOUR_MODEL_OBSERVATION_DEFINITION
+    dims = model.get_observation_dimensions(_TEST_ROBOT)
+    assert dims.num_prop == _TEST_ROBOT.get_num_prop()
+    num_prop = _TEST_ROBOT.get_num_prop()
+    history_dim = model.num_hist * num_prop
+    expected_obs_dim = (
+        num_prop
+        + model.num_scan
+        + model.num_priv_explicit
+        + model.num_priv_latent
+        + history_dim
+    )
+    assert dims.obs_dim == expected_obs_dim
+    assert dims.observation_joint_count == 12
 
 
 def test_model_observation_definition_validate_success():
@@ -107,6 +56,18 @@ def test_model_observation_definition_validate_success():
 def test_model_observation_definition_validate_raises_for_invalid():
     """ModelObservationDefinition.validate() raises for non-positive values."""
     with pytest.raises(ValueError, match="num_scan must be > 0"):
-        ModelObservationDefinition(num_scan=0).validate()
+        ModelObservationDefinition(
+            num_scan=0,
+            num_priv_explicit=9,
+            num_priv_latent=29,
+            num_hist=10,
+            action_dim=12,
+        ).validate()
     with pytest.raises(ValueError, match="action_dim must be > 0"):
-        ModelObservationDefinition(action_dim=-1).validate()
+        ModelObservationDefinition(
+            num_scan=132,
+            num_priv_explicit=9,
+            num_priv_latent=29,
+            num_hist=10,
+            action_dim=-1,
+        ).validate()

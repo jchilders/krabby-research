@@ -422,20 +422,16 @@ class HardwareObservations:
 class JointCommand:
     """Joint command structure.
     
-    Contains 18 target joint positions for hardware control (6 legs × 3 DOF per leg: hip_yaw, hip_pitch, knee).
-    
-    Joint Mapping:
-        Changed from 12 joints to 18 joints to support hexapod robot configuration.
-        - Previous: 12 joints for 4-legged robot (4 legs × 3 DOF = 12 joints)
-        - Current: 18 joints for 6-legged hexapod (6 legs × 3 DOF = 18 joints)
-        Each leg has 3 degrees of freedom: hip_yaw, hip_pitch, and knee.
+    Target joint positions for hardware control. Length is robot-defined:
+    - Quad (4 legs × 3 DOF): 12 joints
+    - Hex (6 legs × 3 DOF): 18 joints
     
     Zero-copy guarantees:
     - joint_positions array may be a view if source is compatible
     - timestamp is always copied (scalar)
     """
     
-    joint_positions: np.ndarray  # Shape: (18,), dtype: float32
+    joint_positions: np.ndarray  # Shape: (n,) per robot definition, dtype: float32
     timestamp_ns: int  # Timestamp when command was created
     observation_timestamp_ns: int  # Timestamp of the observation this command responds to.
         # Used for tracking command-observation relationships and measuring round-trip latency.
@@ -445,9 +441,13 @@ class JointCommand:
         if self.timestamp_ns < 0:
             raise ValueError("timestamp_ns must be non-negative")
         
-        if self.joint_positions.shape != (18,):
+        if self.joint_positions.ndim != 1 or self.joint_positions.size == 0:
             raise ValueError(
-                f"joint_positions shape {self.joint_positions.shape} != (18,)"
+                f"joint_positions must be 1D non-empty, got shape {self.joint_positions.shape}"
+            )
+        if self.joint_positions.size > 24:
+            raise ValueError(
+                f"joint_positions length {self.joint_positions.size} exceeds max 24"
             )
         if self.joint_positions.dtype != np.float32:
             # Convert to float32 if needed (creates copy)

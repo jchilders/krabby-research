@@ -42,8 +42,6 @@ def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Inference test runner for policy inference")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
-    parser.add_argument("--action_dim", type=int, required=True, help="Action dimension")
-    parser.add_argument("--obs_dim", type=int, required=True, help="Observation dimension")
     parser.add_argument("--observation_endpoint", type=str, default="inproc://hal_observation", help="Observation endpoint")
     parser.add_argument("--command_endpoint", type=str, default="inproc://hal_commands", help="Command endpoint")
     parser.add_argument("--control_rate", type=float, default=100.0, help="Control loop rate in Hz")
@@ -105,15 +103,20 @@ def main():
             transport_context = mock_server.get_transport_context()
             logger.info("Using shared ZMQ context for inproc connections")
 
-        # Run inference test
+        from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
+        from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+        model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
+        robot_definition = KRABBY_HEX_DEFINITION
+        observation_dimensions = model_definition.get_observation_dimensions(robot_definition)
         run_inference_test(
             checkpoint_path=args.checkpoint,
-            action_dim=args.action_dim,
-            obs_dim=args.obs_dim,
+            observation_dimensions=observation_dimensions,
+            robot_definition=robot_definition,
             hal_endpoints=hal_endpoints,
             control_rate_hz=args.control_rate,
             device=args.device,
             transport_context=transport_context,
+            action_dim=model_definition.action_dim,
         )
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

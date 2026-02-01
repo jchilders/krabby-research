@@ -10,6 +10,7 @@ from hal.server import HalServerBase
 from hal.client.config import HalClientConfig, HalServerConfig
 from hal.client.observation.types import NavigationCommand
 from hal.client.data_structures.hardware import HardwareObservations
+from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
 from compute.testing.inference_test_runner import InferenceTestRunner
 from tests.helpers import create_dummy_hw_obs
 
@@ -86,7 +87,9 @@ def test_game_loop_faster_than_inference():
 
     # Use slow inference model (18ms > 10ms period at 100Hz)
     model = SlowInferenceModel(action_dim=12)
-    test_runner = InferenceTestRunner(model, client, control_rate_hz=100.0)
+    test_runner = InferenceTestRunner(
+        model, client, control_rate_hz=100.0, robot_definition=KRABBY_QUAD_DEFINITION
+    )
 
     nav_cmd = NavigationCommand.create_now()
     test_runner.set_navigation_command(nav_cmd)
@@ -163,7 +166,9 @@ def test_inference_faster_than_game_loop():
 
     # Use fast inference model (3ms < 10ms period at 100Hz)
     model = FastInferenceModel(action_dim=12)
-    test_runner = InferenceTestRunner(model, client, control_rate_hz=100.0)
+    test_runner = InferenceTestRunner(
+        model, client, control_rate_hz=100.0, robot_definition=KRABBY_QUAD_DEFINITION
+    )
 
     nav_cmd = NavigationCommand.create_now()
     test_runner.set_navigation_command(nav_cmd)

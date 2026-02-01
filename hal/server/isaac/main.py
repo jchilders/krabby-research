@@ -40,18 +40,6 @@ def main():
         help="Path to model checkpoint",
     )
     parser.add_argument(
-        "--action_dim",
-        type=int,
-        required=True,
-        help="Action dimension",
-    )
-    parser.add_argument(
-        "--obs_dim",
-        type=int,
-        required=True,
-        help="Observation dimension",
-    )
-    parser.add_argument(
         "--control_rate",
         type=float,
         default=100.0,
@@ -168,6 +156,8 @@ def main():
     from hal.client.config import HalClientConfig
     from hal.server import HalServerConfig
     from hal.server.isaac import IsaacSimHalServer
+    from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+    from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
     from compute.parkour.inference_client import ParkourInferenceClient
     from compute.parkour.policy_interface import ModelWeights
 
@@ -219,7 +209,8 @@ def main():
     )
 
     # Create and initialize HAL server
-    hal_server = IsaacSimHalServer(hal_server_config, env=env)
+    robot_definition = KRABBY_QUAD_DEFINITION
+    hal_server = IsaacSimHalServer(hal_server_config, env=env, robot_definition=robot_definition)
     hal_server.initialize()
     logger.info("HAL server initialized")
 
@@ -232,17 +223,20 @@ def main():
         command_endpoint=args.command_bind,
     )
 
-    # Create model weights configuration
+    model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
+    observation_dimensions = model_definition.get_observation_dimensions_for_checkpoint(
+        args.checkpoint, robot_definition
+    )
     model_weights = ModelWeights(
         checkpoint_path=args.checkpoint,
-        action_dim=args.action_dim,
-        obs_dim=args.obs_dim,
+        observation_dimensions=observation_dimensions,
+        action_dim=model_definition.action_dim,
     )
-
-    # Create parkour inference client
     parkour_client = ParkourInferenceClient(
         hal_client_config=hal_client_config,
         model_weights=model_weights,
+        observation_dimensions=observation_dimensions,
+        robot_definition=robot_definition,
         control_rate=args.control_rate,
         device=args.inference_device,
         transport_context=transport_context,

@@ -6,11 +6,17 @@ This script verifies that checkpoints can be loaded successfully.
 import argparse
 import logging
 import sys
+import time
 from pathlib import Path
 
+import numpy as np
 import torch
 
+from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION, ObservationDimensions
+from compute.parkour.parkour_types import ParkourModelIO, ParkourObservation
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
+from hal.client.observation.types import NavigationCommand
+from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,13 +25,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def test_checkpoint_loading(checkpoint_path: str, action_dim: int, obs_dim: int, device: str = "cuda"):
+def test_checkpoint_loading(
+    checkpoint_path: str,
+    observation_dimensions: ObservationDimensions,
+    device: str = "cuda",
+):
     """Test loading a checkpoint.
 
     Args:
         checkpoint_path: Path to checkpoint file
-        action_dim: Expected action dimension
-        obs_dim: Expected observation dimension
+        observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
         device: Device to load on ("cuda" or "cpu")
 
     Returns:
@@ -36,11 +45,11 @@ def test_checkpoint_loading(checkpoint_path: str, action_dim: int, obs_dim: int,
         logger.error(f"Checkpoint not found: {checkpoint_path}")
         return False
 
+    d = observation_dimensions
     logger.info(f"Testing checkpoint loading: {checkpoint_path}")
-    logger.info(f"Device: {device}, Action dim: {action_dim}, Obs dim: {obs_dim}")
+    logger.info(f"Device: {device}, Obs dim: {d.obs_dim}")
 
     try:
-        # Check device availability
         if device == "cuda":
             if not torch.cuda.is_available():
                 logger.warning("CUDA not available, falling back to CPU")
@@ -49,34 +58,32 @@ def test_checkpoint_loading(checkpoint_path: str, action_dim: int, obs_dim: int,
                 logger.info(f"CUDA available: {torch.cuda.get_device_name(0)}")
                 logger.info(f"CUDA version: {torch.version.cuda}")
 
-        # Create model weights
         weights = ModelWeights(
             checkpoint_path=str(checkpoint_path),
-            action_dim=action_dim,
-            obs_dim=obs_dim,
+            observation_dimensions=observation_dimensions,
+            action_dim=PARKOUR_MODEL_OBSERVATION_DEFINITION.action_dim,
         )
-
-        # Load model
         logger.info("Loading model...")
         model = ParkourPolicyModel(weights, device=device)
         logger.info("Model loaded successfully")
 
-        # Verify model is on correct device
         if device == "cuda":
-            # Check if model parameters are on CUDA
-            for name, param in model.model.named_parameters():
-                if param.is_cuda:
-                    logger.info(f"Parameter {name} is on CUDA")
-                    break
-            else:
-                logger.warning("No CUDA parameters found")
+            logger.info("Model loaded on CUDA")
 
-        # Test model forward pass with dummy input
         logger.info("Testing model forward pass...")
-        dummy_input = torch.randn(1, obs_dim, device=device, dtype=torch.float32)
-        with torch.no_grad():
-            output = model.model(dummy_input)
-            logger.info(f"Model output shape: {output.shape if hasattr(output, 'shape') else type(output)}")
+        obs_array = np.zeros(d.obs_dim, dtype=np.float32)
+        observation = ParkourObservation(
+            timestamp_ns=time.time_ns(),
+            observation=obs_array,
+            observation_dimensions=observation_dimensions,
+        )
+        model_io = ParkourModelIO(
+            timestamp_ns=time.time_ns(),
+            nav_cmd=NavigationCommand.create_now(vx=0.0, vy=0.0, yaw_rate=0.0),
+            observation=observation,
+        )
+        result = model.inference(model_io)
+        logger.info(f"Inference success: {result.success}")
 
         logger.info("Checkpoint loading test PASSED")
         return True
@@ -96,16 +103,15 @@ def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Test checkpoint loading")
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to checkpoint file")
-    parser.add_argument("--action_dim", type=int, required=True, help="Action dimension")
-    parser.add_argument("--obs_dim", type=int, required=True, help="Observation dimension")
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"], help="Device to use")
 
     args = parser.parse_args()
-
+    observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions_for_checkpoint(
+        args.checkpoint, KRABBY_HEX_DEFINITION
+    )
     success = test_checkpoint_loading(
         checkpoint_path=args.checkpoint,
-        action_dim=args.action_dim,
-        obs_dim=args.obs_dim,
+        observation_dimensions=observation_dimensions,
         device=args.device,
     )
 
