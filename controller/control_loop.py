@@ -25,7 +25,7 @@ class ControlMode(str, Enum):
     """Control loop mode enumeration. 
     More modes may be added later."""
     INPUT_CONTROLLER_ISAACSIM = "input_controller_isaacsim"
-    MODEL_CONTROLLER_KRABBY = "model_controller_krabby"
+    MODEL_CONTROLLER_KRABBY = "model_controller_krabby"    
     INPUT_CONTROLLER_KRABBY = "input_controller_krabby"
 
 

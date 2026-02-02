@@ -1,29 +1,14 @@
-"""Krabby MCU SDK interface for applying joint commands.
-
-This module provides a standardized SDK interface for applying joint commands
-to the Krabby robot MCU (real hardware).
-"""
+"""SDK interface for applying joint commands to the Krabby MCU."""
 
 import logging
 from typing import Optional
-
 import numpy as np
-
 from hal.client.data_structures.hardware import JointCommand
-
-# Import the MCU SDK from firmware package
-# TODO: This import path may need adjustment based on package structure
-try:
-    from firmware.krabby_mcu import KrabbyMCUSDK as FirmwareKrabbyMCUSDK
-except ImportError:
-    # Fallback for development/testing without firmware package
-    FirmwareKrabbyMCUSDK = None  # type: ignore
+from firmware.krabby_mcu import KrabbyMCUSDK as FirmwareKrabbyMCUSDK
 
 logger = logging.getLogger(__name__)
 
-# Joint name mapping for hexapod (18 joints)
-# Format: FL_hip_yaw, FL_hip_pitch, FL_knee, FR_hip_yaw, etc.
-# Order: FL, FR, ML, MR, RL, RR (each leg has 3 joints: hip_yaw, hip_pitch, knee)
+# 18 joints.
 JOINT_NAMES = [
     "FL_hip_yaw", "FL_hip_pitch", "FL_knee",
     "FR_hip_yaw", "FR_hip_pitch", "FR_knee",
@@ -33,37 +18,43 @@ JOINT_NAMES = [
     "RR_hip_yaw", "RR_hip_pitch", "RR_knee",
 ]
 
-# Joint position normalization parameters
-# MCU expects normalized values [0.0, 1.0] where:
-# - 0.0 = minimum position (fully retracted/negative)
-# - 0.5 = neutral position (zero radians)
-# - 1.0 = maximum position (fully extended/positive)
-# Joint positions from JointCommand are in radians, need to be normalized
-# Assuming joint limits: ±0.5 radians 
-# TODO: this will need to be adjusted as testing is done with the actuators.
-JOINT_LIMIT_RAD = 0.5  # Maximum joint deflection in radians
-JOINT_NEUTRAL = 0.5    # Normalized neutral position
+# Radians → normalized [0, 1]; 0.5 = neutral. JOINT_LIMIT_RAD used for scaling.
+JOINT_LIMIT_RAD = 0.5
+JOINT_NEUTRAL = 0.5
+
+# 6 MCU joints (FL/FR legs).
+MCU_JOINT_NAMES = ("LHY", "RHY", "LHL", "LKL", "RHL", "RKL")
+
+NEUTRAL_RAD_THRESHOLD = 0.01
+
+PWM_SCALE = 255 / JOINT_LIMIT_RAD
+
+
+def _rad_to_pwm(rad: float) -> int:
+    """Clamp radian-scaled value to PWM in [-255, 255]."""
+    return max(-255, min(255, int(round(rad * PWM_SCALE))))
+
+
+def _map_18_joints_to_6_mcu_joints(joint_positions_rad: np.ndarray) -> dict[str, float]:
+    """Map 18-element HAL joint positions (radians) to 6 MCU joint names; returns dict of name → normalized [0, 1] float.
+    Only the first 6 joints are used.
+    TODO: Add support for the other 12 joints. These will be added in the future.
+    """
+    six_rad = np.array([
+        joint_positions_rad[0], joint_positions_rad[3],
+        joint_positions_rad[1], joint_positions_rad[2],
+        joint_positions_rad[4], joint_positions_rad[5],
+    ], dtype=np.float32)
+    normalized = (six_rad / JOINT_LIMIT_RAD) * 0.5 + JOINT_NEUTRAL
+    normalized = np.clip(normalized, 0.0, 1.0)
+    return {name: float(normalized[i]) for i, name in enumerate(MCU_JOINT_NAMES)}
 
 
 class KrabbyMCUSDK:
-    """Standardized SDK interface for applying joint commands to Krabby MCU.
-    
-    The SDK handles:
-    - Converting JointCommand (18 joints in radians) to MCU format
-    - Mapping joint names from hexapod format to MCU command format
-    - Wrapping the firmware KrabbyMCUSDK for standardized interface
-    """
-    
+    """SDK for applying 18-joint HAL commands to the MCU."""
+
     def __init__(self, port: Optional[str] = None, baud: int = 115200, auto_connect: bool = True):
-        """Initialize Krabby MCU SDK.
-        
-        Args:
-            port: Serial port for MCU connection (e.g., "/dev/ttyACM0").
-                If None, uses default from firmware SDK.
-            baud: Baud rate for serial communication. Default: 115200.
-            auto_connect: If True, automatically connect to MCU on initialization.
-                If False, connection must be done manually. Default: True.
-        """
+        """Initialize MCU SDK (port, baud, optional auto_connect)."""
         if FirmwareKrabbyMCUSDK is None:
             raise RuntimeError(
                 "KrabbyMCUSDK firmware module not available. "
@@ -79,11 +70,7 @@ class KrabbyMCUSDK:
             self.connect()
     
     def connect(self) -> bool:
-        """Connect to MCU.
-        
-        Returns:
-            True if connection successful, False otherwise.
-        """
+        """Connect to MCU. Returns True if successful."""
         if self._connected:
             logger.warning("MCU already connected")
             return True
@@ -94,85 +81,61 @@ class KrabbyMCUSDK:
             logger.info("MCU connected successfully")
         else:
             logger.error("Failed to connect to MCU")
+            raise RuntimeError("Failed to connect to MCU")
         
         return success
     
     def is_connected(self) -> bool:
-        """Check if MCU is connected.
-        
-        Returns:
-            True if connected, False otherwise.
-        """
+        """Return whether MCU is connected."""
         return self._connected and self._mcu.running
-    
+
+    def _jog_all_joints(self, six_rad: np.ndarray) -> None:
+        """Send one jog command per MCU joint: 0 if neutral, else PWM. Stops only released axes."""
+        for i in range(6):
+            name = MCU_JOINT_NAMES[i]
+            pwm = 0 if abs(six_rad[i]) <= NEUTRAL_RAD_THRESHOLD else _rad_to_pwm(six_rad[i])
+            self._mcu.send_command_jog(name, pwm)
+
     def apply_command(
         self,
         command: JointCommand,
     ) -> None:
-        """Apply joint command to MCU.
-        
-        Converts JointCommand (18 joints in radians) to MCU command format
-        (normalized [0.0, 1.0] with joint names) and sends to MCU.
-        
-        Args:
-            command: JointCommand containing 18 joint positions in radians.
-            
-        Raises:
-            RuntimeError: If MCU is not connected.
-            ValueError: If command is invalid or has wrong number of joints.
-        """
+        """Apply 18-joint command to MCU (radians → normalized, then send)."""
         if not self.is_connected():
             raise RuntimeError("MCU is not connected. Call connect() first.")
-        
-        # Extract joint positions array from command
+
         command_array = command.joint_positions
-        
-        # Validate joint positions shape (should be 18 for hexapod)
         if command_array.shape[0] != 18:
             raise ValueError(
                 f"Expected 18 joints, got {command_array.shape[0]} joints"
             )
-        
-        # Convert radians to normalized [0.0, 1.0] range
-        # Formula: normalized = (radians / JOINT_LIMIT_RAD) * 0.5 + 0.5
-        # This maps: -JOINT_LIMIT_RAD -> 0.0, 0.0 -> 0.5, +JOINT_LIMIT_RAD -> 1.0
-        # TODO: this will be adjusted as it is tested with the actuators.
-        normalized_positions = (command_array / JOINT_LIMIT_RAD) * 0.5 + JOINT_NEUTRAL
-        
-        # Clamp to [0.0, 1.0] range (this is a safety check to ensure the values are within the expected range)
-        normalized_positions = np.clip(normalized_positions, 0.0, 1.0)
-        
-        # Convert to dictionary format expected by firmware SDK
-        # Map joint names to normalized positions
-        cmds_by_joint = {
-            joint_name: float(normalized_positions[i])
-            for i, joint_name in enumerate(JOINT_NAMES)
-        }
-        
-        # Send command to MCU
-        self._mcu.send_command_joints(cmds_by_joint)
-        
-        # Log command in MCU-preferred format for debugging
-        if logger.isEnabledFor(logging.DEBUG):
-            joint_values_str = ", ".join(
-                f"{name}={val:.4f}" for name, val in zip(JOINT_NAMES, normalized_positions)
-            )
-            logger.debug(
-                f"KrabbyMCUSDK: Applied joint command (timestamp_ns={command.timestamp_ns}, "
-                f"observation_timestamp_ns={command.observation_timestamp_ns}): "
-                f"{joint_values_str}"
-            )
-        
-        # Log summary statistics
+
+        cmds_by_joint = _map_18_joints_to_6_mcu_joints(command_array)
+        six_rad = np.array([
+            command_array[0], command_array[3],
+            command_array[1], command_array[2],
+            command_array[4], command_array[5],
+        ], dtype=np.float32)
+        ### TODO: As a pot is not connected for all joints, we do not call self._mcu.send_command_joints(cmds_by_joint) for now.
+        ### Instead, we call self._jog_all_joints(six_rad) to jog all joints (neutral → 0, non-neutral → PWM).
+        self._jog_all_joints(six_rad)
+
+        joint_values_str = ", ".join(
+            f"{name}={val:.4f}" for name, val in cmds_by_joint.items()
+        )
+        logger.info(
+            f"KrabbyMCUSDK: Applied joint command (from 18 joints, timestamp_ns={command.timestamp_ns}, "
+            f"observation_timestamp_ns={command.observation_timestamp_ns}): "
+            f"{joint_values_str}"
+        )
         logger.debug(
             f"KrabbyMCUSDK: Joint command stats - "
             f"radians: min={command_array.min():.4f}, max={command_array.max():.4f}, "
-            f"normalized: min={normalized_positions.min():.4f}, max={normalized_positions.max():.4f}"
+            f"6-joint normalized: min={min(cmds_by_joint.values()):.4f}, max={max(cmds_by_joint.values()):.4f}"
         )
     
     def close(self) -> None:
-        """Close MCU connection."""
-        if self._mcu is not None:
-            self._mcu.close()
-            self._connected = False
-            logger.info("MCU connection closed")
+        """Close MCU connection and release resources."""
+        self._mcu.close()
+        self._connected = False
+        logger.info("MCU connection closed")
