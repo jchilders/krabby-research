@@ -10,35 +10,42 @@ class LinearActuator
 public:
     struct ControlConfig
     {
-        int pwmRampStep = 5;
-        int rampIntervalMs = 10;
-        int pwmDeadband = 20;
-        int pwmErrDeadband = 10;
-        float Kp = 2.0;
+        int pwmRampStep = 5;     // how much to change PWM per ramp step, higher will cause motor to accelerate faster
+        int rampIntervalMs = 10; // time in millis between ramp steps
+        int pwmDeadband = 20;    // PWM values below this are treated as zero, to avoid motor "creep"
+        int pwmErrDeadband = 10; // Position error below which no PWM is applied, to avoid motor oscillation near target
+        float Kp = 2.0;          // proportional gain applied to position error to derive desired PWM, PWM is set to max((targetPos - currentPos) * Kp, 255)
+        float alphaPot = 0.15;    // Smoothing factor used to calculate potentiometer average (0.1 - 1.0)
+        float alphaIS = 0.10;     // Smoothing factor used to calculate current sense average (0.1 - 1.0)
 
         ControlConfig() = default;
         ControlConfig(int rampStep, int intervalMs, int deadband, int errDeadband, float kp)
             : pwmRampStep(rampStep), rampIntervalMs(intervalMs), pwmDeadband(deadband), pwmErrDeadband(errDeadband), Kp(kp) {}
     };
 
-    const char *name;
-    const int pinPwmR, pinPwmL, pinEnR, pinEnL, pinIS, pinPot;
+    const char *name;  // Short joint name/id (e.g. "LHY" = "Left Hip Yaw")
+    // PIN ASSIGNMENTS
+    const int pinPwmR; // Sending on PWM_R defines desired motor voltage in the right/extend direction (note: Only send one of PWM_R or PWM_L at a time to avoid motor chatter/damage)
+    const int pinPwmL; // Sending on PWM_L defines desired motor voltage in the left/retract direction (note: Only send one of PWM_R or PWM_L at a time to avoid motor chatter/damage)
+    const int pinEnR;  // Sending HIGH to EN_R enables 'right' half of H-Bridge (note: both EN_R and EN_L should be HIGH to enable motor drive)
+    const int pinEnL;  // Sending HIGH to EN_L enables 'left' half of H-Bridge (note: both EN_R and EN_L should be HIGH to enable motor drive)
+    const int pinIS;   // Analog current sense pin, reads motor current from H-Bridge as a value between 0 (0 Amp) and 1023 (Max motor Amps, e.g. ~8A @ 12V for common linear actuators)
+    const int pinPot;  // Analog potentiometer pin, reads actuator position as a value between 0 (fully retracted) and 1023 (fully extended)
 
-    // Calibration Limits
+    // Motion limits (raw ADC 0-1023), setting minStop higher than 0 will limit retraction, setting maxStop lower than 1023 will limit extension
+    // Typically set to slightly less than max allowed by mechanical endstops to avoid motor damage
     int minStop = 0;
     int maxStop = 1023;
 
-    // State
-    int currentPwm = 0;
-    int currentTarget = 512; // Start center
-    bool manualMode = false; // True if Jogging (TODO 4)
-    unsigned long lastRampTime = 0;
+    // Control states
+    int currentPwm = 0;              // Current PWM being applied to motor (-255 to 255)
+    int currentTarget = 0;           // Target position (raw ADC)
+    bool hasCommand = false;         // True after first external command applied
+    bool manualMode = false;         // True when jogging (manual PWM), skip PID
+    unsigned long lastRampTime = 0;  // Last time PWM ramp was updated, in millis, used along with rampIntervalMs to control ramp timing
+    float avgPot = 0.0;              // Global state variable to track smoothed potentiometer value
+    float avgIS = 0.0;               // Global state variable to track smoothed current sense value
 
-    // TODO 1 & 2: Smoothing Variables
-    float avgPot = 0.0;
-    float avgIS = 0.0;
-    const float ALPHA_POT = 0.15; // Smoothing factor (0.1 - 1.0)
-    const float ALPHA_IS = 0.10;
 
     LinearActuator(const char *n, int pR, int pL, int eR, int eL, int isPin, int pot)
         : name(n), pinPwmR(pR), pinPwmL(pL), pinEnR(eR), pinEnL(eL), pinIS(isPin), pinPot(pot) {}
@@ -47,14 +54,17 @@ public:
 
     void init()
     {
+        // Configure pin modes
         pinMode(pinPwmR, OUTPUT);
         pinMode(pinPwmL, OUTPUT);
         pinMode(pinEnR, OUTPUT);
         pinMode(pinEnL, OUTPUT);
         pinMode(pinIS, INPUT);
         pinMode(pinPot, INPUT);
+        
+        // Enable Driver
         digitalWrite(pinEnR, HIGH);
-        digitalWrite(pinEnL, HIGH); // Enable Driver
+        digitalWrite(pinEnL, HIGH);
 
         // Initialize averaging
         avgPot = analogRead(pinPot);
@@ -62,18 +72,18 @@ public:
         currentTarget = (int)avgPot;
     }
 
-    // TODO 1: Signal Smoothing
+    // Called during update to calculate new smoothed sensor readings, called internally on a fixed interval to exponentially average pot/IS readings
     void updateSensors()
     {
         int rawPot = analogRead(pinPot);
         int rawIS = analogRead(pinIS);
 
         // Exponential Moving Average
-        avgPot = (avgPot * (1.0 - ALPHA_POT)) + (rawPot * ALPHA_POT);
-        avgIS = (avgIS * (1.0 - ALPHA_IS)) + (rawIS * ALPHA_IS);
+        avgPot = (avgPot * (1.0 - controlConfig.alphaPot)) + (rawPot * controlConfig.alphaPot);
+        avgIS = (avgIS * (1.0 - controlConfig.alphaIS)) + (rawIS * controlConfig.alphaIS);
     }
 
-    // Returns smoothed, normalized position [0.0, 1.0]
+    // Returns normalized position [0.0,1.0], where 0.0 = minStop, 1.0 = maxStop
     float getPos()
     {
         float range = maxStop - minStop;
@@ -91,7 +101,7 @@ public:
         manualMode = false; // Target command cancels Jog
     }
 
-    // TODO 4: Manual Drive (Jog)
+    // Manual Drive (Jog) with direct PWM input (-255 to 255)
     void manualDrive(int pwm)
     {
         manualMode = true;
@@ -115,9 +125,10 @@ public:
         }
     }
 
+    // Drives actuator to desired position using controlConfig; call frequently in main loop
     void update()
     {
-        updateSensors(); // Always update sensors
+        updateSensors(); // Always update sensors to recalculate avgPot/avgIS
 
         if (manualMode)
             return; // Skip PID if jogging
@@ -174,6 +185,7 @@ public:
         return false;
     }
 
+    // Returns live, non-normalized telemetry for this joint as read from sensors 
     JointTelemetry getTelemetry(const char *code)
     {
         JointTelemetry jt;
@@ -190,6 +202,8 @@ public:
     }
 
 private:
+    // Helper to drive actuator with given PWM, deadband is normally from controlConfig, but is optionally prvoided to bypass deadband during manual drive
+    // 0 PWM = stop, Positive PWM = extend, Negative PWM = retract
     void driveActuator(int pwm, int pwmDeadband)
     {
         if (abs(pwm) < pwmDeadband)
@@ -230,10 +244,9 @@ public:
             actuators[i]->init();
     }
 
-    // TODO 4: Handle Jog Command
     void handleJog(String name, int pwm)
     {
-        // Simple O(N) lookup
+        // TODO: Improve brute force O(N) lookup
         for (size_t i = 0; i < count; i++)
         {
             if (String(actuators[i]->name) == name)
@@ -246,9 +259,9 @@ public:
 
     void updateAll()
     {
-        if (calState != CAL_IDLE)
+        if (calState != CAL_IDLE) // Run calibration logic instead of normal PID
         {
-            updateCalibration(); // Run calibration logic instead of normal PID
+            updateCalibration(); 
         }
         else
         {
@@ -259,6 +272,7 @@ public:
 
     void applyCommands(const Command *cmds, size_t cmdCount)
     {
+        // TODO: This is O(N^2), but N is small so probably ok for now. Would need to add a map for larger actuator sets.
         for (size_t i = 0; i < cmdCount; i++)
         {
             const auto &cmd = cmds[i];
@@ -275,6 +289,7 @@ public:
 
     void holdAll()
     {
+        // Set target to existing position for every actuator
         for (size_t i = 0; i < count; i++)
         {
             actuators[i]->setTarget(actuators[i]->getPos());
@@ -284,7 +299,7 @@ public:
     String serializeTelemetry() const
     {
         String out;
-        out.reserve(256);
+        out.reserve(3 + (count * JointTelemetry::serializedLengthEstimate()) + count + 8); // 'JT ' + data + separators + CAL_MODE
         out += "JT ";
         for (size_t i = 0; i < count; i++)
         {
@@ -300,7 +315,7 @@ public:
     }
 
     // ==================================================
-    // TODO 3: AUTO-CALIBRATION & PERSISTENCE
+    // AUTO-CALIBRATION & PERSISTENCE
     // ==================================================
     enum CalState
     {
@@ -331,6 +346,7 @@ public:
     // Struct to save to EEPROM
     struct CalData
     {
+        // TODO: Should be stored with Joint information, so that when joints change this changes, not hardcoded here
         int minVals[6];
         int maxVals[6];
         int magic; // 0xDEADBEEF to check validity
@@ -345,6 +361,7 @@ public:
 
     void updateCalibration()
     {
+        // TODO: Fix hardcoded actuator order, store actuator naming information in EEPROM struct
         // Helper lambda to get actuator by index (Hardcoded order: LHY, LHL, LKL, RHY, RHL, RKL)
         // 0=LHY, 1=LHL, 2=LKL, 3=RHY, 4=RHL, 5=RKL
         auto drive = [&](int idx, int pwm)
