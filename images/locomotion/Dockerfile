@@ -56,6 +56,11 @@ COPY parkour/dist/*.whl /tmp/wheels/
 # Note: hal/tools is excluded by default (only install when needed for debugging)
 RUN bash -c "pip3 install --no-cache-dir /tmp/wheels/*.whl"
 
+# Copy controller and firmware source
+COPY controller/ /workspace/controller/
+COPY firmware/ /workspace/firmware/
+ENV PYTHONPATH=/workspace
+
 # Set entrypoint to HAL server with integrated inference
 # This runs both Jetson HAL server and policy inference in the same process
 ENTRYPOINT ["python3", "-m", "hal.server.jetson.main"]

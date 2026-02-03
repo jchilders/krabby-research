@@ -129,6 +129,8 @@ The controller may be connected at the link level but not with the **HID** (Huma
 In bluetoothctl, try:
 
 ```
+remove XX:XX:XX:XX:XX:XX
+pair XX:XX:XX:XX:XX:XX
 trust XX:XX:XX:XX:XX:XX
 disconnect XX:XX:XX:XX:XX:XX
 connect XX:XX:XX:XX:XX:XX
@@ -136,6 +138,7 @@ connect XX:XX:XX:XX:XX:XX
 
 Then re-check `/dev/input/` and `dmesg`. If there is still no new **event*** or **js***, the blocker is almost certainly missing **hid_nintendo** (or equivalent) support in the kernel, not bluetoothctl.
 
+When testing with Jetson Orin, I have seen issues reconnecting bluetooth. I have got around this by doing a remove and pair again that has resolved this issue.
 ---
 
 ## Notes

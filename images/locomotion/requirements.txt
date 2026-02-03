@@ -27,3 +27,11 @@ rsl-rl-lib>=2.3.1
 # If ZED SDK is not available, the code will gracefully fall back to mock mode
 pyzed>=3.8.0
 
+# Gamepad E2E (controller/scripts/jetson client)
+pygame>=2.6.0
+PyYAML>=6.0.0
+
+# MCU serial (firmware.krabby_mcu)
+pyserial>=3.5
+keyboard>=0.13.0
+
