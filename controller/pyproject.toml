@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "krabby-controller"
+version = "0.1.0"
+description = "Joystick-controlled Krabby: sim and real HAL paths"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "krabby-hal-client>=0.1.0",
+    "pygame>=2.5.0",
+    "pyzmq>=25.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/flliver/krabby-research"
+Repository = "https://github.com/flliver/krabby-research"
+
+[tool.setuptools]
+package-dir = {"controller" = "."}
+packages = ["controller", "controller.input", "controller.mappers"]
