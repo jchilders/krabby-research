@@ -24,7 +24,7 @@ class IsaacSimHalServer(HalServerBase):
     Applies joint commands received via HAL to the environment.
     """
 
-    def __init__(self, config: HalServerConfig, env=None, robot_definition: Optional[RobotDefinition] = None):
+    def __init__(self, config: HalServerConfig, env=None, robot_definition: Optional[RobotDefinition] = None, observation_dimensions=None):
         """Initialize IsaacSim HAL server.
         
         Args:
@@ -32,6 +32,7 @@ class IsaacSimHalServer(HalServerBase):
             env: IsaacSim environment. If provided, environment component
                 references will be cached via _cache_references().
             robot_definition: Robot definition (quad 12 joints). Used for command slice and observation sizes.
+            observation_dimensions: Observation dimensions from model definition. Used for history buffer calculations.
         
         Note:
             If env is provided, this will call _cache_references() to extract
@@ -40,6 +41,7 @@ class IsaacSimHalServer(HalServerBase):
         super().__init__(config)
         self.env = env
         self.robot_definition = robot_definition
+        self.observation_dimensions = observation_dimensions
         self.scene = None
         self.robot = None
         self.observation_manager = None
@@ -180,17 +182,31 @@ class IsaacSimHalServer(HalServerBase):
         attempt = 0
         
         while attempt < max_attempts and not valid_observation_found:
-            # Extract all observation components from observation manager's computed observation
-            # This ensures we use the exact same values as the environment
-            # In Isaac Sim, observation_manager is always available
-            obs_dict = self.observation_manager.compute()
-            obs_tensor = obs_dict["policy"]
+            # Use cached observation if available (from env.step())
+            # Otherwise, extract from observation manager's computed observation (fallback for initial observation)
+            if self._latest_obs_tensor is not None and self._latest_obs_dict is not None:
+                # Use observation directly from env.step() to ensure we use the exact observation
+                # that the environment computed with the correct previous_action from action_history_buf
+                obs_tensor = self._latest_obs_tensor
+                obs_dict = self._latest_obs_dict
+            else:
+                # Fallback: extract from observation manager (only used for initial observation before first step)
+                # In Isaac Sim, observation_manager is always available
+                obs_dict = self.observation_manager.compute()
+                obs_tensor = obs_dict["policy"]
+                
+                # Cache observation for logging (avoid recomputing)
+                self._latest_obs_dict = obs_dict
+                self._latest_obs_tensor = obs_tensor
             
-            # Cache observation for logging (avoid recomputing)
-            self._latest_obs_dict = obs_dict
-            self._latest_obs_tensor = obs_tensor
+            # NOTE: We do NOT modify the observation tensor here.
+            # We use what the environment returns directly. If there are differences in the history buffer,
+            # we need to understand WHY the environment is returning different values, not patch them here.
+            # The observation code zeros obs_buf[:, 6:8] AFTER building the observation,
+            # so the returned observation includes the old history buffer. At timestep 0,
+            # the history buffer should be zeros from reset. If it's not, there's a deeper issue.
             
-            # Convert to numpy for extraction
+            # Convert to numpy for extraction (after modifying tensor)
             if obs_tensor.ndim == 2:
                 obs_vals = obs_tensor[0].cpu().numpy()  # Take first environment
             else:
@@ -203,30 +219,55 @@ class IsaacSimHalServer(HalServerBase):
             is_first_observation = self._last_published_obs_vals is None
             
             if not is_all_zero or is_first_observation:
-                # Extract joint positions (indices 12-23 in proprioceptive observation)
+                # Compute indices dynamically based on observation_joint_count
+                # Proprioceptive observation structure:
+                # [0:12] = fixed values (base_ang_vel, imu, delta_yaw, commands, terrain flags)
+                # [12:12+num_joints] = joint positions
+                # [12+num_joints:12+2*num_joints] = joint velocities
+                # [12+2*num_joints:12+3*num_joints] = previous action
+                num_joints = self.observation_dimensions.observation_joint_count
+                fixed_values_size = 12  # [0:12] base_ang_vel, imu, delta_yaw, commands, terrain flags
+                joint_positions_start = fixed_values_size
+                joint_positions_end = joint_positions_start + num_joints
+                joint_velocities_start = joint_positions_end
+                joint_velocities_end = joint_velocities_start + num_joints
+                previous_action_start = joint_velocities_end
+                previous_action_end = previous_action_start + num_joints
+                
+                # Extract joint positions
                 # The environment uses self.asset.data.joint_pos - self.asset.data.default_joint_pos
-                joint_positions_from_obs = obs_vals[12:24].astype(np.float32)
+                joint_positions_from_obs = obs_vals[joint_positions_start:joint_positions_end].astype(np.float32)
                 
-                # Extract joint velocities (indices 24-35 in proprioceptive observation)
+                # Extract joint velocities
                 # The environment uses self.asset.data.joint_vel * 0.05
-                joint_velocities_from_obs = obs_vals[24:36].astype(np.float32)
+                joint_velocities_from_obs = obs_vals[joint_velocities_start:joint_velocities_end].astype(np.float32)
                 
-                # Extract previous action (indices 36-47 in proprioceptive observation)
-                # NOTE: The observation manager's action_history_buf is updated during env.step(),
-                # but we call set_observation() BEFORE env.step(), so the observation manager's
-                # previous action is from 2 steps ago, not 1 step ago. We need to use our tracked
-                # last applied action instead.
-                # previous_action_from_obs = obs_vals[36:48].astype(np.float32)  # This is stale
-                previous_action_from_obs = self._last_applied_action.copy()  # Use tracked action
+                # Extract previous action
+                # When using cached observation from env.step(), it already has the correct previous_action
+                # from action_history_buf[:, -1] (updated during env.step() via action_manager.process_action()).
+                # For the initial observation (fallback path), previous_action should be zeros (no action applied yet).
+                previous_action_from_obs = obs_vals[previous_action_start:previous_action_end].astype(np.float32)
                 
-                # Create a modified observation array with updated previous_action for duplicate checking
-                # This ensures we check for duplicates after updating previous_action, not before
+                # Extract contact forces (after previous_action, remaining values in proprioceptive observation)
+                # Contact forces start after previous_action and fill the rest of num_prop
+                contact_forces_start = previous_action_end
+                num_prop = self.observation_dimensions.num_prop
+                contact_forces_end = min(contact_forces_start + 5, num_prop)  # HardwareObservations expects max 5 values
+                contact_forces_from_obs = obs_vals[contact_forces_start:contact_forces_end].astype(np.float32)
+                # Pad to 5 values if needed (HardwareObservations expects 5)
+                if len(contact_forces_from_obs) < 5:
+                    contact_forces_padded = np.zeros(5, dtype=np.float32)
+                    contact_forces_padded[:len(contact_forces_from_obs)] = contact_forces_from_obs
+                    contact_forces_from_obs = contact_forces_padded
+                
+                # Use observation as-is for duplicate checking (no modifications)
+                # The observation from env.step() is the exact observation computed by the environment
                 obs_vals_modified = obs_vals.copy()
-                obs_vals_modified[36:48] = previous_action_from_obs
                 
-                # Zero out history buffer for first observation to match play script behavior
+                # Zero out history buffer for first observation
                 # History buffer starts at index 223 (53 proprio + 132 scan + 9 priv_explicit + 29 priv_latent = 223)
                 # History buffer is 530 values (10 history entries * 53 values each)
+                # At timestep 0, the history buffer should be zeros from reset
                 if is_first_observation:
                     obs_vals_modified[223:] = 0.0
                 
@@ -377,13 +418,10 @@ class IsaacSimHalServer(HalServerBase):
             joint_velocities = np.zeros(12, dtype=np.float32)
             joint_velocities[:len(joint_velocities_from_obs)] = joint_velocities_from_obs
         
-        # Extract contact forces (indices 48-52 in proprioceptive observation)
-        # The environment has 5 contact force values, not 4
-        # Reuse obs_vals already computed above
-        contact_forces = obs_vals[48:53].astype(np.float32)  # 5 values: indices 48-52
-        
-        # Use previous action extracted from observation manager (ensures exact match)
+        # Use previous action and contact forces extracted from observation manager (ensures exact match)
+        # These were extracted inside the if block above, so they're available here
         previous_action = previous_action_from_obs
+        contact_forces = contact_forces_from_obs
 
         # Extract delta_yaw and terrain flags from observation (reuse obs_vals already computed)
         # [0:3] base_ang_vel, [3:5] roll/pitch, [5] zero, [6] delta_yaw, [7] delta_next_yaw,
@@ -482,6 +520,7 @@ class IsaacSimHalServer(HalServerBase):
         
         # Use standardized SDK to get normalized PWM values as numpy array
         action_np = self._mcusdk.apply_command(command, num_envs=num_envs)
+        
         # Slice to this robot's joint count (quad 12, hex 18)
         action_dim = self.robot_definition.get_total_joint_count() if self.robot_definition else 12
         action_np = action_np[:action_dim].astype(np.float32)

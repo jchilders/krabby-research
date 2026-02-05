@@ -275,6 +275,11 @@ class HWObservationsToParkourMapper:
         Matches training format: history_dim = num_hist * num_prop (from observation_dimensions).
         Stores last num_hist proprioceptive observations; on episode start fills buffer
         with current observation, otherwise shifts buffer and appends current.
+        
+        NOTE: The environment observation code zeros out delta_yaw (index 6) and delta_next_yaw
+        (index 7) in obs_buf AFTER building the observation, so the history buffer in the returned
+        observation has zeros at these positions. To match this behavior, we zero out positions
+        6-7 in the proprioceptive observation before storing it in the history buffer.
 
         Args:
             proprioceptive: Current proprioceptive observation (num_prop,)
@@ -282,12 +287,21 @@ class HWObservationsToParkourMapper:
         Returns:
             History features array of shape (history_dim,)
         """
+        # Zero out delta_yaw (index 6) and delta_next_yaw (index 7) before storing in history
+        # This matches the environment behavior where obs_buf[:, 6:8] = 0 is applied after
+        # building the observation, so the history buffer has zeros at these positions
+        # NOTE: Indices 6 and 7 are in the fixed header section [0:12] of the proprioceptive
+        # observation, which is constant across all robot types, so hardcoding is safe.
+        proprioceptive_for_history = proprioceptive.copy()
+        proprioceptive_for_history[6] = 0.0
+        proprioceptive_for_history[7] = 0.0
+        
         num_hist = self._dims.num_hist
         if self._episode_step <= 1:
             for i in range(num_hist):
-                self._history_buffer[i] = proprioceptive.copy()
+                self._history_buffer[i] = proprioceptive_for_history.copy()
         else:
             self._history_buffer[:-1] = self._history_buffer[1:]
-            self._history_buffer[-1] = proprioceptive.copy()
+            self._history_buffer[-1] = proprioceptive_for_history.copy()
         self._episode_step += 1
         return self._history_buffer.flatten()

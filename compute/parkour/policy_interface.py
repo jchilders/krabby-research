@@ -292,6 +292,9 @@ class ParkourPolicyModel:
     def _build_observation_tensor(self, io: ParkourModelIO) -> torch.Tensor:
         """Build observation tensor from ParkourModelIO using zero-copy operations.
 
+        NOTE: This method is used by inference() for backwards compatibility and testing.
+        The main execution path uses inference_tensor() which avoids numpy conversions.
+
         The observation is already in the correct training format:
         [num_prop(53), num_scan(132), num_priv_explicit(9), num_priv_latent(29), history(530)]
 
@@ -326,6 +329,73 @@ class ParkourPolicyModel:
         # Create tensor (shares memory with numpy array) and add batch dimension
         return torch.from_numpy(obs_array).to(self.device).unsqueeze(0)
 
+    def inference_tensor(self, obs_tensor: torch.Tensor) -> InferenceResponse:
+        """Run inference directly on observation tensor (avoids numpy conversions).
+        
+        This method bypasses ParkourModelIO and works directly with tensors,
+        providing a zero-copy path for tensor-based inference.
+        
+        Args:
+            obs_tensor: Observation tensor of shape (batch, obs_dim) on correct device
+            
+        Returns:
+            InferenceResponse with action tensor and metadata
+        """
+        input_timestamp_ns = time.time_ns()
+        timing_breakdown = []
+        
+        try:
+            # Ensure tensor is on correct device and has batch dimension
+            if obs_tensor.ndim == 1:
+                obs_tensor = obs_tensor.unsqueeze(0)
+            obs_tensor = obs_tensor.to(self.device)
+            
+            # Validate shape
+            if obs_tensor.shape[1] != self.obs_dim:
+                raise ValueError(f"Observation tensor shape {obs_tensor.shape} != (batch, {self.obs_dim})")
+            
+            build_time_ms = 0.0  # No conversion needed
+            timing_breakdown.append(("build_observation_tensor", build_time_ms))
+
+            # Call policy function directly (act_inference with hist_encoding=True)
+            # Normalization is automatically applied based on training config
+            # Use torch.inference_mode() to disable autograd and improve performance
+            policy_start_ns = time.time_ns()
+            with torch.inference_mode():
+                action_tensor = self.policy_fn(obs_tensor, hist_encoding=True)
+            policy_time_ms = (time.time_ns() - policy_start_ns) / 1_000_000.0
+            timing_breakdown.append(("policy_inference", policy_time_ms))
+
+            # Validate action shape - simplified check
+            validate_start_ns = time.time_ns()
+            if action_tensor.ndim == 2:
+                expected_shape = (action_tensor.shape[0], self.action_dim)
+                if action_tensor.shape[1] != self.action_dim:
+                    raise ValueError(f"Action shape {action_tensor.shape} != {expected_shape}")
+            elif action_tensor.ndim == 1:
+                if len(action_tensor) != self.action_dim:
+                    raise ValueError(f"Action length {len(action_tensor)} != {self.action_dim}")
+            else:
+                raise ValueError(f"Action must be 1D or 2D tensor, got {action_tensor.ndim}D with shape {action_tensor.shape}")
+
+            # Ensure float32 (convert only if necessary)
+            if action_tensor.dtype != torch.float32:
+                action_tensor = action_tensor.to(torch.float32)
+            validate_time_ms = (time.time_ns() - validate_start_ns) / 1_000_000.0
+            timing_breakdown.append(("validate_and_convert", validate_time_ms))
+
+            # Return action tensor directly (zero-copy reference from act_inference)
+            return InferenceResponse.create_success(
+                action=action_tensor,
+                timing_breakdown=timing_breakdown,
+            )
+
+        except Exception as e:
+            logger.error(f"Inference failed: {e}")
+            return InferenceResponse.create_failure(
+                error_message=str(e),
+            )
+    
     def inference(self, io: ParkourModelIO) -> InferenceResponse:
         """Run inference on ParkourModelIO.
 
@@ -351,8 +421,9 @@ class ParkourPolicyModel:
 
             # Call policy function directly (act_inference with hist_encoding=True)
             # Normalization is automatically applied based on training config
+            # Use torch.inference_mode() to disable autograd and improve performance
             policy_start_ns = time.time_ns()
-            with torch.no_grad():
+            with torch.inference_mode():
                 action_tensor = self.policy_fn(obs_tensor, hist_encoding=True)
             policy_time_ms = (time.time_ns() - policy_start_ns) / 1_000_000.0
             timing_breakdown.append(("policy_inference", policy_time_ms))
@@ -367,7 +438,7 @@ class ParkourPolicyModel:
                 if len(action_tensor) != self.action_dim:
                     raise ValueError(f"Action length {len(action_tensor)} != {self.action_dim}")
             else:
-                raise ValueError(f"Action must be 1D or 2D tensor, got {action_tensor.ndim}D with shape {action_tensor.shape}")
+                raise ValueError(f"Action must be 1D or 2D tensor, got shape {action_tensor.shape}")
 
             # Ensure float32 (convert only if necessary)
             if action_tensor.dtype != torch.float32:

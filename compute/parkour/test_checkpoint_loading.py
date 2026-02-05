@@ -13,9 +13,7 @@ import numpy as np
 import torch
 
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION, ObservationDimensions
-from compute.parkour.parkour_types import ParkourModelIO, ParkourObservation
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
-from hal.client.observation.types import NavigationCommand
 from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 logging.basicConfig(
@@ -70,19 +68,10 @@ def test_checkpoint_loading(
         if device == "cuda":
             logger.info("Model loaded on CUDA")
 
-        logger.info("Testing model forward pass...")
-        obs_array = np.zeros(d.obs_dim, dtype=np.float32)
-        observation = ParkourObservation(
-            timestamp_ns=time.time_ns(),
-            observation=obs_array,
-            observation_dimensions=observation_dimensions,
-        )
-        model_io = ParkourModelIO(
-            timestamp_ns=time.time_ns(),
-            nav_cmd=NavigationCommand.create_now(vx=0.0, vy=0.0, yaw_rate=0.0),
-            observation=observation,
-        )
-        result = model.inference(model_io)
+        logger.info("Testing model forward pass (using production path)...")
+        # Use production path: inference_tensor() with tensor input
+        obs_tensor = torch.zeros(1, d.obs_dim, dtype=torch.float32, device=torch.device(device))
+        result = model.inference_tensor(obs_tensor)
         logger.info(f"Inference success: {result.success}")
 
         logger.info("Checkpoint loading test PASSED")

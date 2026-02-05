@@ -17,8 +17,6 @@ from compute.parkour.model_definition import (
     ObservationDimensions,
 )
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
-from hal.client.observation.types import NavigationCommand
-from compute.parkour.parkour_types import ParkourModelIO, ParkourObservation
 from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 logging.basicConfig(
@@ -28,21 +26,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def create_dummy_model_io(observation_dimensions: ObservationDimensions) -> ParkourModelIO:
-    """Create dummy model IO for testing."""
-    nav_cmd = NavigationCommand.create_now(vx=0.0, vy=0.0, yaw_rate=0.0)
-    observation_array = np.zeros(observation_dimensions.obs_dim, dtype=np.float32)
-    observation = ParkourObservation(
-        timestamp_ns=time.time_ns(),
-        observation=observation_array,
-        observation_dimensions=observation_dimensions,
-    )
-
-    return ParkourModelIO(
-        timestamp_ns=time.time_ns(),
-        nav_cmd=nav_cmd,
-        observation=observation,
-    )
+def create_dummy_observation_tensor(observation_dimensions: ObservationDimensions, device: str = "cuda") -> torch.Tensor:
+    """Create dummy observation tensor for testing (matches production path)."""
+    obs_tensor = torch.zeros(1, observation_dimensions.obs_dim, dtype=torch.float32, device=device)
+    return obs_tensor
 
 
 def benchmark_inference(
@@ -66,12 +53,12 @@ def benchmark_inference(
         action_dim=action_dim,
     )
     model = ParkourPolicyModel(weights, device=device)
-    model_io = create_dummy_model_io(observation_dimensions)
+    obs_tensor = create_dummy_observation_tensor(observation_dimensions, device=device)
 
     # Warmup
     logger.info("Running warmup iterations...")
     for _ in range(warmup_iterations):
-        _ = model.inference(model_io)
+        _ = model.inference_tensor(obs_tensor)
 
     # Synchronize if using CUDA
     if device == "cuda":
@@ -86,7 +73,7 @@ def benchmark_inference(
             torch.cuda.synchronize()
 
         start_time_ns = time.time_ns()
-        result = model.inference(model_io)
+        result = model.inference_tensor(obs_tensor)
         end_time_ns = time.time_ns()
 
         if device == "cuda":

@@ -63,12 +63,6 @@ def main():
 
     # Environment arguments
     parser.add_argument(
-        "--num_envs",
-        type=int,
-        default=16,
-        help="Number of parallel environments to simulate (default: 16)",
-    )
-    parser.add_argument(
         "--video",
         action="store_true",
         default=False,
@@ -85,6 +79,12 @@ def main():
         action="store_true",
         default=False,
         help="Disable fabric and use USD I/O operations",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed for environment randomization (default: 42)",
     )
     parser.add_argument(
         "--real-time",
@@ -183,9 +183,11 @@ def main():
     env_cfg = parse_env_cfg(
         args.task,
         device=args.device,  # Use AppLauncher's device for environment
-        num_envs=args.num_envs,
         use_fabric=not args.disable_fabric,
     )
+    
+    # Set seed for environment randomization
+    env_cfg.seed = args.seed
 
     # Determine render mode based on video flag
     # For visual display, use None (default window rendering)
@@ -199,8 +201,12 @@ def main():
     
     logger.info(f"Created IsaacSim environment: {args.task} with {env.unwrapped.num_envs} parallel environments (render_mode={render_mode})")
 
-    # Reset environment before model loading
-    env.reset()
+    # Reset environment to initialize state
+    # env.reset() calls observation_manager.compute() internally (line 178 in parkour_manager_based_env.py)
+    # This is the first compute() call. We need a second compute() call after reset to match
+    # the environment's initialization pattern, which we do by calling set_observation() after reset.
+    reset_obs_dict, reset_extras = env.reset()
+    logger.info("Environment reset complete")
 
     # Create HAL server config
     hal_server_config = HalServerConfig(
@@ -210,7 +216,11 @@ def main():
 
     # Create and initialize HAL server
     robot_definition = KRABBY_QUAD_DEFINITION
-    hal_server = IsaacSimHalServer(hal_server_config, env=env, robot_definition=robot_definition)
+    model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
+    observation_dimensions = model_definition.get_observation_dimensions_for_checkpoint(
+        args.checkpoint, robot_definition
+    )
+    hal_server = IsaacSimHalServer(hal_server_config, env=env, robot_definition=robot_definition, observation_dimensions=observation_dimensions)
     hal_server.initialize()
     logger.info("HAL server initialized")
 
@@ -223,10 +233,6 @@ def main():
         command_endpoint=args.command_bind,
     )
 
-    model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
-    observation_dimensions = model_definition.get_observation_dimensions_for_checkpoint(
-        args.checkpoint, robot_definition
-    )
     model_weights = ModelWeights(
         checkpoint_path=args.checkpoint,
         observation_dimensions=observation_dimensions,
@@ -255,56 +261,64 @@ def main():
     dt = env.unwrapped.step_dt
     timestep = 0
 
-    # Publish initial observation from environment
-    # set_observation() extracts hardware observations from Isaac Sim environment
+    # Publish initial observation through HAL
+    # This is the second compute() call after reset. We need this because gym.make() + reset()
+    # requires a second observation computation to match the environment's initialization pattern.
+    # set_observation() will compute the observation (second call) and cache it
     hal_server.set_observation()
 
-    # Wait for first action from inference client (for the initial observation)
-    # apply_command() will loop internally until command received or timeout (throws if timeout)
-    # Use longer timeout for initial action
-    first_action = hal_server.apply_command()
-    if first_action.shape[0] == 1 and args.num_envs > 1:
-        first_action = first_action.expand(args.num_envs, -1)
-    
-    # Apply first action and step environment
-    obs_dict, _, _, _, extras = env.step(first_action)
-    
-    # Track first applied action for next observation's previous_action
-    action_np = first_action[0].cpu().numpy() if first_action.ndim == 2 else first_action.cpu().numpy()
-    if len(action_np) >= 12:
-        hal_server._last_applied_action[:] = action_np[:12].astype(np.float32)
-    else:
-        hal_server._last_applied_action[:len(action_np)] = action_np.astype(np.float32)
-    
-    timestep += 1
-
     # Main loop: step simulation and publish observations
+    # Pattern: wait for action (for observation we published) -> step -> publish new observation
+    # ALL communication must go through HAL - no direct inference calls
+    # Note: Initial observation was already published before the loop
+    timestep = 0
     while running and simulation_app.is_running():
         loop_start_ns = time.time_ns()
 
-        # Normal execution path: Publish hardware observations via HAL
-        # set_observation() extracts hardware observations from Isaac Sim environment
-        hal_server.set_observation()
-        
-        # Wait for action corresponding to the observation just published (synchronous matching)
+        # Wait for action corresponding to the observation we published (synchronous matching)
+        # For timestep 0, this is the initial observation published before the loop
+        # For subsequent timesteps, this is the observation published at the end of the previous iteration
         # apply_command() will loop internally until command received or timeout (throws if timeout)
+        # apply_command() automatically expands single action to all environments if num_envs > 1
         action = hal_server.apply_command()
-        if action.shape[0] == 1 and args.num_envs > 1:
-            action = action.expand(args.num_envs, -1)
-
-        # Step environment
-        # Note: env.step() increments episode_length_buf BEFORE computing observations
-        # This matches play script behavior where env.step() returns observations
-        obs_dict, _, _, _, extras = env.step(action)
         
-        # Track last applied action for next observation's previous_action
-        # Extract first 12 joints (action_dim) from action tensor
+        # Ensure action has correct shape [num_envs, action_dim]
+        # apply_command() should already expand to [num_envs, action_dim] if needed
+        num_envs = env.unwrapped.num_envs
+        if action.ndim == 1:
+            action = action.unsqueeze(0)
+        if action.shape[0] != num_envs:
+            # If we got a single action, expand it to all environments
+            if action.shape[0] == 1:
+                action = action.expand(num_envs, -1)
+            else:
+                raise ValueError(f"Action tensor shape {action.shape} != [{num_envs}, action_dim]")
+        action = action.to(device=env.unwrapped.device)
+
+        # Track last applied action BEFORE stepping, so set_observation() can use it for previous_action
+        # Extract first 12 joints (action_dim) from action tensor for first environment
         action_np = action[0].cpu().numpy() if action.ndim == 2 else action.cpu().numpy()
         if len(action_np) >= 12:
             hal_server._last_applied_action[:] = action_np[:12].astype(np.float32)
         else:
             logger.warning(f"Action length {len(action_np)} < 12, only tracking {len(action_np)} values")
             hal_server._last_applied_action[:len(action_np)] = action_np.astype(np.float32)
+        
+        # Step environment with action for all environments
+        # Note: env.step() increments episode_length_buf BEFORE computing observations
+        obs_dict, _, _, _, extras = env.step(action)
+        
+        # Cache the observation from env.step() for set_observation() to use
+        # We use the observation directly from env.step() to avoid recomputing it, which ensures
+        # we use the exact observation that the environment computed with the correct previous_action
+        # from action_history_buf (updated during env.step() via action_manager.process_action()).
+        hal_server._latest_obs_dict = obs_dict
+        hal_server._latest_obs_tensor = obs_dict["policy"]
+        
+        # Publish new observation through HAL for next iteration
+        # set_observation() will use the cached observation from env.step()
+        # The inference client running in background thread will process it and send back action
+        hal_server.set_observation()
 
         timestep += 1
         

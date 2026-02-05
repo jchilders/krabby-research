@@ -108,7 +108,7 @@ class ParkourInferenceClient(HalClient):
         
         This method bypasses HAL polling and hardware observation mapping,
         using environment observations directly. This ensures identical
-        observation processing as the play script.
+        observation processing as the environment's native path.
         
         Args:
             obs_tensor: Observation tensor from environment (shape: [num_envs, obs_dim])
@@ -128,39 +128,33 @@ class ParkourInferenceClient(HalClient):
         # Ensure tensor is on correct device
         obs_tensor = obs_tensor.to(self.device)
         
-        # Apply estimator to fill privileged explicit features (same as play script)
+        # Apply estimator to fill privileged explicit features
         # NOTE: Do NOT normalize before estimator - normalization happens inside policy function
-        # The play script applies estimator to raw observations, then policy normalizes internally
+        # The estimator is applied to raw observations, then policy normalizes internally
         # Get estimator from policy model
         estimator = self.model.runner.get_estimator_inference_policy(device=str(self.device))
         
         d = self.observation_dimensions
+        # Use torch.inference_mode() to disable autograd and improve performance
+        # Call estimator.inference() which has its own torch.no_grad() inside
         with torch.inference_mode():
-            estimator_output = estimator(obs_tensor[:, : d.num_prop])
+            estimator_output = estimator.inference(obs_tensor[:, : d.num_prop])
+        
         priv_explicit_start = d.num_prop + d.num_scan
         priv_explicit_end = priv_explicit_start + d.num_priv_explicit
         obs_tensor[:, priv_explicit_start:priv_explicit_end] = estimator_output
         
-        model_obs = TeacherObservation(
-            timestamp_ns=time.time_ns(),
-            observation_dimensions=self.observation_dimensions,
-            observation=obs_tensor[0].cpu().numpy(),
-        )
-        model_io = ParkourModelIO(
-            timestamp_ns=model_obs.timestamp_ns,
-            nav_cmd=NavigationCommand.create_now(),
-            observation=model_obs,
-        )
-        
-        # Run inference
-        inference_result = self.model.inference(model_io)
+        # Use direct tensor inference to avoid numpy conversions
+        # inference_tensor() works directly with tensors, avoiding the tensor → numpy → tensor
+        # conversion that would occur with inference() (which takes ParkourModelIO)
+        inference_result = self.model.inference_tensor(obs_tensor)
         
         if not inference_result.success:
             raise RuntimeError(f"Inference failed: {inference_result.error_message}")
         
         # Map inference response to hardware joint positions
         hw_mapper = ParkourLocomotionToHWMapper(self.robot_definition)
-        joint_cmd = hw_mapper.map(inference_result, observation_timestamp_ns=model_obs.timestamp_ns)
+        joint_cmd = hw_mapper.map(inference_result, observation_timestamp_ns=time.time_ns())
         
         # Update timestamp to current time
         joint_cmd.timestamp_ns = time.time_ns()
@@ -221,21 +215,16 @@ class ParkourInferenceClient(HalClient):
             estimator_output = estimator(obs_tensor[:, : d.num_prop])
         priv_explicit_start = d.num_prop + d.num_scan
         priv_explicit_end = priv_explicit_start + d.num_priv_explicit
-        model_obs.observation[priv_explicit_start:priv_explicit_end] = estimator_output.cpu().numpy()[0]
+        obs_tensor[:, priv_explicit_start:priv_explicit_end] = estimator_output
         
         # Update both observation and nav_cmd timestamps to use the captured timestamp
         # This ensures synchronization between observation and nav_cmd
         model_obs.timestamp_ns = current_timestamp_ns
         nav_cmd.timestamp_ns = current_timestamp_ns
 
-        model_io = ParkourModelIO(
-            timestamp_ns=model_obs.timestamp_ns,
-            nav_cmd=nav_cmd,
-            observation=model_obs,
-        )
-
-        # Run inference
-        inference_result = self.model.inference(model_io)
+        # Use direct tensor inference to avoid numpy conversions (tensor → numpy → tensor)
+        # This matches the optimized path in process_env_observation()
+        inference_result = self.model.inference_tensor(obs_tensor)
 
         if not inference_result.success:
             logger.error(f"Inference failed: {inference_result.error_message}")
