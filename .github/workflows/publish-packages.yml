@@ -1,0 +1,104 @@
+# Publish krabby-* packages to PyPI on version tags.
+# Tag format: <package-prefix>-v<version> (e.g. hal-client-v0.1.0, controller-v0.1.0).
+# Runs tests for the package before uploading. Install internal krabby-* deps from repo wheels.
+# Requires: PYPI_API_TOKEN in repo secrets (or configure Trusted Publishing).
+
+name: Publish packages to PyPI
+
+on:
+  push:
+    tags:
+      - 'hal-client-v*'
+      - 'hal-server-v*'
+      - 'compute-parkour-v*'
+      - 'controller-v*'
+      - 'hal-tools-v*'
+      - 'hal-server-isaac-v*'
+      - 'hal-server-jetson-v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install build and publish tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Determine package from tag
+        id: pkg
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [[ "$TAG" == hal-server-isaac-v* ]]; then
+            echo "path=hal/server/isaac" >> $GITHUB_OUTPUT
+            echo "deps=hal/client hal/server compute/parkour" >> $GITHUB_OUTPUT
+            echo "test_path=tests/unit/hal/server/isaac/" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == hal-server-jetson-v* ]]; then
+            echo "path=hal/server/jetson" >> $GITHUB_OUTPUT
+            echo "deps=hal/client hal/server compute/parkour" >> $GITHUB_OUTPUT
+            echo "test_path=tests/unit/hal/" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == hal-client-v* ]]; then
+            echo "path=hal/client" >> $GITHUB_OUTPUT
+            echo "deps=" >> $GITHUB_OUTPUT
+            echo "test_path=tests/unit/hal/" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == hal-server-v* ]]; then
+            echo "path=hal/server" >> $GITHUB_OUTPUT
+            echo "deps=" >> $GITHUB_OUTPUT
+            echo "test_path=tests/unit/hal/test_server.py tests/unit/hal/test_zmq_push_pull.py" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == compute-parkour-v* ]]; then
+            echo "path=compute/parkour" >> $GITHUB_OUTPUT
+            echo "deps=hal/client" >> $GITHUB_OUTPUT
+            echo "test_path=tests/unit/test_compute_parkour_policy.py" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == controller-v* ]]; then
+            echo "path=controller" >> $GITHUB_OUTPUT
+            echo "deps=hal/client" >> $GITHUB_OUTPUT
+            echo "test_path=tests/unit/controller/" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == hal-tools-v* ]]; then
+            echo "path=hal/tools" >> $GITHUB_OUTPUT
+            echo "deps=hal/client hal/server" >> $GITHUB_OUTPUT
+            echo "test_path=" >> $GITHUB_OUTPUT
+          else
+            echo "Unrecognized tag: $TAG"
+            exit 1
+          fi
+
+      - name: Build and install dependency wheels
+        run: |
+          for dep in ${{ steps.pkg.outputs.deps }}; do
+            if [[ -n "$dep" ]]; then
+              echo "Building and installing $dep..."
+              cd "$dep" && python -m build --wheel && pip install dist/*.whl && cd ../..
+            fi
+          done
+
+      - name: Build package wheel
+        run: |
+          cd "${{ steps.pkg.outputs.path }}"
+          python -m build --wheel
+
+      - name: Install package and dev deps for testing
+        run: |
+          cd "${{ steps.pkg.outputs.path }}"
+          pip install dist/*.whl
+          pip install pytest pytest-cov
+          cd -
+
+      - name: Run tests
+        if: steps.pkg.outputs.test_path != ''
+        run: |
+          pytest ${{ steps.pkg.outputs.test_path }} -v
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          twine upload "${{ steps.pkg.outputs.path }}/dist/"*.whl

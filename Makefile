@@ -106,6 +106,7 @@ endif
 build-wheels:
 	@echo "Building wheels for all packages..."
 	@cd hal/client && $(PYTHON) -m build --wheel
+	@cd controller && $(PYTHON) -m build --wheel
 	@cd hal/server && $(PYTHON) -m build --wheel
 	@cd hal/server/isaac && $(PYTHON) -m build --wheel
 	@cd hal/server/jetson && $(PYTHON) -m build --wheel
@@ -119,6 +120,7 @@ clean:
 	rm -rf hal/*/dist hal/*/build hal/*/*.egg-info
 	rm -rf hal/server/*/dist hal/server/*/build hal/server/*/*.egg-info
 	rm -rf compute/*/dist compute/*/build compute/*/*.egg-info
+	rm -rf controller/dist controller/build controller/*.egg-info
 	find . -type d -name __pycache__ -exec rm -r {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
 
@@ -127,12 +129,13 @@ install-editable:
 	@echo "Installing packages in editable mode (for development)..."
 	@echo "This allows you to edit source files in wheel package directories and see changes immediately."
 	@$(PIP) install -e hal/client
+	@$(PIP) install -e controller
 	@$(PIP) install -e hal/server
 	@$(PIP) install -e hal/server/isaac
 	@$(PIP) install -e hal/server/jetson
 	@$(PIP) install -e hal/tools
 	@$(PIP) install -e compute/parkour
-	@echo "Packages installed in editable mode. Edit files in hal/*/ and compute/*/ directories."
+	@echo "Packages installed in editable mode. Edit files in hal/*/, controller/, and compute/*/ directories."
 
 # Build cache directory (for heavy downloads like Isaac Lab, reused across Docker builds)
 BUILD_CACHE := $(CURDIR)/.build-cache
