@@ -111,10 +111,10 @@ def main():
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
     
-    # Enable cameras for visual display (needed for rendering)
-    # This ensures the window and rendering pipeline are set up correctly
-    if not hasattr(args, 'enable_cameras') or args.enable_cameras is None:
-        args.enable_cameras = True
+    # Always enable cameras - required for camera sensors (CameraCfg) to work
+    # Camera sensors will fail to initialize without --enable_cameras flag
+    args.enable_cameras = True
+    logger.info(f"Setting enable_cameras=True (required for camera sensors)")
 
     # Launch IsaacLab
     app_launcher = AppLauncher(args)
