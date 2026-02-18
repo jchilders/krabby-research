@@ -19,12 +19,33 @@ logger = logging.getLogger("KrabbySDK")
 
 
 def _default_port():
+    """
+    Best-effort auto-detection of the MCU serial port.
+    Priority:
+      1) KRABBY_MCU_PORT env var (explicit override)
+      2) USB description/manufacturer containing common board identifiers
+      3) OS-specific fallback
+    """
     env_port = os.getenv("KRABBY_MCU_PORT")
     if env_port:
         return env_port
+
+    preferred_keywords = (
+        "arduino",
+        "dfrobot",
+        "dfduino",
+        "ch340",   # common USB-serial chip on many DFRobot-style boards
+        "cp210",   # Silicon Labs USB-serial
+        "usb-serial",
+    )
+
     for p in list_ports.comports():
-        if "arduino" in (p.description or "").lower() or "arduino" in (p.manufacturer or "").lower():
+        desc = (p.description or "").lower()
+        manuf = (p.manufacturer or "").lower()
+        if any(k in desc or k in manuf for k in preferred_keywords):
             return p.device
+
+    # Last-resort fallback if nothing matched
     return "COM5" if os.name == "nt" else "/dev/ttyACM0"
 
 
@@ -54,6 +75,12 @@ class KrabbyMCUSDK:
                 target=self._reader_loop, daemon=True)
             self.thread.start()
             logger.info(f"Connected to {self.port}")
+
+            # On startup, immediately command the MCU to hold all joints
+            # at their current positions so the legs don't drift or move
+            # unexpectedly before the user issues a command.
+            self.send_command_joints_hold()
+
             return True
         except Exception:
             logger.exception("Connection Failed")
@@ -181,55 +208,3 @@ class KrabbyMCUSDK:
                 logger.debug("Serial close failed", exc_info=True)
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1.0)
-
-
-if __name__ == "__main__":
-    import sys
-    # Enable Debug to see telemetry
-    if "--debug" in sys.argv:
-        logger.setLevel(logging.DEBUG)
-
-    mcu = KrabbyMCUSDK()
-    if mcu.connect():
-        try:
-            print("\n=== Krabby MCU Task 2 ===")
-            print("1: Send Neutral (0.5)")
-            print("2: AUTO-CALIBRATE (New!)")
-            print("3: Manual Jog Mode (Requires 'keyboard' lib)")
-            print("q: Quit")
-
-            while True:
-                choice = input("\nSelect > ").strip().lower()
-
-                if choice == 'q':
-                    break
-                elif choice == '1':
-                    logger.info("Sending Neutral...")
-                    mcu.send_command_joints({
-                        "LHY": 0.5, "RHY": 0.5,
-                        "LHL": 0.5, "LKL": 0.5,
-                        "RHL": 0.5, "RKL": 0.5,
-                    })
-                elif choice == '2':
-                    print("WARNING: This will move ALL limbs to find limits.")
-                    if input("Confirm (y/n): ") == 'y':
-                        mcu.send_command_calibrate()
-                elif choice == '3':
-                    joint = input("Enter Joint (e.g. LHY): ").upper()
-                    print(f"Holding W/S to move {joint}. ESC to exit.")
-
-                    while True:
-                        if keyboard.is_pressed('esc'):
-                            mcu.send_command_jog(joint, 0)
-                            break
-                        elif keyboard.is_pressed('w'):
-                            mcu.send_command_jog(joint, 255)  # Max speed
-                        elif keyboard.is_pressed('s'):
-                            mcu.send_command_jog(joint, -255)
-                        else:
-                            mcu.send_command_jog(joint, 0)
-                        time.sleep(0.05)  # Prevent flooding
-        except KeyboardInterrupt:
-            mcu.send_command_joints_hold()
-        finally:
-            mcu.close()

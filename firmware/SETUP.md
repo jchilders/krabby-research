@@ -51,16 +51,16 @@ This firmware drives a full leg pair (Left & Right) consisting of **6 Motors**.
 
 ## 3. Usage Guide
 
-Run the main controller script:
+Run the interactive MCU menu from the **krabby-research** directory:
 
 ```bash
 # On Linux/Mac, you may need sudo for keyboard access
-python krabby_mcu.py
+python -m firmware
 ```
 
-for troubleshooting:
+For troubleshooting (verbose telemetry):
 ```bash
-python krabby_mcu.py --debug
+python -m firmware --debug
 ```
 
 

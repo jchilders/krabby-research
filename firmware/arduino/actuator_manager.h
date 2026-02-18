@@ -61,10 +61,14 @@ public:
         pinMode(pinEnL, OUTPUT);
         pinMode(pinIS, INPUT);
         pinMode(pinPot, INPUT);
-        
-        // Enable Driver
-        digitalWrite(pinEnR, HIGH);
-        digitalWrite(pinEnL, HIGH);
+
+        // Safe startup: explicitly drive PWM low and EN low.
+        // EN will only be driven HIGH later when we actually command motion
+        // via driveActuator() (in update() / manualDrive()).
+        analogWrite(pinPwmR, 0);
+        analogWrite(pinPwmL, 0);
+        digitalWrite(pinEnR, LOW);
+        digitalWrite(pinEnL, LOW);
 
         // Initialize averaging
         avgPot = analogRead(pinPot);
