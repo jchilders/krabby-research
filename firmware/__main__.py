@@ -9,6 +9,13 @@ import keyboard
 
 from firmware.krabby_mcu import KrabbyMCUSDK, logger
 
+# Joint order: LKL, LHL, LHY, RHY, RHL, RKL
+JOINTS = ["LKL", "LHL", "LHY", "RHY", "RHL", "RKL"]
+# Extend: Q W E R T Y  |  Retract: A S D F G H
+EXTEND_KEYS = ["q", "w", "e", "r", "t", "y"]
+RETRACT_KEYS = ["a", "s", "d", "f", "g", "h"]
+JOG_PWM = 200
+
 
 def main():
     if "--debug" in sys.argv:
@@ -19,43 +26,40 @@ def main():
         return
 
     try:
-        print("\n=== Krabby MCU Task 2 ===")
-        print("1: Send Neutral (0.5)")
-        print("2: AUTO-CALIBRATE (New!)")
-        print("3: Manual Jog Mode (Requires 'keyboard' lib)")
-        print("q: Quit")
+        print("\n=== Krabby MCU — Direct key control ===")
+        print("Extend: Q W E R T Y  →  LKL LHL LHY RHY RHL RKL")
+        print("Retract: A S D F G H  →  LKL LHL LHY RHY RHL RKL")
+        print("1: Neutral (0.5)  |  2: Auto-calibrate  |  ESC: Quit")
+        print()
 
         while True:
-            choice = input("\nSelect > ").strip().lower()
-
-            if choice == "q":
+            if keyboard.is_pressed("esc"):
                 break
-            if choice == "1":
-                logger.info("Sending Neutral...")
+            if keyboard.is_pressed("1"):
                 mcu.send_command_joints({
                     "LHY": 0.5, "RHY": 0.5,
                     "LHL": 0.5, "LKL": 0.5,
                     "RHL": 0.5, "RKL": 0.5,
                 })
-            elif choice == "2":
+                time.sleep(0.3)  # debounce
+                continue
+            if keyboard.is_pressed("2"):
                 print("WARNING: This will move ALL limbs to find limits.")
-                if input("Confirm (y/n): ") == "y":
-                    mcu.send_command_calibrate()
-            elif choice == "3":
-                joint = input("Enter Joint (e.g. LHY): ").upper()
-                print(f"Holding W/S to move {joint}. ESC to exit.")
+                # Release key and wait for y/n in next iteration is messy; skip for now or use a one-shot
+                mcu.send_command_calibrate()
+                time.sleep(0.5)
+                continue
 
-                while True:
-                    if keyboard.is_pressed("esc"):
-                        mcu.send_command_jog(joint, 0)
-                        break
-                    if keyboard.is_pressed("w"):
-                        mcu.send_command_jog(joint, 255)
-                    elif keyboard.is_pressed("s"):
-                        mcu.send_command_jog(joint, -255)
-                    else:
-                        mcu.send_command_jog(joint, 0)
-                    time.sleep(0.05)
+            for i, joint in enumerate(JOINTS):
+                if keyboard.is_pressed(EXTEND_KEYS[i]):
+                    mcu.send_command_jog(joint, JOG_PWM)
+                elif keyboard.is_pressed(RETRACT_KEYS[i]):
+                    mcu.send_command_jog(joint, -JOG_PWM)
+                else:
+                    mcu.send_command_jog(joint, 0)
+
+            time.sleep(0.04)  # ~25 Hz
+
     except KeyboardInterrupt:
         mcu.send_command_joints_hold()
     finally:
