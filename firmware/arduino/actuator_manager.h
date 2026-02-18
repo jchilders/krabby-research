@@ -39,9 +39,8 @@ public:
 
     // Control states
     int currentPwm = 0;              // Current PWM being applied to motor (-255 to 255)
-    int currentTarget = 0;           // Target position (raw ADC)
-    bool hasCommand = false;         // True after first external command applied
-    bool manualMode = false;         // True when jogging (manual PWM), skip PID
+    int currentTarget = 0;           // Target position (raw ADC); only used when hasTarget is true
+    bool hasTarget = false;          // True only after a T (target) command; if false, motor stays idle
     unsigned long lastRampTime = 0;  // Last time PWM ramp was updated, in millis, used along with rampIntervalMs to control ramp timing
     float avgPot = 0.0;              // Global state variable to track smoothed potentiometer value
     float avgIS = 0.0;               // Global state variable to track smoothed current sense value
@@ -73,7 +72,7 @@ public:
         // Initialize averaging
         avgPot = analogRead(pinPot);
         avgIS = analogRead(pinIS);
-        currentTarget = (int)avgPot;
+        hasTarget = false; // No target until host sends T command
     }
 
     // Called during update to calculate new smoothed sensor readings, called internally on a fixed interval to exponentially average pot/IS readings
@@ -98,32 +97,33 @@ public:
 
     int getRawPos() { return (int)avgPot; } // Returns smoothed RAW value
 
+    // Set position target (T command only). Only this sets hasTarget = true.
     void setTarget(float val)
     {
         val = constrain(val, 0.0, 1.0);
         currentTarget = minStop + (int)(val * (maxStop - minStop));
-        manualMode = false; // Target command cancels Jog
+        hasTarget = true;
     }
 
-    // Manual Drive (Jog) with direct PWM input (-255 to 255)
+    // Hold: just stop the motor. No target is set or updated.
+    void stopMotor()
+    {
+        currentPwm = 0;
+        driveActuator(0, controlConfig.pwmDeadband);
+        hasTarget = false;
+    }
+
+    // Jog: direct PWM. Does not set or clear target; when pwm is 0 we just stop.
     void manualDrive(int pwm)
     {
-        manualMode = true;
-        // Clamp PWM
         pwm = constrain(pwm, -255, 255);
-        // Direct drive, bypassing PID but respecting ramp in next update()
-        // For responsiveness, we set currentPwm directly if stopping
         if (pwm == 0)
         {
             currentPwm = 0;
-            driveActuator(0, 0);
-            // When stopping jog, lock new position as target
-            currentTarget = getRawPos();
+            driveActuator(0, controlConfig.pwmDeadband);
         }
         else
         {
-            // For movement, we let the update() loop handle ramping if desired,
-            // but simpler to just drive directly for Jog to feel responsive.
             driveActuator(pwm, 0);
             currentPwm = pwm;
         }
@@ -134,8 +134,10 @@ public:
     {
         updateSensors(); // Always update sensors to recalculate avgPot/avgIS
 
-        if (manualMode)
-            return; // Skip PID if jogging
+        // No target: motor chills electrically. manualDrive() directly sets PWM/EN
+        // when jogging, and in the no-target state we do not override that here.
+        if (!hasTarget)
+            return;
 
         int error = currentTarget - getRawPos();
         if (abs(error) < controlConfig.pwmErrDeadband)
@@ -293,10 +295,13 @@ public:
 
     void holdAll()
     {
-        // Set target to existing position for every actuator
+        // For now, "hold" means fully de‑energize all joints:
+        // EN low and PWM 0 on every actuator. This avoids any
+        // PID activity that could move other joints when the
+        // user expects everything to stay still.
         for (size_t i = 0; i < count; i++)
         {
-            actuators[i]->setTarget(actuators[i]->getPos());
+            actuators[i]->stopMotor();
         }
     }
 
