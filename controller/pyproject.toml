@@ -37,6 +37,10 @@ dev = [
 Homepage = "https://github.com/flliver/krabby-research"
 Repository = "https://github.com/flliver/krabby-research"
 
+[project.scripts]
+krabby-uno = "controller.cli.cli_uno:main"
+krabby-uno-sim = "controller.cli.cli_uno_sim:main"
+
 [tool.setuptools]
 package-dir = {"controller" = "."}
-packages = ["controller", "controller.input", "controller.mappers"]
+packages = ["controller", "controller.input", "controller.mappers", "controller.cli"]

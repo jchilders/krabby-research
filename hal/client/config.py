@@ -1,16 +1,21 @@
 """HAL client configuration classes.
 
-This module also re-exports ``HalServerConfig`` so imports like::
+``HalServerConfig`` is re-exported here when ``hal.server`` is installed, so::
 
     from hal.client.config import HalClientConfig, HalServerConfig
 
-continue to work even though ``HalServerConfig`` lives in ``hal.server.config``.
+works in full installs. When only the client package is installed,
+``HalServerConfig`` is not available (so the client can be used without
+the server package).
 """
 
 from dataclasses import dataclass
 from typing import Optional
 
-from hal.server.config import HalServerConfig  # re-export for backwards compatibility
+try:
+    from hal.server.config import HalServerConfig  # re-export when hal.server is installed
+except ModuleNotFoundError:
+    HalServerConfig = None  # type: ignore[misc, assignment]
 
 
 @dataclass
