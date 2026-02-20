@@ -9,8 +9,10 @@ import keyboard
 
 from firmware.krabby_mcu import KrabbyMCUSDK, logger
 
-# Joint order: LKL, LHL, LHY, RHY, RHL, RKL
-JOINTS = ["FLKL", "FLHL", "FLHY", "FRHY", "FRHL", "FRKL"]
+# Joint order per leg pair: LKL, LHL, LHY, RHY, RHL, RKL
+JOINTS_FRONT = ["FLKL", "FLHL", "FLHY", "FRHY", "FRHL", "FRKL"]
+JOINTS_LEFT = ["RLKL", "RLHL", "RLHY", "MLHY", "MLHL", "MLKL"]
+JOINTS_RIGHT = ["RRKL", "RRHL", "RRHY", "MRHY", "MRHL", "MRKL"]
 # Extend: Q W E R T Y  |  Retract: A S D F G H
 EXTEND_KEYS = ["q", "w", "e", "r", "t", "y"]
 RETRACT_KEYS = ["a", "s", "d", "f", "g", "h"]
@@ -26,37 +28,45 @@ def main():
         return
 
     try:
-        print("\n=== Krabby MCU — Direct key control ===")
-        print("Extend: Q W E R T Y  →  LKL LHL LHY RHY RHL RKL")
-        print("Retract: A S D F G H  →  LKL LHL LHY RHY RHL RKL")
-        print("1: Neutral (0.5)  |  2: Auto-calibrate  |  ESC: Quit")
+        print("\n=== Krabby MCU — Direct key control (18 joints) ===")
+        print("Extend: Q W E R T Y  |  Retract: A S D F G H")
+        print("Hold 1: LEFT set  |  Hold 2: RIGHT set  |  Hold 1+2: all 18  |  No 1/2: FRONT")
+        print("0: Neutral (0.5)  |  9: Auto-calibrate  |  ESC: Quit")
         print()
 
         while True:
             if keyboard.is_pressed("esc"):
                 break
-            if keyboard.is_pressed("1"):
+            if keyboard.is_pressed("0"):
                 mcu.send_command_joints({
-                    "LHY": 0.5, "RHY": 0.5,
-                    "LHL": 0.5, "LKL": 0.5,
-                    "RHL": 0.5, "RKL": 0.5,
+                    "FLHY": 0.5, "FRHY": 0.5, "FLHL": 0.5, "FLKL": 0.5, "FRHL": 0.5, "FRKL": 0.5,
+                    "RLHY": 0.5, "MLHY": 0.5, "RLHL": 0.5, "RLKL": 0.5, "MLHL": 0.5, "MLKL": 0.5,
+                    "RRHY": 0.5, "MRHY": 0.5, "RRHL": 0.5, "RRKL": 0.5, "MRHL": 0.5, "MRKL": 0.5,
                 })
                 time.sleep(0.3)  # debounce
                 continue
-            if keyboard.is_pressed("2"):
+            if keyboard.is_pressed("9"):
                 print("WARNING: This will move ALL limbs to find limits.")
-                # Release key and wait for y/n in next iteration is messy; skip for now or use a one-shot
                 mcu.send_command_calibrate()
                 time.sleep(0.5)
                 continue
 
-            for i, joint in enumerate(JOINTS):
+            key1 = keyboard.is_pressed("1")
+            key2 = keyboard.is_pressed("2")
+            # No 1/2 → FRONT; 1 → LEFT; 2 → RIGHT; 1+2 → all 18
+            drive_front = (not key1 and not key2) or (key1 and key2)
+            jog_cmds = {}
+            for i in range(6):
                 if keyboard.is_pressed(EXTEND_KEYS[i]):
-                    mcu.send_command_jog(joint, JOG_PWM)
+                    pwm = JOG_PWM
                 elif keyboard.is_pressed(RETRACT_KEYS[i]):
-                    mcu.send_command_jog(joint, -JOG_PWM)
+                    pwm = -JOG_PWM
                 else:
-                    mcu.send_command_jog(joint, 0)
+                    pwm = 0
+                jog_cmds[JOINTS_FRONT[i]] = pwm if drive_front else 0
+                jog_cmds[JOINTS_LEFT[i]] = pwm if key1 else 0
+                jog_cmds[JOINTS_RIGHT[i]] = pwm if key2 else 0
+            mcu.send_commands_jog(jog_cmds)
 
             time.sleep(0.04)  # ~25 Hz
 

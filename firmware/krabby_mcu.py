@@ -174,6 +174,22 @@ class KrabbyMCUSDK:
 
         logger.info("CMD -> %s", " ".join(parts))
 
+    def send_commands_jog(self, cmds_by_joint: Dict[str, int]):
+        """
+        Send all jog commands in one batch (B name pwm name pwm ...) so the leader
+        can forward one line to followers instead of 18 separate J lines.
+        """
+        if not self.ser or not self.ser.is_open:
+            return
+        parts = ["B"]
+        for name, raw_pwm in cmds_by_joint.items():
+            pwm = max(-255, min(255, int(raw_pwm)))
+            parts.append(name)
+            parts.append(str(pwm))
+        cmd = " ".join(parts) + " \n"
+        self.ser.write(cmd.encode('utf-8'))
+        self.ser.flush()
+
     def send_command_jog(self, joint_name: str, pwm: int):
         """ Send J<name> <pwm> (-255 to 255) """
         if not self.ser or not self.ser.is_open:
@@ -182,8 +198,6 @@ class KrabbyMCUSDK:
         cmd = f"J{joint_name} {pwm}\n"
         self.ser.write(cmd.encode('utf-8'))
         self.ser.flush()
-        # Optional: Uncomment if you want spammy logs for jogging
-        # logger.debug(f"JOG -> {joint_name} {pwm}")
 
     def send_command_calibrate(self):
         if not self.ser or not self.ser.is_open:

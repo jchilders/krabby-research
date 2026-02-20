@@ -190,8 +190,8 @@ public:
         return false;
     }
 
-    // JT wire format: "<role> <name> <pos> <pot> <current> <enL> <enR> <pwmL> <pwmR> <saf>;"
-    // e.g. 'FRONT FLHY 0.123 0 12 1 1 0 120 0; FRHY 0.234 0 13 1 1 0 130 0; ...'
+    // JT wire format: "<role>; <name> <pos> <pot> <current> <enL> <enR> <pwmL> <pwmR> <saf>;"
+    // e.g. 'FRONT; FLHY 0.123 0 12 1 1 0 120 0; FRHY 0.234 0 13 1 1 0 130 0; ...'
     // Keep in sync with firmware/interfaces/joint_telemetry.py
     // Keeping it super simple to avoid any string parsing and external library overhead
     void printTelemetry(Print& out) const

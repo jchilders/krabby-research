@@ -226,8 +226,36 @@ void loop()
             if (leftSerial)  { leftSerial->print("T ");  leftSerial->println(payload); }
             if (rightSerial) { rightSerial->print("T "); rightSerial->println(payload); }
         }
+        else if (cmdType == 'B')
+        {
+            mainSerial->read();
+            if(leftSerial) leftSerial->print("B ");
+            if(rightSerial) rightSerial->print("B ");
+            while (true)
+            {
+                String name = mainSerial->readStringUntil(' ');
+                int pwm = mainSerial->readStringUntil(' ').toInt();
+
+                actuatorManager->handleJog(name, pwm);
+                if (leftSerial)  { 
+                    leftSerial->print(name);
+                    leftSerial->print(" ");
+                    leftSerial->print(pwm);
+                    leftSerial->print(" ");
+                }
+                if (rightSerial) { 
+                    rightSerial->print(name);
+                    rightSerial->print(" ");
+                    rightSerial->print(pwm);
+                    rightSerial->print(" ");
+                }
+                if(mainSerial->peek() == '\n') { mainSerial->readStringUntil('\n'); break; }
+            }
+            if (leftSerial)  { leftSerial->println(); }
+            if (rightSerial) { rightSerial->println(); }
+        }
         else if (cmdType == 'J')
-        { 
+        {
             mainSerial->read();
             String name = mainSerial->readStringUntil(' ');
             int pwm = mainSerial->readStringUntil('\n').toInt();
