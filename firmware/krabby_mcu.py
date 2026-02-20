@@ -17,6 +17,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("KrabbySDK")
 
+# Joint names by board for readable debug output (FRONT / LEFT / RIGHT)
+JOINT_GROUP_NAMES = (
+    ("FRONT", ["FLHY", "FLHL", "FLKL", "FRHY", "FRHL", "FRKL"]),
+    ("LEFT", ["RLHY", "RLHL", "RLKL", "MLHY", "MLHL", "MLKL"]),
+    ("RIGHT", ["RRHY", "RRHL", "RRKL", "MRHY", "MRHL", "MRKL"]),
+)
+
 
 def _default_port():
     """
@@ -100,11 +107,12 @@ class KrabbyMCUSDK:
                     continue
                 if not line:
                     continue
-
-                if line.startswith("JT"):
+                # Super Debug: show decoded line; use repr(raw) to see exact bytes (e.g. \\r\\n) and confirm one line per readline()
+                #logger.debug("serial: %s", line)
+                #logger.debug("serial raw repr: %s", repr(raw))
+                if line.startswith(("FRONT;", "UNKNOWN;", "LEFT;", "RIGHT;")):
                     self._parse_joint_line(line)
                     self.last_feedback_ts = time.time()
-                # --- Log Firmware Messages (like Calibration) ---
                 elif "Krabby" in line or "CAL" in line or "Saved" in line:
                     logger.info(f"[MCU] {line}")
 
@@ -129,16 +137,17 @@ class KrabbyMCUSDK:
         for jt in jts:
             self.joints[jt.name] = jt
 
-        # Debug Log
+        # Debug Log: FRONT / LEFT / RIGHT each on its own line
         now = time.time()
         if logger.isEnabledFor(logging.DEBUG) and (now - self._last_debug_log_ts) >= 0.25:
-            parts = []
-            for name in sorted(self.joints.keys()):
-                jt = self.joints.get(name)
-                if jt:
-                    parts.append(jt.format_compact(self.last_cmd.get(name)))
-            if parts:
-                logger.debug("JOINTS %s", ";".join(parts))
+            for group_name, names in JOINT_GROUP_NAMES:
+                parts = []
+                for name in names:
+                    jt = self.joints.get(name)
+                    if jt:
+                        parts.append(jt.format_compact(self.last_cmd.get(name)))
+                if parts:
+                    logger.debug("JOINTS %s %s", group_name, "; ".join(parts))
             self._last_debug_log_ts = now
 
     def send_command_joints(self, cmds_by_joint: Dict[str, float]):

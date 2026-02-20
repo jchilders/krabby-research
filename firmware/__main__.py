@@ -10,7 +10,7 @@ import keyboard
 from firmware.krabby_mcu import KrabbyMCUSDK, logger
 
 # Joint order: LKL, LHL, LHY, RHY, RHL, RKL
-JOINTS = ["LKL", "LHL", "LHY", "RHY", "RHL", "RKL"]
+JOINTS = ["FLKL", "FLHL", "FLHY", "FRHY", "FRHL", "FRKL"]
 # Extend: Q W E R T Y  |  Retract: A S D F G H
 EXTEND_KEYS = ["q", "w", "e", "r", "t", "y"]
 RETRACT_KEYS = ["a", "s", "d", "f", "g", "h"]

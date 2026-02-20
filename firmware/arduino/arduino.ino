@@ -1,28 +1,71 @@
 /*
- * Krabby-Uno Task 2: Six-Axis Leg Controller (all linear actuators)
- * Joint IDs: LHY, RHY, LHL, LKL, RHL, RKL
+ * Krabby-Uno: 18-Joint Distributed Controller (3 boards × 6 actuators)
+ * Front: FL + FR, on USB. Left: RL + ML, on pins 14/15 (Serial3). Right: MR + RR, on pins 16/17 (Serial2).
+ * All three boards use the same pinout; role election selects which 6 actuators this board drives.
  */
 
 #include <Arduino.h>
-#include <EEPROM.h> // Added for calibration persistence
-#include "joint_telemetry.h"
+#include <EEPROM.h>
 #include "command.h"
 #include "actuator_manager.h"
 
-// ==========================================
-// INSTANTIATION (6 LINEAR ACTUATORS)
-// ==========================================
-// Format: Name, PWM_R, PWM_L, EN_R, EN_L, IS_PIN, POT_PIN
+// --- Serial: left follower = 14/15 (Serial3), right follower = 16/17 (Serial2) ---
+#define SERIAL_LEFT  Serial3  // pins 14 (TX3), 15 (RX3)
+#define SERIAL_RIGHT Serial2   // pins 16 (TX2), 17 (RX2)
+#define BAUD_RATE 115200
+#define SYNC_TOKEN "SYNC"
+#define ASSIGN_LEFT  "ROLE:LEFT"
+#define ASSIGN_RIGHT "ROLE:RIGHT"
 
-// --- LEFT LEG ---
-LinearActuator lhy("LHY", 2, 3, 22, 23, A6, A0);
-LinearActuator lhl("LHL", 4, 5, 24, 25, A7, A1);
-LinearActuator lkl("LKL", 6, 7, 26, 27, A8, A2);
+enum BoardRole { ROLE_UNKNOWN, ROLE_FRONT, ROLE_LEFT, ROLE_RIGHT };
+BoardRole currentRole = ROLE_UNKNOWN;
 
-// --- RIGHT LEG ---
-LinearActuator rhy("RHY", 8, 9, 28, 29, A9, A3);
-LinearActuator rhl("RHL", 10, 11, 30, 31, A10, A4);
-LinearActuator rkl("RKL", 12, 13, 32, 33, A11, A5);
+static const char* roleName(BoardRole r)
+{
+    switch (r)
+    {
+        case ROLE_UNKNOWN: return "UNKWN";
+        case ROLE_FRONT:   return "FRONT";
+        case ROLE_LEFT:   return "LEFT ";
+        case ROLE_RIGHT:  return "RIGHT";
+        default:          return "UNKWN";
+    }
+}
+
+// --- All 18 actuators (names fixed; each board uses the same physical pins for its 6) ---
+// Leader/Default Board
+LinearActuator flhy("FLHY", 2, 3, 22, 23, A6, A0);
+LinearActuator flhl("FLHL", 4, 5, 24, 25, A7, A1);
+LinearActuator flkl("FLKL", 6, 7, 26, 27, A8, A2);
+LinearActuator frhy("FRHY", 8, 9, 28, 29, A9, A3);
+LinearActuator frhl("FRHL", 10, 11, 30, 31, A10, A4);
+LinearActuator frkl("FRKL", 12, 13, 32, 33, A11, A5);
+// Left Follower Board
+LinearActuator rlhy("RLHY", 2, 3, 22, 23, A6, A0);
+LinearActuator rlhl("RLHL", 4, 5, 24, 25, A7, A1);
+LinearActuator rlkl("RLKL", 6, 7, 26, 27, A8, A2);
+LinearActuator mlhy("MLHY", 8, 9, 28, 29, A9, A3);
+LinearActuator mlhl("MLHL", 10, 11, 30, 31, A10, A4);
+LinearActuator mlkl("MLKL", 12, 13, 32, 33, A11, A5);
+// Right Follower Board
+LinearActuator rrhy("RRHY", 2, 3, 22, 23, A6, A0);
+LinearActuator rrhl("RRHL", 4, 5, 24, 25, A7, A1);
+LinearActuator rrkl("RRKL", 6, 7, 26, 27, A8, A2);
+LinearActuator mrhy("MRHY", 8, 9, 28, 29, A9, A3);
+LinearActuator mrhl("MRHL", 10, 11, 30, 31, A10, A4);
+LinearActuator mrkl("MRKL", 12, 13, 32, 33, A11, A5);
+
+// Role → which 6 actuators this board drives (no mutation)
+static const size_t ACT_COUNT = 6;
+LinearActuator* ACT_LIST_FRONT[]  = { &flhy, &flhl, &flkl, &frhy, &frhl, &frkl };
+LinearActuator* ACT_LIST_LEFT[]   = { &rlhy, &rlhl, &rlkl, &mlhy, &mlhl, &mlkl };  // RL + ML
+LinearActuator* ACT_LIST_RIGHT[]  = { &rrhy, &rrhl, &rrkl, &mrhy, &mrhl, &mrkl }; // MR + RR
+
+// Set once after role election.
+ActuatorManager* actuatorManager = nullptr;
+HardwareSerial* mainSerial = nullptr;  // USB (front) or uplink (left/right)
+HardwareSerial* leftSerial = nullptr;  // serial to left board (from front only)
+HardwareSerial* rightSerial = nullptr; // serial to right board (from front only)
 
 const LinearActuator::ControlConfig ACTUATOR_CONFIG = {
     5,  // PWM_RAMP_STEP
@@ -32,89 +75,210 @@ const LinearActuator::ControlConfig ACTUATOR_CONFIG = {
     2.0 // Kp
 };
 
-LinearActuator *ACT_LIST[] = {&lhy, &lhl, &lkl, &rhy, &rhl, &rkl};
-const size_t ACT_COUNT = sizeof(ACT_LIST) / sizeof(ACT_LIST[0]);
-ActuatorManager actuatorManager(ACT_LIST, ACT_COUNT);
-
-// Fixed size command buffer, max one command per joint
-const size_t CMD_BUF_SIZE = ACT_COUNT;
+const size_t CMD_BUF_SIZE = 18;
 Command cmdBuf[CMD_BUF_SIZE];
 
-// ==========================================
-// ARDUINO SETUP & LOOP
-// ==========================================
-
-// --- TELEMETRY CONFIGURATION ---
-const int TELEMETRY_INTERVAL_MS = 50; // 20Hz update
+const int TELEMETRY_INTERVAL_MS = 50;
 unsigned long lastTelemetry = 0;
+
+// One line = "ROLE; " + ACT_COUNT segments; allow ~55 chars per segment to avoid truncation.
+#define TELEMETRY_LINE_MAX (8 + (ACT_COUNT * 55))
+
+static char leftPartial[TELEMETRY_LINE_MAX];
+static char rightPartial[TELEMETRY_LINE_MAX];
+static size_t leftPartialPos = 0;
+static size_t rightPartialPos = 0;
+
+// Forward only complete lines (up to and including \n) from follower serial to mainSerial.
+void forwardFullLines(HardwareSerial* from, HardwareSerial* to, char* partial, size_t cap, size_t* partialPos)
+{
+    if (!from || !to || !partial || !partialPos) return;
+    while (from->available())
+    {
+        char c = (char)from->read();
+        if (c == '\n')
+        {
+            partial[*partialPos] = '\0';
+            if (*partialPos > 0)
+                to->println(partial);
+            *partialPos = 0;
+            continue;
+        }
+        if (c == '\r')
+            continue; // skip \r (part of \r\n); don't treat as line end or we'd send empty line on \n
+        if (*partialPos < cap - 1)
+            partial[(*partialPos)++] = c;
+        else
+        {
+            // TODO: THIS SHOULD THROW SOME KIND OF BAD ERROR CONDITION
+            // Buffer full before \n: discard rest of line so we don't forward a partial or get stuck
+            while (from->available())
+            {
+                char d = (char)from->read();
+                if (d == '\n' || d == '\r') break;
+            }
+            *partialPos = 0;
+        }
+    }
+}
+
+void determineRole()
+{
+    Serial.println("--- SYNC ---");
+    pinMode(LED_BUILTIN, OUTPUT);
+    SERIAL_LEFT.begin(BAUD_RATE);
+    SERIAL_RIGHT.begin(BAUD_RATE);
+
+    bool syncFromLeft = false, syncFromRight = false;
+    unsigned long start = millis();
+    unsigned long lastSync = 0;
+
+    while (millis() - start < 3000)
+    {
+        // Everyone sends a SYNC_TOKEN every 10ms to see what serial lines are connected
+        if (millis() - lastSync >= 10)
+        {
+            lastSync = millis();
+            SERIAL_LEFT.println(SYNC_TOKEN);
+            SERIAL_RIGHT.println(SYNC_TOKEN);
+        }
+        // If the left serial line is available, we're either the left follower or the leader
+        if (SERIAL_LEFT.available())
+        {
+            String s = SERIAL_LEFT.readStringUntil('\n');
+            // If the leader has sent us an ASSIGN_LEFT command, we're the left follower
+            if (s.indexOf(ASSIGN_LEFT) >= 0)
+            {
+                currentRole = ROLE_LEFT;
+                actuatorManager = new ActuatorManager(ACT_LIST_LEFT, ACT_COUNT);
+                mainSerial = &SERIAL_LEFT;
+                Serial.println("ROLE: LEFT");
+                return;
+            }
+            if (s.indexOf(SYNC_TOKEN) >= 0) syncFromLeft = true;
+        }
+        if (SERIAL_RIGHT.available())
+        {
+            String s = SERIAL_RIGHT.readStringUntil('\n');
+            // If the leader has sent us an ASSIGN_RIGHT command, we're the right follower
+            if (s.indexOf(ASSIGN_RIGHT) >= 0)
+            {
+                currentRole = ROLE_RIGHT;
+                actuatorManager = new ActuatorManager(ACT_LIST_RIGHT, ACT_COUNT);
+                mainSerial = &SERIAL_RIGHT;
+                Serial.println("ROLE: RIGHT");
+                return;
+            }
+            if (s.indexOf(SYNC_TOKEN) >= 0) syncFromRight = true;
+        }
+        // Received SYNC from both sides: we are the leader. Assign followers then set ourselves as FRONT.
+        if (syncFromLeft && syncFromRight)
+        {
+            SERIAL_LEFT.println(ASSIGN_LEFT);
+            SERIAL_RIGHT.println(ASSIGN_RIGHT);
+            currentRole = ROLE_FRONT;
+            actuatorManager = new ActuatorManager(ACT_LIST_FRONT, ACT_COUNT);
+            mainSerial = &Serial;
+            leftSerial = &SERIAL_LEFT;
+            rightSerial = &SERIAL_RIGHT;
+            Serial.println("ROLE: FRONT");
+            return;
+        }
+    }
+
+    // Timeout: no both-sync, default to front actuators but report UNKNOWN.
+    currentRole = ROLE_UNKNOWN;
+    actuatorManager = new ActuatorManager(ACT_LIST_FRONT, ACT_COUNT);
+    mainSerial = &Serial;
+    leftSerial = &SERIAL_LEFT;
+    rightSerial = &SERIAL_RIGHT;
+    Serial.println("ROLE: UNKNOWN (front actuators)");
+}
 
 void setup()
 {
-    Serial.begin(115200);
+    Serial.begin(BAUD_RATE);
+    determineRole();
 
-    // Apply control config to each actuator
+    // TODO: This should not need to be done here, it should be done when actuators are instantiated, and we should delay instantiation until after role election is complete.
+    LinearActuator** list = (currentRole == ROLE_LEFT) ? ACT_LIST_LEFT : (currentRole == ROLE_RIGHT) ? ACT_LIST_RIGHT : ACT_LIST_FRONT;
     for (size_t i = 0; i < ACT_COUNT; i++)
-    {
-        ACT_LIST[i]->setControlConfig(ACTUATOR_CONFIG);
-    }
+        list[i]->setControlConfig(ACTUATOR_CONFIG);
+    actuatorManager->initAll();
+    actuatorManager->loadCalibration();
 
-    actuatorManager.initAll();
-    actuatorManager.loadCalibration();
-
-    Serial.println("Krabby Ready. Send T/J/C/H commands to move joints.");
+    Serial.print("Krabby Ready. ");
+    Serial.println(list[0]->name);
 }
 
 void loop()
 {
-    // 1. PARSE INPUT COMMANDS
-    if (Serial.available())
+    if (mainSerial->available())
     {
-        char cmdType = Serial.peek(); // Peek first to decide handler
-
-        if (cmdType == 'T') // Target Command
+        // TODO: Probably we should just forward all data from mainSerial to left/right first. 
+        char cmdType = mainSerial->peek();
+        if (cmdType == 'T')
         {
-            Serial.read(); // Consume 'T'
-            String payload = Serial.readStringUntil('\n');
+            mainSerial->read();
+            String payload = mainSerial->readStringUntil('\n');
             size_t cmdCount = parseCommands(payload, cmdBuf, CMD_BUF_SIZE);
-            if (cmdCount > 0)
-            {
-                actuatorManager.applyCommands(cmdBuf, cmdCount);
-            }
+            // Keeping it simple, we send all commands to all actuator managers, and let each actuator manager ignore any commands that aren't for them
+            actuatorManager->applyCommands(cmdBuf, cmdCount);
+            if (leftSerial)  { leftSerial->print("T ");  leftSerial->println(payload); }
+            if (rightSerial) { rightSerial->print("T "); rightSerial->println(payload); }
         }
-        else if (cmdType == 'J') // TODO 4: Manual Jog Command (J <name> <pwm>)
-        {
-            Serial.read(); // Consume 'J'
-            String name = Serial.readStringUntil(' ');
-            int pwm = Serial.readStringUntil('\n').toInt();
-            actuatorManager.handleJog(name, pwm);
+        else if (cmdType == 'J')
+        { 
+            mainSerial->read();
+            String name = mainSerial->readStringUntil(' ');
+            int pwm = mainSerial->readStringUntil('\n').toInt();
+            actuatorManager->handleJog(name, pwm);
+            if (leftSerial)  { leftSerial->print("J ");  leftSerial->print(name);  leftSerial->print(" ");  leftSerial->println(pwm); }
+            if (rightSerial) { rightSerial->print("J "); rightSerial->print(name); rightSerial->print(" "); rightSerial->println(pwm); }
         }
-        else if (cmdType == 'C') // TODO 3: Trigger Auto-Calibration
+        else if (cmdType == 'C')
         {
-            Serial.read();                // Consume 'C'
-            Serial.readStringUntil('\n'); // Clear line
-            actuatorManager.startAutoCalibration();
+            mainSerial->read();
+            mainSerial->readStringUntil('\n');
+            actuatorManager->startAutoCalibration();
+            if (leftSerial)  leftSerial->println("C");
+            if (rightSerial) rightSerial->println("C");
         }
-        else if (cmdType == 'H') // Hold
+        else if (cmdType == 'H')
         {
-            Serial.read();
-            actuatorManager.holdAll();
-            Serial.readStringUntil('\n');
+            mainSerial->read();
+            mainSerial->readStringUntil('\n');
+            actuatorManager->holdAll();
+            if (leftSerial)  leftSerial->println("H");
+            if (rightSerial) rightSerial->println("H");
         }
         else
         {
-            Serial.read(); // Flush junk
+            String s = mainSerial->readStringUntil('\n');
+            // If leader (or another board) sent SYNC, reply so a restarted leader can discover us
+            if (s.indexOf(SYNC_TOKEN) >= 0)
+                mainSerial->println(SYNC_TOKEN);
         }
     }
 
-    // 2. UPDATE CONTROL LOOPS
-    actuatorManager.updateAll();
+    // Drain follower serial so RX buffers don't overflow (64-byte default drops middle of ~200-byte lines)
+    forwardFullLines(leftSerial, mainSerial, leftPartial, TELEMETRY_LINE_MAX, &leftPartialPos);
+    forwardFullLines(rightSerial, mainSerial, rightPartial, TELEMETRY_LINE_MAX, &rightPartialPos);
+    mainSerial->flush();
 
-    // 3. DUMP TELEMETRY TO SERIAL (one line for all joints)
-    unsigned long curMillis = millis();
-    if (curMillis - lastTelemetry > TELEMETRY_INTERVAL_MS)
+    actuatorManager->updateAll();
+
+    // Drain again in case bytes arrived during updateAll()
+    forwardFullLines(leftSerial, mainSerial, leftPartial, TELEMETRY_LINE_MAX, &leftPartialPos);
+    forwardFullLines(rightSerial, mainSerial, rightPartial, TELEMETRY_LINE_MAX, &rightPartialPos);
+    mainSerial->flush();
+
+    if (millis() - lastTelemetry >= TELEMETRY_INTERVAL_MS)
     {
-        lastTelemetry = curMillis;
-
-        Serial.println(actuatorManager.serializeTelemetry());
+        lastTelemetry = millis();
+        mainSerial->print(roleName(currentRole));
+        mainSerial->print("; ");
+        actuatorManager->printTelemetry(*mainSerial);
+        mainSerial->flush();  // ensure full line is sent before next loop (avoids two "LEFT;" in one buffer on host)
     }
 }

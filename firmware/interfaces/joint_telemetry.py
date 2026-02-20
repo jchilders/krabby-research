@@ -1,13 +1,11 @@
 from dataclasses import dataclass
 from typing import Tuple, Optional
 
-# Telemetry schema (matches interfaces/joint_telemetry.h):
-# Single line contains all joints, segments separated by ';'
-# Line example:
-#   JT LHY 0.123 0 12 1 1 0 120 0;RHY ...;LHL ...
-# Segment format:
-#   <name> <pos> <pot> <current> <enL> <enR> <pwmL> <pwmR> <saf>
-# Names: LHY, RHY, LHL, LKL, RHL, RKL
+# Wire format: must match firmware (actuator_manager.h + arduino.ino).
+# Line starts with a role prefix "FRONT; ", "UNKNOWN; ", "LEFT; ", or "RIGHT; " then semicolon-separated segments.
+# Forwarded lines from left/right already include their role (LEFT; / RIGHT; ).
+# Example: "FRONT; FLHY 0.123 0 512 1 0 0 128 0;FLHL ...;..."
+# Segment format: <name> <pos> <pot> <current> <enL> <enR> <pwmL> <pwmR> <saf>
 
 
 @dataclass
@@ -20,13 +18,16 @@ class JointTelemetry:
     pwm: Tuple[int, int]
     saf: int
 
+    # Role prefix (first segment of a line); not a joint.
+    ROLE_PREFIXES = ("JT", "FRONT", "UNKNOWN", "LEFT", "RIGHT")
+
     @classmethod
     def from_tokens(cls, tokens) -> Optional["JointTelemetry"]:
         if not tokens:
             return None
-        if tokens[0] == "JT":
-            tokens = tokens[1:]
-        if len(tokens) != 9:
+        if tokens[0] in cls.ROLE_PREFIXES:
+            tokens = tokens[1:] if tokens[0] == "JT" else None
+        if not tokens or len(tokens) != 9:
             return None
         name, pos, pot, cur, enL, enR, pwmL, pwmR, saf = tokens
         try:

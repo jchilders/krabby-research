@@ -40,9 +40,56 @@ This firmware drives a full leg pair (Left & Right) consisting of **6 Motors**.
 
 ## 2. Installation
 
+### 2.1 Serial RX buffer (leader board, 3-board setup)
+
+When using the **leader** board that forwards telemetry from left/right followers, the default 64-byte serial RX buffer can overflow and drop bytes (corrupt or missing actuators in telemetry). Use a **256-byte** RX buffer for Serial2/Serial3 on the leader.
+
+**You do not flash the core separately.** The Arduino “core” is just C++ source that is compiled *with* your sketch into a single firmware image. Change the buffer size, then build and upload as usual.
+
+**Arduino IDE**
+
+- **Option A – One-time edit (survives until you update the AVR board package):**  
+  Open the core file (path similar to):
+  - Windows: `%LOCALAPPDATA%\Arduino15\packages\arduino\hardware\avr\1.8.7\cores\arduino\HardwareSerial.h`
+  - macOS: `~/Library/Arduino15/packages/arduino/hardware/avr/1.8.7/cores/arduino/HardwareSerial.h`  
+  Find the block that sets `SERIAL_RX_BUFFER_SIZE` (e.g. `#define SERIAL_RX_BUFFER_SIZE 64`) and change **64** to **256**. Save. Then compile and upload your sketch as usual.
+
+- **Option B – Build flag via platform override:**  
+  In the same `avr` package folder (e.g. `.../packages/arduino/hardware/avr/1.8.7/`), create or edit `platform.local.txt` and add:
+  ```text
+  compiler.c.extra_flags=-DSERIAL_RX_BUFFER_SIZE=256
+  compiler.cpp.extra_flags=-DSERIAL_RX_BUFFER_SIZE=256
+  ```
+  so the define is applied when the core and your sketch are compiled. Then build/upload as usual.
+
+**PlatformIO**
+
+In `platformio.ini` for the board that acts as the leader, add:
+
+```ini
+build_flags = -DSERIAL_RX_BUFFER_SIZE=256
+```
+
+Then build and upload. No core file edit needed.
+
+**Follower-only boards** do not need this change; only the board that runs `forwardFullLines` (the leader on USB) benefits from the larger buffer.
+
+### 2.2 Telemetry format (wire protocol)
+
+Telemetry is sent as **newline-terminated lines** over serial. The Python side parses each line into a **dict of joint id → values** using `JointTelemetry` in `interfaces/joint_telemetry.py`.
+
+- **Line format:** `<ROLE>; <name> <pos> <pot> <current> <enL> <enR> <pwmL> <pwmR> <saf>; <name> ...; ...`
+- **Role prefix:** One of `FRONT`, `UNKNOWN`, `LEFT`, `RIGHT` (no semicolon inside the role).
+- **Segment format:** Each joint segment is 9 space-separated values: joint name, position (0–1), pot raw, current raw, enable L/R, PWM L/R, safety.
+- **Example:** `FRONT; FLHY 0.723 740 694 0 0 0 0 0;FLHL 0.723 740 691 ...`
+
+On the Arduino side, telemetry is built in **telemetry_manager.h** (struct `JointTelemetry`, `appendTo()`). The old standalone `joint_telemetry.h` was removed; all telemetry formatting and collection lives in `telemetry_manager.h` and `actuator_manager.h`.
+
+### 2.3 Upload firmware and Python
+
 1.  **Upload Firmware:**
-    - Open `arduino/controller.ino` using Arduino IDE
-    - Upload to Arduino Mega.
+    - Open `arduino/arduino.ino` (or `arduino/controller.ino`) in Arduino IDE
+    - Upload to each Arduino Mega (all three use the same sketch; role is elected at runtime).
 2.  **Setup Python SDK:**
     - Ensure you have the `interfaces/` folder next to your script.
     - Install dependencies: `pip -r requirements.txt`

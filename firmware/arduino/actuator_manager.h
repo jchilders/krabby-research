@@ -1,7 +1,6 @@
 #pragma once
 #include <Arduino.h>
 #include <EEPROM.h>
-#include "joint_telemetry.h"
 #include "command.h"
 
 // Linear actuator controller (w/ potentiometer feedback)
@@ -46,9 +45,9 @@ public:
     float avgIS = 0.0;               // Global state variable to track smoothed current sense value
 
 
+    // TODO: This should accept a name and a 'SlotConfig' struct for pin assignment, so we can reuse the pin config w/ different actuator names (on different leader/follower boards)
     LinearActuator(const char *n, int pR, int pL, int eR, int eL, int isPin, int pot)
         : name(n), pinPwmR(pR), pinPwmL(pL), pinEnR(eR), pinEnL(eL), pinIS(isPin), pinPot(pot) {}
-
     void setControlConfig(const ControlConfig &cfg) { controlConfig = cfg; }
 
     void init()
@@ -191,20 +190,29 @@ public:
         return false;
     }
 
-    // Returns live, non-normalized telemetry for this joint as read from sensors 
-    JointTelemetry getTelemetry(const char *code)
+    // JT wire format: "<role> <name> <pos> <pot> <current> <enL> <enR> <pwmL> <pwmR> <saf>;"
+    // e.g. 'FRONT FLHY 0.123 0 12 1 1 0 120 0; FRHY 0.234 0 13 1 1 0 130 0; ...'
+    // Keep in sync with firmware/interfaces/joint_telemetry.py
+    // Keeping it super simple to avoid any string parsing and external library overhead
+    void printTelemetry(Print& out) const
     {
-        JointTelemetry jt;
-        jt.name = code;
-        jt.pos = getPos();
-        jt.pot = (int)avgPot;    // Return Smoothed
-        jt.current = (int)avgIS; // Return Smoothed
-        jt.enL = digitalRead(pinEnL);
-        jt.enR = digitalRead(pinEnR);
-        jt.pwmL = currentPwm < 0 ? abs(currentPwm) : 0;
-        jt.pwmR = currentPwm > 0 ? currentPwm : 0;
-        jt.saf = 0;
-        return jt;
+        out.print(name);
+        out.print(' ');
+        out.print(getPos(), 3);
+        out.print(' ');
+        out.print((int)avgPot);
+        out.print(' ');
+        out.print((int)avgIS);
+        out.print(' ');
+        out.print(digitalRead(pinEnL));
+        out.print(' ');
+        out.print(digitalRead(pinEnR));
+        out.print(' ');
+        out.print(currentPwm < 0 ? abs(currentPwm) : 0);
+        out.print(' ');
+        out.print(currentPwm > 0 ? currentPwm : 0);
+        out.print(' ');
+        out.print(0); // saf
     }
 
 private:
@@ -305,22 +313,14 @@ public:
         }
     }
 
-    String serializeTelemetry() const
+    void printTelemetry(Print& out) const
     {
-        String out;
-        out.reserve(3 + (count * JointTelemetry::serializedLengthEstimate()) + count + 8); // 'JT ' + data + separators + CAL_MODE
-        out += "JT ";
         for (size_t i = 0; i < count; i++)
         {
-            actuators[i]->getTelemetry(actuators[i]->name).appendTo(out);
-            if (i + 1 < count)
-                out += ';';
+            if (i) out.print(';'); // Only print semicolons between joints, not at the end
+            actuators[i]->printTelemetry(out);
         }
-        if (calState != CAL_IDLE)
-        {
-            out += " CAL_MODE"; // Flag to GUI
-        }
-        return out;
+        out.println();
     }
 
     // ==================================================
