@@ -170,6 +170,7 @@ class KrabbyMCUSDK:
 
         cmd = " ".join(parts) + "\n"
         self.ser.write(cmd.encode('utf-8'))
+        self.ser.flush()
 
         logger.info("CMD -> %s", " ".join(parts))
 
@@ -180,6 +181,7 @@ class KrabbyMCUSDK:
         pwm = max(-255, min(255, int(pwm)))
         cmd = f"J{joint_name} {pwm}\n"
         self.ser.write(cmd.encode('utf-8'))
+        self.ser.flush()
         # Optional: Uncomment if you want spammy logs for jogging
         # logger.debug(f"JOG -> {joint_name} {pwm}")
 
@@ -187,6 +189,7 @@ class KrabbyMCUSDK:
         if not self.ser or not self.ser.is_open:
             return
         self.ser.write(b"C\n")
+        self.ser.flush()
         logger.info("CMD -> AUTO-CALIBRATE (C)")
 
     def send_command_joints_hold(self):
@@ -196,6 +199,7 @@ class KrabbyMCUSDK:
         if not self.ser or not self.ser.is_open:
             return
         self.ser.write(b"H\n")
+        self.ser.flush()
         logger.info("CMD -> H")
 
     def wait_for_move(self, seconds):

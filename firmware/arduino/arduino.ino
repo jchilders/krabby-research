@@ -213,9 +213,8 @@ void setup()
 
 void loop()
 {
-    if (mainSerial->available())
+    while (mainSerial->available())
     {
-        // TODO: Probably we should just forward all data from mainSerial to left/right first. 
         char cmdType = mainSerial->peek();
         if (cmdType == 'T')
         {
@@ -261,10 +260,10 @@ void loop()
         }
     }
 
-    // Drain follower serial so RX buffers don't overflow (64-byte default drops middle of ~200-byte lines)
+    // Drain follower serial so RX buffers don't overflow (64-byte default drops middle of ~200-byte lines).
+    // Only flush once after both drains so we don't block in flush() twice per loop (~35 ms each at 115200).
     forwardFullLines(leftSerial, mainSerial, leftPartial, TELEMETRY_LINE_MAX, &leftPartialPos);
     forwardFullLines(rightSerial, mainSerial, rightPartial, TELEMETRY_LINE_MAX, &rightPartialPos);
-    mainSerial->flush();
 
     actuatorManager->updateAll();
 
