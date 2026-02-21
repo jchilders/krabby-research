@@ -267,8 +267,13 @@ def test_jetson_hal_server_end_to_end_with_game_loop(
             )
 
     model = MockPolicyModel()
+    obs_dims, _ = jetson_observation_dims
     test_runner = InferenceTestRunner(
-        model, hal_client, control_rate_hz=100.0, robot_definition=KRABBY_HEX_DEFINITION
+        model,
+        hal_client,
+        control_rate_hz=100.0,
+        robot_definition=KRABBY_HEX_DEFINITION,
+        observation_dimensions=obs_dims,
     )
 
     # Set navigation command on test runner

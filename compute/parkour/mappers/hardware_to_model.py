@@ -70,6 +70,17 @@ class HWObservationsToParkourMapper:
         priv_latent = self._extract_priv_latent(hw_obs)
         history = self._extract_history(proprioceptive)
         
+        if self._dims.num_vision == 0:
+            vision: list = []
+        else:
+            # To implement vision on hardware we would need:
+            # - Run the same vision encoder used at training on hw_obs (rgb_camera_1, rgb_camera_2).
+            # - Match training preprocessing (resize, normalization, etc.).
+            # - Output one feature vector per camera with sizes matching observation_dimensions.vision_dims.
+            # - Integrate the encoder (and any GPU usage) into the inference path.
+            raise NotImplementedError(
+                "vision features (num_vision > 0) not yet supported in HWObservationsToParkourMapper"
+            )
         return observation_type.from_parts(
             self._dims,
             proprioceptive=proprioceptive,
@@ -78,6 +89,7 @@ class HWObservationsToParkourMapper:
             priv_latent=priv_latent,
             history=history,
             timestamp_ns=hw_obs.timestamp_ns,
+            vision=vision,
         )
     
     def _extract_proprioceptive(self, hw_obs: HardwareObservations, nav_cmd: Optional[NavigationCommand] = None) -> np.ndarray:

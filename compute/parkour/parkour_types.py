@@ -15,7 +15,7 @@ Zero-Copy Guarantees:
 
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
@@ -26,10 +26,12 @@ from hal.client.observation.types import NavigationCommand
 
 @dataclass
 class ParkourObservation:
-    """Parkour observation in exact training format with zero-copy support.
+    """Parkour observation as structured parts; convert to array only at model input.
 
-    Layout is [num_prop, num_scan, num_priv_explicit, num_priv_latent, history_dim]
+    Layout is [num_prop, num_scan, num_vision, num_priv_explicit, num_priv_latent, history_dim]
     with sizes from observation_dimensions (robot + model definitions).
+    When num_vision is 0, vision is an empty list. Observations are stored as
+    separate parts; use to_array() right before passing into the model.
 
     This is the base observation class. For teacher/student separation, use
     TeacherObservation or StudentObservation instead.
@@ -37,65 +39,99 @@ class ParkourObservation:
     Attributes:
         timestamp_ns: Timestamp in nanoseconds
         observation_dimensions: Layout dimensions from robot + model definitions
-        observation: Flat float32 array of shape (obs_dim,) matching training format
+        proprioceptive: Proprioceptive features (num_prop,)
+        scan: Scan/depth features (num_scan,)
+        vision: List of vision feature arrays (one per camera/source); concatenated in
+            order for to_array(). Empty when num_vision is 0.
+        priv_explicit: Privileged explicit (num_priv_explicit,)
+        priv_latent: Privileged latent (num_priv_latent,)
+        history: History features (history_dim,)
     """
 
     timestamp_ns: int
     observation_dimensions: ObservationDimensions
-    observation: Optional[np.ndarray]
+    proprioceptive: np.ndarray
+    scan: np.ndarray
+    vision: List[np.ndarray]  # empty when num_vision == 0; one or more arrays otherwise
+    priv_explicit: np.ndarray
+    priv_latent: np.ndarray
+    history: np.ndarray
 
     def __post_init__(self) -> None:
-        """Validate observation."""
+        """Validate observation parts."""
         if self.timestamp_ns < 0:
             raise ValueError("timestamp_ns must be non-negative")
         d = self.observation_dimensions
-        if self.observation is not None:
-            if not isinstance(self.observation, np.ndarray):
-                raise ValueError("observation must be a numpy array")
-            if self.observation.dtype != np.float32:
-                if self.observation.dtype == np.float64:
-                    self.observation = self.observation.astype(np.float32, copy=False)
-                else:
-                    self.observation = self.observation.astype(np.float32)
-            if self.observation.shape != (d.obs_dim,):
+        if d.num_vision == 0:
+            if len(self.vision) != 0:
+                raise ValueError("vision must be empty list when num_vision is 0")
+        else:
+            if not isinstance(self.vision, list) or len(self.vision) == 0:
+                raise ValueError("vision must be a non-empty list when num_vision > 0")
+            total = 0
+            for i, arr in enumerate(self.vision):
+                if not isinstance(arr, np.ndarray) or arr.ndim != 1:
+                    raise ValueError(f"vision[{i}] must be 1D numpy array")
+                if arr.dtype != np.float32:
+                    self.vision[i] = np.asarray(arr, dtype=np.float32)
+                total += self.vision[i].size
+            if total != d.num_vision:
                 raise ValueError(
-                    f"Observation shape {self.observation.shape} != expected ({d.obs_dim},)"
+                    f"vision arrays total size {total} != num_vision {d.num_vision}"
                 )
+        for name, arr, expected in [
+            ("proprioceptive", self.proprioceptive, (d.num_prop,)),
+            ("scan", self.scan, (d.num_scan,)),
+            ("priv_explicit", self.priv_explicit, (d.num_priv_explicit,)),
+            ("priv_latent", self.priv_latent, (d.num_priv_latent,)),
+            ("history", self.history, (d.history_dim,)),
+        ]:
+            if not isinstance(arr, np.ndarray):
+                raise ValueError(f"{name} must be a numpy array")
+            if arr.shape != expected:
+                raise ValueError(f"{name} shape {arr.shape} != expected {expected}")
+            if arr.dtype != np.float32:
+                setattr(
+                    self,
+                    name,
+                    arr.astype(np.float32, copy=(arr.dtype != np.float64)),
+                )
+
+    def to_array(self) -> np.ndarray:
+        """Build flat observation array in training format (for model input only).
+
+        Call this right before passing the observation into the model.
+        Order: [proprioceptive, scan, (vision concatenated if non-empty), priv_explicit, priv_latent, history].
+        """
+        parts = [self.proprioceptive, self.scan]
+        if self.vision:
+            parts.append(np.concatenate(self.vision))
+        parts.extend([self.priv_explicit, self.priv_latent, self.history])
+        return np.concatenate(parts)
 
     def get_proprioceptive(self) -> np.ndarray:
         """Get proprioceptive features as a view."""
-        if self.observation is None:
-            raise ValueError("Observation not set")
-        return self.observation[: self.observation_dimensions.num_prop]
+        return self.proprioceptive
 
     def get_scan(self) -> np.ndarray:
         """Get scan/depth features as a view."""
-        if self.observation is None:
-            raise ValueError("Observation not set")
-        d = self.observation_dimensions
-        return self.observation[d.num_prop : d.num_prop + d.num_scan]
+        return self.scan
+
+    def get_vision(self) -> List[np.ndarray]:
+        """Get vision features as a list of arrays (one per camera/source). Empty when no vision."""
+        return self.vision
 
     def get_priv_explicit(self) -> np.ndarray:
         """Get privileged explicit features as a view."""
-        if self.observation is None:
-            raise ValueError("Observation not set")
-        d = self.observation_dimensions
-        start = d.num_prop + d.num_scan
-        return self.observation[start : start + d.num_priv_explicit]
+        return self.priv_explicit
 
     def get_priv_latent(self) -> np.ndarray:
         """Get privileged latent features as a view."""
-        if self.observation is None:
-            raise ValueError("Observation not set")
-        d = self.observation_dimensions
-        start = d.num_prop + d.num_scan + d.num_priv_explicit
-        return self.observation[start : start + d.num_priv_latent]
+        return self.priv_latent
 
     def get_history(self) -> np.ndarray:
         """Get history features as a view."""
-        if self.observation is None:
-            raise ValueError("Observation not set")
-        return self.observation[-self.observation_dimensions.history_dim :]
+        return self.history
 
     @classmethod
     def from_parts(
@@ -107,8 +143,9 @@ class ParkourObservation:
         priv_latent: np.ndarray,
         history: np.ndarray,
         timestamp_ns: int,
+        vision: Union[None, np.ndarray, List[np.ndarray], tuple] = None,
     ) -> "ParkourObservation":
-        """Create ParkourObservation from component parts.
+        """Create ParkourObservation from component parts (no concatenation).
 
         Args:
             observation_dimensions: Layout from robot + model definitions
@@ -118,6 +155,9 @@ class ParkourObservation:
             priv_latent: Privileged latent (shape: (num_priv_latent,), float32)
             history: History features (shape: (history_dim,), float32)
             timestamp_ns: Timestamp in nanoseconds
+            vision: Vision features: None or [] when num_vision is 0; a single array
+                (shape (num_vision,)), or a list/tuple of arrays (one per camera/source)
+                whose concatenation has total size num_vision.
         """
         d = observation_dimensions
         if proprioceptive.shape != (d.num_prop,):
@@ -131,23 +171,82 @@ class ParkourObservation:
         if history.shape != (d.history_dim,):
             raise ValueError(f"history shape {history.shape} != ({d.history_dim},)")
 
+        if d.num_vision == 0:
+            if vision is not None and vision != []:
+                raise ValueError("vision must be None or [] when num_vision is 0")
+            vision_list: List[np.ndarray] = []
+        else:
+            if vision is None or (isinstance(vision, (list, tuple)) and len(vision) == 0):
+                raise ValueError("vision must be provided when num_vision > 0")
+            if isinstance(vision, np.ndarray):
+                vision_list = [np.asarray(vision, dtype=np.float32)]
+                if vision_list[0].shape != (d.num_vision,):
+                    raise ValueError(f"vision shape {vision_list[0].shape} != ({d.num_vision},)")
+            else:
+                vision_list = [np.asarray(arr, dtype=np.float32) for arr in vision]
+                total = sum(arr.size for arr in vision_list)
+                if total != d.num_vision:
+                    raise ValueError(
+                        f"vision arrays total size {total} != num_vision {d.num_vision}"
+                    )
+
         proprioceptive = np.asarray(proprioceptive, dtype=np.float32)
         scan = np.asarray(scan, dtype=np.float32)
         priv_explicit = np.asarray(priv_explicit, dtype=np.float32)
         priv_latent = np.asarray(priv_latent, dtype=np.float32)
         history = np.asarray(history, dtype=np.float32)
 
-        observation = np.concatenate([
-            proprioceptive,
-            scan,
-            priv_explicit,
-            priv_latent,
-            history,
-        ])
         return cls(
             timestamp_ns=timestamp_ns,
             observation_dimensions=observation_dimensions,
-            observation=observation,
+            proprioceptive=proprioceptive,
+            scan=scan,
+            vision=vision_list,
+            priv_explicit=priv_explicit,
+            priv_latent=priv_latent,
+            history=history,
+        )
+
+    @classmethod
+    def from_array(
+        cls,
+        observation_dimensions: ObservationDimensions,
+        observation: np.ndarray,
+        timestamp_ns: int,
+    ) -> "ParkourObservation":
+        """Create ParkourObservation from a flat array (e.g. for tests or deserialization).
+
+        Slices the array into parts; no copy of the underlying data when contiguous.
+        Order: [proprioceptive, scan, camera, priv_explicit, priv_latent, history].
+        """
+        d = observation_dimensions
+        if observation.shape != (d.obs_dim,):
+            raise ValueError(
+                f"Observation shape {observation.shape} != expected ({d.obs_dim},)"
+            )
+        observation = np.asarray(observation, dtype=np.float32)
+        proprioceptive = observation[: d.num_prop]
+        scan = observation[d.num_prop : d.num_prop + d.num_scan]
+        start_vis = d.num_prop + d.num_scan
+        if d.num_vision > 0:
+            vision_list = [observation[start_vis : start_vis + d.num_vision].copy()]
+            start_pe = start_vis + d.num_vision
+        else:
+            vision_list = []
+            start_pe = start_vis
+        priv_explicit = observation[start_pe : start_pe + d.num_priv_explicit]
+        start_pl = start_pe + d.num_priv_explicit
+        priv_latent = observation[start_pl : start_pl + d.num_priv_latent]
+        history = observation[-d.history_dim :]
+        return cls(
+            timestamp_ns=timestamp_ns,
+            observation_dimensions=observation_dimensions,
+            proprioceptive=proprioceptive.copy(),
+            scan=scan.copy(),
+            vision=vision_list,
+            priv_explicit=priv_explicit.copy(),
+            priv_latent=priv_latent.copy(),
+            history=history.copy(),
         )
 
 
@@ -229,14 +328,13 @@ class ParkourModelIO:
         return (max_ts - min_ts) <= max_age_ns
 
     def get_observation_array(self) -> np.ndarray:
-        """Get observation array as a view (zero-copy).
+        """Build observation array in training format (for model input).
 
-        Returns:
-            Observation array of shape (obs_dim,) matching training format
+        Converts structured observation parts to flat array right before model.
         """
-        if self.observation is None or self.observation.observation is None:
+        if self.observation is None:
             raise ValueError("Observation not set")
-        return self.observation.observation
+        return self.observation.to_array()
 
 
 @dataclass

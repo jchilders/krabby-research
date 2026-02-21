@@ -21,6 +21,7 @@ from hal.server.robot_definition import (
     ObservationScalingDefinition,
     RobotDefinition,
 )
+from hal.server.isaac.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
 
 _TEST_ROBOT = RobotDefinition(
     name="test_robot",
@@ -91,24 +92,22 @@ class TestParkourPolicyModel:
         except FileNotFoundError as e:
             pytest.fail(str(e))
 
+        # Use Unitree Go2 robot so observation dimensions match the checkpoint (num_prop=53, obs_dim=753).
         observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
-            _TEST_ROBOT
+            UNITREE_GO2_DEFINITION
         )
         weights = ModelWeights(
             checkpoint_path=str(checkpoint_path),
             observation_dimensions=observation_dimensions,
             action_dim=12,
         )
-        try:
-            model = ParkourPolicyModel(weights, device="cpu")
-        except Exception as e:
-            pytest.fail(f"Failed to load checkpoint: {e}")
+        model = ParkourPolicyModel(weights, device="cpu")
 
         obs_array = np.random.randn(observation_dimensions.obs_dim).astype(np.float32)
-        observation = ParkourObservation(
+        observation = ParkourObservation.from_array(
+            observation_dimensions,
+            obs_array,
             timestamp_ns=time.time_ns(),
-            observation=obs_array,
-            observation_dimensions=observation_dimensions,
         )
         
         nav_cmd = NavigationCommand.create_now(vx=1.0, vy=0.0, yaw_rate=0.0)

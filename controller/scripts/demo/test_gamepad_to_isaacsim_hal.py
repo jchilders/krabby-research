@@ -49,6 +49,7 @@ from controller.control_loop import ControlLoop, ControlLoopConfig, ControlMode
 from hal.client.config import HalClientConfig
 from hal.server import HalServerConfig
 from hal.server.isaac import IsaacSimHalServer
+from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
 
 # Configure logging
 logging.basicConfig(
@@ -231,7 +232,7 @@ def main():
     
     # Create and initialize HAL server
     logger.info("Initializing HAL server...")
-    hal_server = IsaacSimHalServer(hal_server_config, env=mock_env)
+    hal_server = IsaacSimHalServer(hal_server_config, KRABBY_QUAD_DEFINITION, env=mock_env)
     hal_server.initialize()
     hal_server.set_debug(True)
     logger.info("HAL server initialized and listening on tcp://127.0.0.1:5555 (obs) and tcp://127.0.0.1:5556 (cmd)")

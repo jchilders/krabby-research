@@ -20,6 +20,8 @@ from hal.client.data_structures.hardware import JointCommand
 from hal.server import HalServerConfig
 from hal.server.isaac.hal_server import IsaacSimHalServer
 from hal.server.isaac.isaacsim_mcusdk import IsaacSimMCUSDK
+from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 
 
 # Minimal environment mock - only required attributes
@@ -90,14 +92,14 @@ class TestIsaacSimHalServerMCUSDK:
     def test_mcusdk_initialized_when_env_provided(self, hal_server_config):
         """Test SDK is initialized when env is provided."""
         mock_env = MockEnv()
-        hal_server = IsaacSimHalServer(hal_server_config, env=mock_env)
+        hal_server = IsaacSimHalServer(hal_server_config, KRABBY_QUAD_DEFINITION, env=mock_env)
         
         assert hal_server._mcusdk is not None
         assert isinstance(hal_server._mcusdk, IsaacSimMCUSDK)
     
     def test_mcusdk_not_initialized_when_env_is_none(self, hal_server_config):
         """Test SDK is NOT initialized when env is None."""
-        hal_server = IsaacSimHalServer(hal_server_config, env=None)
+        hal_server = IsaacSimHalServer(hal_server_config, KRABBY_QUAD_DEFINITION, env=None)
         
         assert hal_server._mcusdk is None
         
@@ -108,11 +110,11 @@ class TestIsaacSimHalServerMCUSDK:
     def test_apply_command_flow(self, hal_server_config):
         """Test apply_command flow: get command via ZMQ → call SDK → convert to torch → return tensor."""
         mock_env = MockEnv(num_envs=1)
-        hal_server = IsaacSimHalServer(hal_server_config, env=mock_env)
+        hal_server = IsaacSimHalServer(hal_server_config, KRABBY_QUAD_DEFINITION, env=mock_env)
         hal_server.initialize()
         
-        # Create command to send
-        command_values = np.zeros(18, dtype=np.float32)
+        # Create command to send (12 joints for quad robot)
+        command_values = np.zeros(12, dtype=np.float32)
         command = JointCommand(
             joint_positions=command_values,
             timestamp_ns=time.time_ns(),
@@ -147,8 +149,8 @@ class TestIsaacSimHalServerMCUSDK:
         assert action is not None
         
         # Verify returned tensor has correct shape after transformations
-        # SDK returns (18,) numpy → converted to torch (18,) → batch dim added → (1, 18)
-        assert action.shape == (1, 18)
+        # SDK returns (12,) numpy → converted to torch (12,) → batch dim added → (1, 12)
+        assert action.shape == (1, 12)
         assert action.dtype == torch.float32
         
         # Verify values match command values (after transformations)

@@ -64,9 +64,7 @@ def main():
 
     model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
     robot_definition = KRABBY_HEX_DEFINITION
-    observation_dimensions = model_definition.get_observation_dimensions_for_checkpoint(
-        args.checkpoint, robot_definition
-    )
+    observation_dimensions = model_definition.get_observation_dimensions(robot_definition)
 
     # Running flag for graceful shutdown
     running = True

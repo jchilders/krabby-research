@@ -140,7 +140,7 @@ class ParkourInferenceClient(HalClient):
         with torch.inference_mode():
             estimator_output = estimator.inference(obs_tensor[:, : d.num_prop])
         
-        priv_explicit_start = d.num_prop + d.num_scan
+        priv_explicit_start = d.num_prop + d.num_scan + d.num_vision
         priv_explicit_end = priv_explicit_start + d.num_priv_explicit
         obs_tensor[:, priv_explicit_start:priv_explicit_end] = estimator_output
         
@@ -207,16 +207,16 @@ class ParkourInferenceClient(HalClient):
         # Get estimator from policy model
         estimator = self.model.runner.get_estimator_inference_policy(device=str(self.device))
         
-        # Convert observation to torch tensor for estimator
-        obs_tensor = torch.from_numpy(model_obs.observation).unsqueeze(0).to(self.device)
+        # Convert observation to array only at model input, then to tensor
+        obs_tensor = torch.from_numpy(model_obs.to_array()).unsqueeze(0).to(self.device)
         
         d = self.observation_dimensions
         with torch.inference_mode():
             estimator_output = estimator(obs_tensor[:, : d.num_prop])
-        priv_explicit_start = d.num_prop + d.num_scan
+        priv_explicit_start = d.num_prop + d.num_scan + d.num_vision
         priv_explicit_end = priv_explicit_start + d.num_priv_explicit
         obs_tensor[:, priv_explicit_start:priv_explicit_end] = estimator_output
-        
+
         # Update both observation and nav_cmd timestamps to use the captured timestamp
         # This ensures synchronization between observation and nav_cmd
         model_obs.timestamp_ns = current_timestamp_ns

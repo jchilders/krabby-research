@@ -52,17 +52,12 @@ def dump_observation_details(
 
     proprioceptive = observation[: d.num_prop]
     scan = observation[d.num_prop : d.num_prop + d.num_scan]
-    priv_explicit = observation[
-        d.num_prop + d.num_scan : d.num_prop + d.num_scan + d.num_priv_explicit
-    ]
-    priv_latent = observation[
-        d.num_prop
-        + d.num_scan
-        + d.num_priv_explicit : d.num_prop
-        + d.num_scan
-        + d.num_priv_explicit
-        + d.num_priv_latent
-    ]
+    start_vis = d.num_prop + d.num_scan
+    vision = observation[start_vis : start_vis + d.num_vision]
+    start_pe = start_vis + d.num_vision
+    priv_explicit = observation[start_pe : start_pe + d.num_priv_explicit]
+    start_pl = start_pe + d.num_priv_explicit
+    priv_latent = observation[start_pl : start_pl + d.num_priv_latent]
     history = observation[-d.history_dim :]
 
     print(f"\n  Observation Breakdown:")
@@ -87,6 +82,10 @@ def dump_observation_details(
     print(f"      Min: {scan.min():.4f}, Max: {scan.max():.4f}, Mean: {scan.mean():.4f}")
     print(f"      First 5: {scan[:5]}")
     print(f"      Last 5: {scan[-5:]}")
+
+    if d.num_vision > 0:
+        print(f"    Vision ({d.num_vision}):")
+        print(f"      Min: {vision.min():.4f}, Max: {vision.max():.4f}, Mean: {vision.mean():.4f}")
 
     print(f"    Privileged Explicit ({d.num_priv_explicit}):")
     print(f"      Base linear velocity (world): {format_vector(priv_explicit[0:3])}")
@@ -141,7 +140,7 @@ def dump_hal_state(
                 
                 mapper = HWObservationsToParkourMapper(observation_dimensions)
                 model_obs = mapper.map(hw_obs)
-                observation = model_obs.observation
+                observation = model_obs.to_array()
 
                 print(f"\n📊 Observation:")
                 print(f"  Topic: {topic}")

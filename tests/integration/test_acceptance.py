@@ -120,20 +120,18 @@ class ProtoHalServer(HalServerBase):
         obs_array[d.num_prop : d.num_prop + d.num_scan] = np.cos(
             np.arange(d.num_scan) * 0.05
         ).astype(np.float32)
-        obs_array[
-            d.num_prop + d.num_scan : d.num_prop + d.num_scan + d.num_priv_explicit
-        ] = np.random.randn(d.num_priv_explicit).astype(np.float32)
-        obs_array[
-            d.num_prop
-            + d.num_scan
-            + d.num_priv_explicit : d.num_prop
-            + d.num_scan
-            + d.num_priv_explicit
-            + d.num_priv_latent
-        ] = np.random.randn(d.num_priv_latent).astype(np.float32)
-        obs_array[
-            d.num_prop + d.num_scan + d.num_priv_explicit + d.num_priv_latent :
-        ] = np.random.randn(d.history_dim).astype(np.float32)
+        start_vis = d.num_prop + d.num_scan
+        start_pe = start_vis + d.num_vision
+        obs_array[start_pe : start_pe + d.num_priv_explicit] = np.random.randn(
+            d.num_priv_explicit
+        ).astype(np.float32)
+        start_pl = start_pe + d.num_priv_explicit
+        obs_array[start_pl : start_pl + d.num_priv_latent] = np.random.randn(
+            d.num_priv_latent
+        ).astype(np.float32)
+        obs_array[start_pl + d.num_priv_latent :] = np.random.randn(
+            d.history_dim
+        ).astype(np.float32)
 
         # Create hardware observation from the observation array
         # For testing, we'll create a dummy hardware observation
@@ -235,8 +233,13 @@ def test_100_tick_execution_with_proto_hal(proto_hal_setup):
             )
 
     model = MockPolicyModel()
+    observation_dimensions = _observation_dimensions()
     test_runner = InferenceTestRunner(
-        model, client, control_rate_hz=100.0, robot_definition=KRABBY_HEX_DEFINITION
+        model,
+        client,
+        control_rate_hz=100.0,
+        robot_definition=KRABBY_HEX_DEFINITION,
+        observation_dimensions=observation_dimensions,
     )
 
     # Set navigation command on test runner

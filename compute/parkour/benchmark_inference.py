@@ -138,8 +138,8 @@ def main():
     parser.add_argument("--warmup", type=int, default=10, help="Number of warmup iterations")
 
     args = parser.parse_args()
-    observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions_for_checkpoint(
-        args.checkpoint, KRABBY_HEX_DEFINITION
+    observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+        KRABBY_HEX_DEFINITION
     )
     results = benchmark_inference(
         checkpoint_path=args.checkpoint,

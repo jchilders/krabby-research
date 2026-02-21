@@ -24,14 +24,14 @@ class IsaacSimHalServer(HalServerBase):
     Applies joint commands received via HAL to the environment.
     """
 
-    def __init__(self, config: HalServerConfig, env=None, robot_definition: Optional[RobotDefinition] = None, observation_dimensions=None):
+    def __init__(self, config: HalServerConfig, robot_definition: RobotDefinition, env=None, observation_dimensions=None):
         """Initialize IsaacSim HAL server.
         
         Args:
             config: HAL server configuration
+            robot_definition: Robot definition (e.g. quad 12 joints). Used for command slice and observation sizes. Required.
             env: IsaacSim environment. If provided, environment component
                 references will be cached via _cache_references().
-            robot_definition: Robot definition (quad 12 joints). Used for command slice and observation sizes.
             observation_dimensions: Observation dimensions from model definition. Used for history buffer calculations.
         
         Note:
@@ -52,7 +52,7 @@ class IsaacSimHalServer(HalServerBase):
         self._latest_obs_dict = None
         self._latest_obs_tensor = None
         # Track last applied action to use as previous_action in next observation
-        action_dim = robot_definition.get_total_joint_count() if robot_definition else 12
+        action_dim = robot_definition.get_total_joint_count()
         self._last_applied_action = np.zeros(action_dim, dtype=np.float32)
         # Track last published observation to detect duplicates
         self._last_published_obs_vals = None
@@ -522,7 +522,7 @@ class IsaacSimHalServer(HalServerBase):
         action_np = self._mcusdk.apply_command(command, num_envs=num_envs)
         
         # Slice to this robot's joint count (quad 12, hex 18)
-        action_dim = self.robot_definition.get_total_joint_count() if self.robot_definition else 12
+        action_dim = self.robot_definition.get_total_joint_count()
         action_np = action_np[:action_dim].astype(np.float32)
 
         # Convert to torch tensor for compatibility with env.step() and calling code

@@ -95,8 +95,8 @@ def main():
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"], help="Device to use")
 
     args = parser.parse_args()
-    observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions_for_checkpoint(
-        args.checkpoint, KRABBY_HEX_DEFINITION
+    observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+        KRABBY_HEX_DEFINITION
     )
     success = test_checkpoint_loading(
         checkpoint_path=args.checkpoint,

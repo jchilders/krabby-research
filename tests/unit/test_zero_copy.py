@@ -94,17 +94,13 @@ class TestNumpyToTorchZeroCopy:
         assert tensor[0].item() == 0.0, "Tensor should not be affected by float64 array changes"
 
     def test_policy_interface_observation_conversion(self, observation_dimensions):
-        """Test that policy interface converts observations with zero-copy when possible."""
+        """Test that policy interface converts observations (array built at model boundary)."""
         d = observation_dimensions
         obs_array = np.zeros(d.obs_dim, dtype=np.float32)
-        assert obs_array.flags["C_CONTIGUOUS"]
+        obs_array[0] = 42.0
 
         nav_cmd = NavigationCommand.create_now()
-        observation = ParkourObservation(
-            timestamp_ns=1,
-            observation=obs_array,
-            observation_dimensions=d,
-        )
+        observation = ParkourObservation.from_array(d, obs_array, timestamp_ns=1)
         model_io = ParkourModelIO(
             timestamp_ns=1,
             nav_cmd=nav_cmd,
@@ -117,20 +113,18 @@ class TestNumpyToTorchZeroCopy:
                 self.device = torch.device("cpu")
 
             def _build_observation_tensor(self, io):
-                """Simulate policy interface conversion."""
-                obs_array = io.get_observation_array()
-                if not obs_array.flags["C_CONTIGUOUS"]:
-                    obs_array = np.ascontiguousarray(obs_array, dtype=np.float32)
-                if obs_array.dtype != np.float32:
-                    obs_array = obs_array.astype(np.float32, copy=False)
-                return torch.from_numpy(obs_array).to(self.device).unsqueeze(0)
+                """Simulate policy interface conversion (to_array at model boundary)."""
+                arr = io.get_observation_array()
+                if not arr.flags["C_CONTIGUOUS"]:
+                    arr = np.ascontiguousarray(arr, dtype=np.float32)
+                if arr.dtype != np.float32:
+                    arr = arr.astype(np.float32, copy=False)
+                return torch.from_numpy(arr).to(self.device).unsqueeze(0)
 
         model = MockPolicyModel(d.obs_dim)
         tensor = model._build_observation_tensor(model_io)
-
-        # Verify they share memory
-        obs_array[0] = 123.0
-        assert tensor[0, 0].item() == 123.0, "Tensor should share memory with observation array"
+        assert tensor.shape == (1, d.obs_dim)
+        assert tensor[0, 0].item() == 42.0, "Tensor should contain observation values"
 
 
 class TestTorchToNumpyZeroCopy:
@@ -251,56 +245,76 @@ class TestActionTensorZeroCopy:
 class TestObservationViewMethods:
     """Test that observation view methods return zero-copy views."""
 
-    def test_get_proprioceptive_returns_view(self, observation_dimensions):
-        """Verify get_proprioceptive() returns a view, not a copy."""
+    def test_get_proprioceptive_returns_stored_part(self, observation_dimensions):
+        """Verify get_proprioceptive() returns the stored part (in-place mutable)."""
         d = observation_dimensions
-        obs_array = np.zeros(d.obs_dim, dtype=np.float32)
-        obs = ParkourObservation(
+        obs = ParkourObservation.from_parts(
+            d,
+            proprioceptive=np.zeros(d.num_prop, dtype=np.float32),
+            scan=np.zeros(d.num_scan, dtype=np.float32),
+            priv_explicit=np.zeros(d.num_priv_explicit, dtype=np.float32),
+            priv_latent=np.zeros(d.num_priv_latent, dtype=np.float32),
+            history=np.zeros(d.history_dim, dtype=np.float32),
             timestamp_ns=1,
-            observation=obs_array,
-            observation_dimensions=d,
+            vision=[],
         )
         prop = obs.get_proprioceptive()
         prop[0] = 42.0
-        assert obs_array[0] == 42.0
-        obs_array[1] = 99.0
-        assert prop[1] == 99.0
+        assert obs.to_array()[0] == 42.0
+        prop[1] = 99.0
+        assert obs.get_proprioceptive()[1] == 99.0
 
-    def test_get_scan_returns_view(self, observation_dimensions):
-        """Verify get_scan() returns a view, not a copy."""
+    def test_get_scan_returns_stored_part(self, observation_dimensions):
+        """Verify get_scan() returns the stored part."""
         d = observation_dimensions
-        obs_array = np.zeros(d.obs_dim, dtype=np.float32)
-        obs = ParkourObservation(
+        obs = ParkourObservation.from_parts(
+            d,
+            proprioceptive=np.zeros(d.num_prop, dtype=np.float32),
+            scan=np.zeros(d.num_scan, dtype=np.float32),
+            priv_explicit=np.zeros(d.num_priv_explicit, dtype=np.float32),
+            priv_latent=np.zeros(d.num_priv_latent, dtype=np.float32),
+            history=np.zeros(d.history_dim, dtype=np.float32),
             timestamp_ns=1,
-            observation=obs_array,
-            observation_dimensions=d,
+            vision=[],
         )
         scan = obs.get_scan()
         scan[0] = 42.0
-        assert obs_array[d.num_prop] == 42.0
+        assert obs.to_array()[d.num_prop] == 42.0
 
-    def test_all_view_methods_return_views(self, observation_dimensions):
-        """Verify all view methods return views, not copies."""
+    def test_all_view_methods_return_stored_parts(self, observation_dimensions):
+        """Verify all get_* methods return the stored part arrays (mutations appear in to_array())."""
         d = observation_dimensions
-        obs_array = np.zeros(d.obs_dim, dtype=np.float32)
-        obs = ParkourObservation(
+        obs = ParkourObservation.from_parts(
+            d,
+            proprioceptive=np.zeros(d.num_prop, dtype=np.float32),
+            scan=np.zeros(d.num_scan, dtype=np.float32),
+            priv_explicit=np.zeros(d.num_priv_explicit, dtype=np.float32),
+            priv_latent=np.zeros(d.num_priv_latent, dtype=np.float32),
+            history=np.zeros(d.history_dim, dtype=np.float32),
             timestamp_ns=1,
-            observation=obs_array,
-            observation_dimensions=d,
+            vision=[],
         )
         prop = obs.get_proprioceptive()
         scan = obs.get_scan()
         priv_explicit = obs.get_priv_explicit()
         priv_latent = obs.get_priv_latent()
         history = obs.get_history()
+        # Mutate via views; to_array() concatenates stored parts so must be called after mutations
         prop[0] = 1.0
-        assert obs_array[0] == 1.0
         scan[0] = 2.0
-        assert obs_array[d.num_prop] == 2.0
+        if d.num_vision > 0:
+            vision_list = obs.get_vision()
+            if vision_list:
+                vision_list[0][0] = 2.5
         priv_explicit[0] = 3.0
-        assert obs_array[d.num_prop + d.num_scan] == 3.0
         priv_latent[0] = 4.0
-        assert obs_array[d.num_prop + d.num_scan + d.num_priv_explicit] == 4.0
         history[0] = 5.0
-        assert obs_array[-d.history_dim] == 5.0
+        arr = obs.to_array()
+        assert arr[0] == 1.0
+        assert arr[d.num_prop] == 2.0
+        if d.num_vision > 0:
+            assert arr[d.num_prop + d.num_scan] == 2.5
+        assert arr[d.num_prop + d.num_scan + d.num_vision] == 3.0
+        assert arr[d.num_prop + d.num_scan + d.num_vision + d.num_priv_explicit] == 4.0
+        assert arr[-d.history_dim] == 5.0
 

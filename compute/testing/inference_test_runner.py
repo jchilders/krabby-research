@@ -61,6 +61,7 @@ class InferenceTestRunner:
         hal_client: HalClient,
         control_rate_hz: float,
         robot_definition,
+        observation_dimensions: ObservationDimensions,
     ):
         """Initialize inference test runner.
 
@@ -69,11 +70,13 @@ class InferenceTestRunner:
             hal_client: HAL client for communication
             control_rate_hz: Control loop rate in Hz
             robot_definition: Robot definition (command joint count = get_total_joint_count())
+            observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
         """
         self.model = model
         self.hal_client = hal_client
         self.control_rate_hz = control_rate_hz
         self.robot_definition = robot_definition
+        self.observation_dimensions = observation_dimensions
         self.period_s = 1.0 / control_rate_hz
         self.running = False
         self.nav_cmd: Optional[NavigationCommand] = None
@@ -128,7 +131,7 @@ class InferenceTestRunner:
                     nav_cmd = self.nav_cmd or NavigationCommand.create_now()
                     nav_cmd.timestamp_ns = hw_obs.timestamp_ns
                     
-                    mapper = HWObservationsToParkourMapper()
+                    mapper = HWObservationsToParkourMapper(self.observation_dimensions)
                     model_obs = mapper.map(hw_obs, nav_cmd=nav_cmd)
                     
                     model_io = ParkourModelIO(

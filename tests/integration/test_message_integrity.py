@@ -237,10 +237,10 @@ def test_required_fields_validation():
     assert not incomplete_io.is_complete()
 
     nav_cmd = NavigationCommand.create_now()
-    observation = ParkourObservation(
+    observation = ParkourObservation.from_array(
+        obs_dims,
+        np.zeros(obs_dims.obs_dim, dtype=np.float32),
         timestamp_ns=time.time_ns(),
-        observation=np.zeros(obs_dims.obs_dim, dtype=np.float32),
-        observation_dimensions=obs_dims,
     )
 
     complete_io = ParkourModelIO(
@@ -262,10 +262,10 @@ def test_timestamp_synchronization():
     nav_cmd = NavigationCommand.create_now()
     nav_cmd.timestamp_ns = base_time_ns
 
-    observation = ParkourObservation(
+    observation = ParkourObservation.from_array(
+        obs_dims,
+        np.zeros(obs_dims.obs_dim, dtype=np.float32),
         timestamp_ns=base_time_ns + 5_000_000,
-        observation=np.zeros(obs_dims.obs_dim, dtype=np.float32),
-        observation_dimensions=obs_dims,
     )
     
     synchronized_io = ParkourModelIO(
@@ -277,10 +277,10 @@ def test_timestamp_synchronization():
     assert synchronized_io.is_synchronized(), "Timestamps within 10ms should be synchronized"
     assert synchronized_io.is_synchronized(max_age_ns=10_000_000), "Should pass with default 10ms threshold"
     
-    observation_unsync = ParkourObservation(
+    observation_unsync = ParkourObservation.from_array(
+        obs_dims,
+        np.zeros(obs_dims.obs_dim, dtype=np.float32),
         timestamp_ns=base_time_ns + 15_000_000,
-        observation=np.zeros(obs_dims.obs_dim, dtype=np.float32),
-        observation_dimensions=obs_dims,
     )
     
     unsynchronized_io = ParkourModelIO(
@@ -292,10 +292,10 @@ def test_timestamp_synchronization():
     assert not unsynchronized_io.is_synchronized(), "Timestamps >10ms apart should not be synchronized"
     assert unsynchronized_io.is_synchronized(max_age_ns=20_000_000), "Should pass with 20ms threshold"
     
-    observation_custom = ParkourObservation(
+    observation_custom = ParkourObservation.from_array(
+        obs_dims,
+        np.zeros(obs_dims.obs_dim, dtype=np.float32),
         timestamp_ns=base_time_ns + 5_000_000,
-        observation=np.zeros(obs_dims.obs_dim, dtype=np.float32),
-        observation_dimensions=obs_dims,
     )
     
     custom_io = ParkourModelIO(
@@ -307,10 +307,10 @@ def test_timestamp_synchronization():
     # 5ms (5_000_000 ns) is > 1ms (1_000_000 ns) threshold, so should fail
     assert not custom_io.is_synchronized(max_age_ns=1_000_000), "5ms > 1ms threshold should fail"
     
-    observation_exact = ParkourObservation(
+    observation_exact = ParkourObservation.from_array(
+        obs_dims,
+        np.zeros(obs_dims.obs_dim, dtype=np.float32),
         timestamp_ns=base_time_ns + 10_000_000,
-        observation=np.zeros(obs_dims.obs_dim, dtype=np.float32),
-        observation_dimensions=obs_dims,
     )
     
     exact_io = ParkourModelIO(

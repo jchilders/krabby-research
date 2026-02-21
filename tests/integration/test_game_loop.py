@@ -177,10 +177,17 @@ def test_game_loop_basic_functionality(hal_setup):
 
     # Setup mock model
     model = MockPolicyModel(action_dim=12, inference_time_ms=5.0)
+    observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+        KRABBY_HEX_DEFINITION
+    )
 
     # Setup inference test runner (simulates game loop)
     test_runner = InferenceTestRunner(
-        model, client, control_rate_hz=100.0, robot_definition=KRABBY_HEX_DEFINITION
+        model,
+        client,
+        control_rate_hz=100.0,
+        robot_definition=KRABBY_HEX_DEFINITION,
+        observation_dimensions=observation_dimensions,
     )
 
     # Set navigation command on test runner (not client)
@@ -242,11 +249,12 @@ def test_game_loop_observation_tensor_correctness(hal_setup):
     mapper = HWObservationsToParkourMapper(observation_dimensions)
     parkour_obs = mapper.map(received_hw_obs)
 
-    assert parkour_obs.observation.shape == (d.obs_dim,), (
-        f"ParkourObservation shape should be ({d.obs_dim},), got {parkour_obs.observation.shape}"
+    obs_arr = parkour_obs.to_array()
+    assert obs_arr.shape == (d.obs_dim,), (
+        f"ParkourObservation shape should be ({d.obs_dim},), got {obs_arr.shape}"
     )
-    assert parkour_obs.observation.dtype == np.float32, (
-        f"ParkourObservation dtype should be float32, got {parkour_obs.observation.dtype}"
+    assert obs_arr.dtype == np.float32, (
+        f"ParkourObservation dtype should be float32, got {obs_arr.dtype}"
     )
 
     prop = parkour_obs.get_proprioceptive()
@@ -257,6 +265,13 @@ def test_game_loop_observation_tensor_correctness(hal_setup):
     assert scan.shape == (d.num_scan,), (
         f"Scan shape should be ({d.num_scan},), got {scan.shape}"
     )
+    vision_list = parkour_obs.get_vision()
+    if d.num_vision > 0:
+        assert len(vision_list) >= 1 and sum(a.size for a in vision_list) == d.num_vision, (
+            f"Vision should be non-empty list with total size {d.num_vision}, got {vision_list}"
+        )
+    else:
+        assert vision_list == [], "Vision should be empty list when num_vision is 0"
     priv_explicit = parkour_obs.get_priv_explicit()
     assert priv_explicit.shape == (d.num_priv_explicit,), (
         f"Privileged explicit shape should be ({d.num_priv_explicit},), got {priv_explicit.shape}"
@@ -272,6 +287,7 @@ def test_game_loop_observation_tensor_correctness(hal_setup):
     total_dim = (
         d.num_prop
         + d.num_scan
+        + d.num_vision
         + d.num_priv_explicit
         + d.num_priv_latent
         + d.history_dim

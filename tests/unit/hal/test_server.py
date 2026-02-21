@@ -55,35 +55,29 @@ def test_set_observation():
         subscriber.connect("inproc://test_state3")
         subscriber.setsockopt(zmq.SUBSCRIBE, b"observation")
         subscriber.setsockopt(zmq.RCVHWM, 1)
-        # Small delay for subscriber to connect
-        time.sleep(0.05)
+        # Allow time for SUB to connect (ZMQ slow-joiner: first message can be lost)
+        time.sleep(0.1)
 
-        # Set hardware observation
-        from tests.helpers import create_dummy_hw_obs
         hw_obs = create_dummy_hw_obs(
             camera_height=480, camera_width=640
         )
-        server.set_observation(hw_obs)
-        # Small delay to ensure message is sent
-        time.sleep(0.01)
+        # Send a few times so subscriber is guaranteed to receive one
+        for _ in range(3):
+            server.set_observation(hw_obs)
+            time.sleep(0.02)
+            if subscriber.poll(100, zmq.POLLIN):
+                break
 
-        # Receive message with timeout
-        poll_result = subscriber.poll(500, zmq.POLLIN)
+        poll_result = subscriber.poll(200, zmq.POLLIN)
         assert poll_result > 0, "No message received within timeout"
-        
         parts = subscriber.recv_multipart(zmq.NOBLOCK)
-        
-        # Validate message format
-        assert len(parts) == 14, f"Expected 14 parts (topic + schema + 12 hw_obs), got {len(parts)}"
+
+        # Message format: [topic] + hw_obs.to_bytes() => 1 + 12 = 13 parts (metadata + 11 arrays)
+        assert len(parts) == 13, f"Expected 13 parts (topic + 12 hw_obs), got {len(parts)}"
         assert parts[0] == b"observation", f"Expected topic 'observation', got {parts[0]}"
-        assert parts[1] == b"1.0", f"Expected schema '1.0', got {parts[1]}"
-        
-        # Extract hw_obs parts (skip topic and schema)
-        # Parts: [0:topic, 1:schema, 2:metadata, 3-13:arrays]
-        hw_obs_parts = parts[2:]  # Skip topic and schema
+        hw_obs_parts = parts[1:]
         assert len(hw_obs_parts) == 12, f"Expected 12 parts for hw_obs (metadata + 11 arrays), got {len(hw_obs_parts)}"
-        
-        # Deserialize and validate
+
         received_hw_obs = HardwareObservations.from_bytes(hw_obs_parts)
         assert received_hw_obs.joint_positions.shape == hw_obs.joint_positions.shape
         np.testing.assert_array_equal(received_hw_obs.joint_positions, hw_obs.joint_positions)

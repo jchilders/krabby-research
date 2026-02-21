@@ -12,6 +12,11 @@
 # ZMQ communication (inproc for internal communication)
 pyzmq>=25.0.0
 
+# Dependencies for copied controller/ and firmware/ (needed for test collection)
+pygame>=2.5.0
+pyserial
+keyboard
+
 # Data handling (for version-aware serialization)
 dataclasses-json>=0.6.0
 

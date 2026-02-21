@@ -364,7 +364,7 @@ def run_test_isaacsim_hal_server_with_real_isaaclab():
         from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
         # Create and initialize HAL server with real environment
         logger.info("[STEP] Creating IsaacSimHalServer...")
-        hal_server = IsaacSimHalServer(hal_server_config, env=env, robot_definition=KRABBY_QUAD_DEFINITION)
+        hal_server = IsaacSimHalServer(hal_server_config, KRABBY_QUAD_DEFINITION, env=env)
         logger.info("[STEP] IsaacSimHalServer created, calling initialize()...")
         hal_server.initialize()
         logger.info("[STEP] HAL server initialized successfully")
@@ -496,19 +496,21 @@ def run_test_inference_latency_requirement():
         env.reset()
         logger.info("[STEP] Environment reset complete")
         
+        from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
+        from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+        observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+            KRABBY_QUAD_DEFINITION
+        )
         # Create and initialize HAL server with real environment
         logger.info("[STEP] Creating and initializing HAL server...")
-        server = IsaacSimHalServer(hal_server_config, env=env)
+        server = IsaacSimHalServer(
+            hal_server_config, KRABBY_QUAD_DEFINITION, env=env, observation_dimensions=observation_dimensions
+        )
         server.initialize()
         logger.info("[STEP] HAL server initialized")
         
-        from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
-        from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
         current_step = "[STEP] Loading model checkpoint..."
         logger.info(current_step)
-        observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions_for_checkpoint(
-            checkpoint_path, KRABBY_QUAD_DEFINITION
-        )
         weights = ModelWeights(
             checkpoint_path=str(checkpoint_path),
             observation_dimensions=observation_dimensions,

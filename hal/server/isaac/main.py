@@ -217,10 +217,8 @@ def main():
     # Create and initialize HAL server
     robot_definition = KRABBY_QUAD_DEFINITION
     model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
-    observation_dimensions = model_definition.get_observation_dimensions_for_checkpoint(
-        args.checkpoint, robot_definition
-    )
-    hal_server = IsaacSimHalServer(hal_server_config, env=env, robot_definition=robot_definition, observation_dimensions=observation_dimensions)
+    observation_dimensions = model_definition.get_observation_dimensions(robot_definition)
+    hal_server = IsaacSimHalServer(hal_server_config, robot_definition, env=env, observation_dimensions=observation_dimensions)
     hal_server.initialize()
     logger.info("HAL server initialized")
 

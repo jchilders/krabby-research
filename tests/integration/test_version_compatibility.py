@@ -104,10 +104,10 @@ def test_model_io_complete():
         KRABBY_HEX_DEFINITION
     )
     nav_cmd = NavigationCommand.create_now()
-    observation = ParkourObservation(
+    observation = ParkourObservation.from_array(
+        obs_dims,
+        np.zeros(obs_dims.obs_dim, dtype=np.float32),
         timestamp_ns=time.time_ns(),
-        observation=np.zeros(obs_dims.obs_dim, dtype=np.float32),
-        observation_dimensions=obs_dims,
     )
     model_io = ParkourModelIO(
         timestamp_ns=time.time_ns(),

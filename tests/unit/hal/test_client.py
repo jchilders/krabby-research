@@ -15,6 +15,7 @@ from hal.server import HalServerConfig
 from hal.client.data_structures.hardware import HardwareObservations
 from hal.client.observation.types import NavigationCommand
 from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
 from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
 from compute.parkour.parkour_types import InferenceResponse, ParkourModelIO
@@ -125,11 +126,14 @@ def test_hal_client_poll_and_map():
     assert received_hw_obs is not None
 
     # Map to ParkourObservation using mapper
-    mapper = HWObservationsToParkourMapper()
+    observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
+        KRABBY_QUAD_DEFINITION
+    )
+    mapper = HWObservationsToParkourMapper(observation_dimensions)
     parkour_obs = mapper.map(received_hw_obs)
     
     assert parkour_obs is not None
-    assert parkour_obs.observation is not None
+    assert parkour_obs.to_array().size > 0
 
     client.close()
     server.close()
