@@ -10,6 +10,7 @@ import numpy as np
 from scipy.ndimage import zoom
 
 from hal.server import HalServerBase, HalServerConfig
+from hal.server.robot_definition import RobotDefinition
 from hal.client.data_structures.hardware import HardwareObservations, JointCommand
 from hal.server.jetson.camera import ZedCamera, create_zed_camera
 from hal.server.jetson.krabby_mcusdk import KrabbyMCUSDK
@@ -31,6 +32,7 @@ class JetsonHalServer(HalServerBase):
         config: HalServerConfig,
         observation_dimensions: ObservationDimensions,
         action_dim: int,
+        robot_definition: RobotDefinition,
         camera_resolution: tuple[int, int] = (640, 480),
         camera_fps: int = 30,
         mcu_port: Optional[str] = None,
@@ -43,6 +45,7 @@ class JetsonHalServer(HalServerBase):
             config: HAL server configuration
             observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
             action_dim: Action dimension (model output joint count)
+            robot_definition: Robot definition for joint names and order (adapter uses get_joint_names()).
             camera_resolution: ZED camera resolution (width, height)
             camera_fps: ZED camera FPS
             mcu_port: Serial port for MCU connection. If None, uses default from MCU SDK.
@@ -52,33 +55,37 @@ class JetsonHalServer(HalServerBase):
         super().__init__(config)
         self.observation_dimensions = observation_dimensions
         self.action_dim = action_dim
+        self.robot_definition = robot_definition
         self.camera_resolution = camera_resolution
         self.camera_fps = camera_fps
         self.zed_camera: Optional[ZedCamera] = None
         self.state_source = None  # IMU/encoders (placeholder, real implementation in future)
         self.actuator_sink = None  # Motors (placeholder, real implementation in future)
-        self._last_joint_positions: Optional[np.ndarray] = None
+        self._last_joint_positions: Optional[dict[str, float]] = None  # from command.to_positions_dict()
         
-        # Initialize Krabby MCU SDK for standardized command application
+        # Initialize Krabby MCU SDK when robot definition has MCU joints
         self._mcusdk: Optional[KrabbyMCUSDK] = None
-        try:
-            self._mcusdk = KrabbyMCUSDK(
-                port=mcu_port,
-                baud=mcu_baud,
-                auto_connect=mcu_auto_connect,
-            )
-            logger.info("KrabbyMCUSDK initialized for JetsonHalServer")
-        except (ImportError, RuntimeError) as e:
-            logger.warning(
-                f"KrabbyMCUSDK not available: {e}. "
-                "MCU commands will not be sent. Install firmware package to enable MCU control."
-            )
-        except Exception as e:
-            logger.warning(
-                f"Failed to initialize KrabbyMCUSDK: {e}. "
-                "MCU commands will not be sent. Check MCU connection and configuration.",
-                exc_info=True
-            )
+        mcu_joints = self.robot_definition.get_mcu_joints()
+        if mcu_joints:
+            try:
+                self._mcusdk = KrabbyMCUSDK(
+                    mcu_joints=mcu_joints,
+                    port=mcu_port,
+                    baud=mcu_baud,
+                    auto_connect=mcu_auto_connect,
+                )
+                logger.info("KrabbyMCUSDK initialized for JetsonHalServer")
+            except (ImportError, RuntimeError, ValueError) as e:
+                logger.warning(
+                    f"KrabbyMCUSDK not available: {e}. "
+                    "MCU commands will not be sent. Install firmware package and use a robot definition with mcu_joints."
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to initialize KrabbyMCUSDK: {e}. "
+                    "MCU commands will not be sent. Check MCU connection and configuration.",
+                    exc_info=True,
+                )
 
     def initialize_camera(self) -> None:
         """Initialize ZED camera.
@@ -212,9 +219,12 @@ class JetsonHalServer(HalServerBase):
         # Joint positions: echo last commanded targets (best available data)
         # This is the only "real" data we have (from commands we sent)
         if self._last_joint_positions is not None:
-            joint_pos = self._last_joint_positions.astype(np.float32)
+            names = self.robot_definition.get_joint_names()
+            joint_pos = np.array(
+                [self._last_joint_positions.get(n, 0.0) for n in names],
+                dtype=np.float32,
+            )
         else:
-            # If no commands received yet, use zeros
             joint_pos = np.zeros(self.action_dim, dtype=np.float32)
 
         # Joint velocities: (0, 0, ...) - zero velocities (PLACEHOLDER - requires encoders)
@@ -268,15 +278,14 @@ class JetsonHalServer(HalServerBase):
         joint_pos = state_vector[13:13+self.action_dim]
         joint_vel = state_vector[13+self.action_dim:13+2*self.action_dim]
         
-        # Pad or truncate joint positions to 12 DOF (Krabby has 12 joints)
-        # HardwareObservations expects exactly 12 joint positions
-        joint_positions = np.zeros(12, dtype=np.float32)
-        num_joints = min(len(joint_pos), 12)
+        # Observation joint count from robot definition (e.g. 12 quad, 18 hex)
+        obs_joint_count = self.robot_definition.get_total_joint_count()
+        joint_positions = np.zeros(obs_joint_count, dtype=np.float32)
+        num_joints = min(len(joint_pos), obs_joint_count)
         joint_positions[:num_joints] = joint_pos[:num_joints].astype(np.float32)
         
-        # Pad or truncate joint velocities to 12 DOF
-        joint_velocities = np.zeros(12, dtype=np.float32)
-        num_joints_vel = min(len(joint_vel), 12)
+        joint_velocities = np.zeros(obs_joint_count, dtype=np.float32)
+        num_joints_vel = min(len(joint_vel), obs_joint_count)
         joint_velocities[:num_joints_vel] = joint_vel[:num_joints_vel].astype(np.float32)
         
         # Extract base velocities (body frame) - for now use world frame values as placeholder
@@ -291,10 +300,12 @@ class JetsonHalServer(HalServerBase):
         contact_forces = np.zeros(5, dtype=np.float32)
         
         # Previous action (from last command or zeros if none)
-        previous_action = np.zeros(12, dtype=np.float32)
+        previous_action = np.zeros(obs_joint_count, dtype=np.float32)
         if self._last_joint_positions is not None:
-            num_prev = min(len(self._last_joint_positions), 12)
-            previous_action[:num_prev] = self._last_joint_positions[:num_prev].astype(np.float32)
+            names = self.robot_definition.get_joint_names()
+            num_prev = min(len(names), obs_joint_count)
+            for i in range(num_prev):
+                previous_action[i] = self._last_joint_positions.get(names[i], 0.0)
 
         # Get camera data from ZED camera
         # ZED camera provides depth features for model input, but we also need
@@ -384,18 +395,25 @@ class JetsonHalServer(HalServerBase):
         if command is None:
             raise RuntimeError("Command cannot be None")
 
-        # Extract joint positions array from command
-        joint_positions = command.joint_positions
-        
-        # Validate command shape
-        if len(joint_positions) == 0:
+        # Use command's dict view for validation and state echo
+        cmd_dict = command.to_positions_dict()
+        if len(cmd_dict) == 0:
             raise RuntimeError("Received empty joint command")
-        
-        # Store command for state echo (echo joint state from last commanded targets)
-        # This allows set_observation() to echo back the commanded positions as current state
-        self._last_joint_positions = joint_positions.copy()
 
-        # Apply command via MCU SDK if available
+        joint_names = self.robot_definition.get_joint_names()
+        if len(cmd_dict) != len(joint_names):
+            raise RuntimeError(
+                f"Joint command length {len(cmd_dict)} does not match robot definition joint count {len(joint_names)}"
+            )
+
+        # Store command for state echo (echo joint state from last commanded targets).
+        # This allows set_observation() to echo back the commanded positions as current state.
+        # TODO: In _build_state_vector()/set_observation(), read joint positions from encoders
+        # instead of _last_joint_positions; echoing command means observed state can lead actual
+        # pose and policy never sees tracking error.
+        self._last_joint_positions = cmd_dict
+
+        # Apply command via MCU SDK if available (SDK uses command.to_positions_dict())
         if self._mcusdk is not None:
             try:
                 self._mcusdk.apply_command(command)
@@ -410,10 +428,7 @@ class JetsonHalServer(HalServerBase):
             # MCU SDK not available - log command for debugging
             logger.debug(
                 f"[JOINT COMMAND] MCU SDK not available. Command not sent. "
-                f"timestamp={command.timestamp_ns}, "
-                f"joint_pos={joint_positions.tolist()}, "
-                f"shape={joint_positions.shape}, "
-                f"dtype={joint_positions.dtype}"
+                f"timestamp={command.timestamp_ns}, joint_pos={list(cmd_dict.values())}"
             )
 
     def close(self) -> None:

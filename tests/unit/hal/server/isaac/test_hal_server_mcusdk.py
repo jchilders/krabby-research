@@ -116,9 +116,10 @@ class TestIsaacSimHalServerMCUSDK:
         # Create command to send (12 joints for quad robot)
         command_values = np.zeros(12, dtype=np.float32)
         command = JointCommand(
-            joint_positions=command_values,
+            _joint_positions=command_values,
             timestamp_ns=time.time_ns(),
             observation_timestamp_ns=time.time_ns(),
+            joint_names=KRABBY_QUAD_DEFINITION.get_joint_names(),
         )
         
         # Use real ZMQ sockets - create pusher to send command
@@ -153,8 +154,9 @@ class TestIsaacSimHalServerMCUSDK:
         assert action.shape == (1, 12)
         assert action.dtype == torch.float32
         
-        # Verify values match command values (after transformations)
-        expected_values = torch.from_numpy(command.joint_positions).unsqueeze(0)
-        assert torch.allclose(action, expected_values)
+        # Verify values match command (compare dicts)
+        joint_names = KRABBY_QUAD_DEFINITION.get_joint_names()
+        actual_dict = dict(zip(joint_names, action[0].tolist()))
+        assert actual_dict == command.to_positions_dict()
         
         pusher.close()

@@ -150,7 +150,7 @@ class IsaacSimHalServer(HalServerBase):
         if self.env is None:
             return
         
-        # Initialize SDK
+        # Initialize SDK (takes JointCommand; order/timestamps from command)
         self._mcusdk = IsaacSimMCUSDK()
         logger.info("Initialized IsaacSimMCUSDK")
 
@@ -517,13 +517,15 @@ class IsaacSimHalServer(HalServerBase):
         # Get number of environments from unwrapped environment
         unwrapped_env = self.env.unwrapped if hasattr(self.env, 'unwrapped') else self.env
         num_envs = getattr(unwrapped_env, 'num_envs', 1)
-        
-        # Use standardized SDK to get normalized PWM values as numpy array
-        action_np = self._mcusdk.apply_command(command, num_envs=num_envs)
-        
-        # Slice to this robot's joint count (quad 12, hex 18)
+
+        # SDK takes JointCommand and returns dict for array conversion
+        joint_names = self.robot_definition.get_joint_names()
+        action_dict = self._mcusdk.apply_command(command, num_envs=num_envs)
+
+        # Adapter: dict -> ordered array using get_joint_names() so indices stay in sync
         action_dim = self.robot_definition.get_total_joint_count()
-        action_np = action_np[:action_dim].astype(np.float32)
+        action_list = [action_dict[name] for name in joint_names[:action_dim]]
+        action_np = np.array(action_list, dtype=np.float32)
 
         # Convert to torch tensor for compatibility with env.step() and calling code
         device = getattr(unwrapped_env, 'device', torch.device("cpu"))

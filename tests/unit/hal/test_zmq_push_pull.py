@@ -8,6 +8,8 @@ import numpy as np
 import pytest
 import zmq
 
+from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+
 
 def test_zmq_push_pull_basic():
     """Test basic PUSH/PULL communication with multipart messages."""
@@ -520,17 +522,11 @@ def test_zmq_push_pull_mimic_hal_with_class_wrapper():
             return self.context
         
         def get_joint_command(self, timeout_ms=2000):
-            """Mimic HAL server's get_joint_command method."""
+            """Mimic HAL server's get_joint_command method (returns JointCommand)."""
             if self.command_socket.poll(timeout_ms, zmq.POLLIN):
                 command_parts = self.command_socket.recv_multipart(zmq.NOBLOCK)
-                # Mimic from_bytes()
-                if len(command_parts) != 2:
-                    raise ValueError(f"Expected 2 parts, got {len(command_parts)}")
-                import json
-                metadata = json.loads(command_parts[0].decode("utf-8"))
-                joint_pos = np.frombuffer(command_parts[1], dtype=np.dtype(metadata["joint_positions"]["dtype"]))
-                joint_pos = joint_pos.reshape(tuple(metadata["joint_positions"]["shape"]))
-                return joint_pos
+                from hal.client.data_structures.hardware import JointCommand
+                return JointCommand.from_bytes(command_parts)
             return None
         
         def close(self):
@@ -562,9 +558,10 @@ def test_zmq_push_pull_mimic_hal_with_class_wrapper():
     from hal.client.data_structures.hardware import JointCommand
     command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
     joint_cmd = JointCommand(
-        joint_positions=command,
+        _joint_positions=command,
         timestamp_ns=time.time_ns(),
         observation_timestamp_ns=time.time_ns(),
+        joint_names=KRABBY_QUAD_DEFINITION.get_joint_names(),
     )
     command_parts = joint_cmd.to_bytes()
     pusher.send_multipart(command_parts)  # Blocking send
@@ -572,7 +569,9 @@ def test_zmq_push_pull_mimic_hal_with_class_wrapper():
     server_thread.join(timeout=2.0)
     received = received_command[0]
     assert received is not None
-    np.testing.assert_array_equal(received, command)
+    d = received.to_positions_dict()
+    for i, name in enumerate(received.joint_names):
+        assert d[name] == pytest.approx(float(command[i]))
     
     pusher.close()
     server.close()
@@ -603,13 +602,8 @@ def test_zmq_push_pull_mimic_hal_with_context_manager():
                 raise RuntimeError("Server not initialized")
             if self.command_socket.poll(timeout_ms, zmq.POLLIN):
                 command_parts = self.command_socket.recv_multipart(zmq.NOBLOCK)
-                if len(command_parts) != 2:
-                    raise ValueError(f"Expected 2 parts, got {len(command_parts)}")
-                import json
-                metadata = json.loads(command_parts[0].decode("utf-8"))
-                joint_pos = np.frombuffer(command_parts[1], dtype=np.dtype(metadata["joint_positions"]["dtype"]))
-                joint_pos = joint_pos.reshape(tuple(metadata["joint_positions"]["shape"]))
-                return joint_pos
+                from hal.client.data_structures.hardware import JointCommand
+                return JointCommand.from_bytes(command_parts)
             return None
         
         def close(self):
@@ -650,9 +644,10 @@ def test_zmq_push_pull_mimic_hal_with_context_manager():
         from hal.client.data_structures.hardware import JointCommand
         command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
         joint_cmd = JointCommand(
-            joint_positions=command,
+            _joint_positions=command,
             timestamp_ns=time.time_ns(),
             observation_timestamp_ns=time.time_ns(),
+            joint_names=KRABBY_QUAD_DEFINITION.get_joint_names(),
         )
         command_parts = joint_cmd.to_bytes()
         pusher.send_multipart(command_parts)  # Blocking send
@@ -660,7 +655,9 @@ def test_zmq_push_pull_mimic_hal_with_context_manager():
         server_thread.join(timeout=2.0)
         received = received_command[0]
         assert received is not None
-        np.testing.assert_array_equal(received, command)
+        d = received.to_positions_dict()
+        for i, name in enumerate(received.joint_names):
+            assert d[name] == pytest.approx(float(command[i]))
         
         pusher.close()
 
@@ -690,8 +687,7 @@ def test_zmq_push_pull_mimic_hal_exact_sequence():
             if self.command_socket.poll(timeout_ms, zmq.POLLIN):
                 command_parts = self.command_socket.recv_multipart(zmq.NOBLOCK)
                 from hal.client.data_structures.hardware import JointCommand
-                command = JointCommand.from_bytes(command_parts)
-                return command.joint_positions
+                return JointCommand.from_bytes(command_parts)
             return None
         
         def close(self):
@@ -730,9 +726,10 @@ def test_zmq_push_pull_mimic_hal_exact_sequence():
         from hal.client.data_structures.hardware import JointCommand
         command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
         joint_cmd = JointCommand(
-            joint_positions=command,
+            _joint_positions=command,
             timestamp_ns=time.time_ns(),
             observation_timestamp_ns=time.time_ns(),
+            joint_names=KRABBY_QUAD_DEFINITION.get_joint_names(),
         )
         command_parts = joint_cmd.to_bytes()
         pusher.send_multipart(command_parts)
@@ -740,7 +737,9 @@ def test_zmq_push_pull_mimic_hal_exact_sequence():
         server_thread.join(timeout=2.0)
         received = received_command[0]
         assert received is not None
-        np.testing.assert_array_equal(received, command)
+        d = received.to_positions_dict()
+        for i, name in enumerate(received.joint_names):
+            assert d[name] == pytest.approx(float(command[i]))
         
         pusher.close()
 
@@ -781,8 +780,7 @@ def test_zmq_push_pull_mimic_hal_with_observation_socket():
             if self.command_socket.poll(timeout_ms, zmq.POLLIN):
                 command_parts = self.command_socket.recv_multipart(zmq.NOBLOCK)
                 from hal.client.data_structures.hardware import JointCommand
-                command = JointCommand.from_bytes(command_parts)
-                return command.joint_positions
+                return JointCommand.from_bytes(command_parts)
             return None
         
         def close(self):
@@ -823,9 +821,10 @@ def test_zmq_push_pull_mimic_hal_with_observation_socket():
         from hal.client.data_structures.hardware import JointCommand
         command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
         joint_cmd = JointCommand(
-            joint_positions=command,
+            _joint_positions=command,
             timestamp_ns=time.time_ns(),
             observation_timestamp_ns=time.time_ns(),
+            joint_names=KRABBY_QUAD_DEFINITION.get_joint_names(),
         )
         command_parts = joint_cmd.to_bytes()
         pusher.send_multipart(command_parts)  # Blocking send
@@ -833,6 +832,8 @@ def test_zmq_push_pull_mimic_hal_with_observation_socket():
         server_thread.join(timeout=2.0)
         received = received_command[0]
         assert received is not None
-        np.testing.assert_array_equal(received, command)
+        d = received.to_positions_dict()
+        for i, name in enumerate(received.joint_names):
+            assert d[name] == pytest.approx(float(command[i]))
         
         pusher.close()

@@ -54,6 +54,7 @@ def test_jetson_hal_server_initialization(hal_server_config, jetson_observation_
         hal_server_config,
         observation_dimensions=obs_dims,
         action_dim=action_dim,
+        robot_definition=KRABBY_HEX_DEFINITION,
     )
     hal_server.initialize()
 
@@ -93,6 +94,7 @@ def test_jetson_hal_server_observation_publishing(
         hal_server_config,
         observation_dimensions=obs_dims,
         action_dim=action_dim,
+        robot_definition=KRABBY_HEX_DEFINITION,
     )
     hal_server.initialize()
 
@@ -150,6 +152,7 @@ def test_jetson_hal_server_joint_command_application(
         hal_server_config,
         observation_dimensions=obs_dims,
         action_dim=action_dim,
+        robot_definition=KRABBY_HEX_DEFINITION,
     )
     hal_server.initialize()
 
@@ -196,10 +199,7 @@ def test_jetson_hal_server_joint_command_application(
     server_thread.join(timeout=2.0)
     received = received_command[0]
     assert received is not None, "Server did not receive command"
-    # get_joint_command now returns JointCommand instance
-    assert hasattr(received, 'joint_positions')
-    # Should receive the mapped joint positions (12 DOF)
-    np.testing.assert_array_equal(received.joint_positions, joint_positions.joint_positions)
+    assert received.to_positions_dict() == joint_positions.to_positions_dict()
 
     hal_client.close()
     hal_server.close()
@@ -217,6 +217,7 @@ def test_jetson_hal_server_end_to_end_with_game_loop(
         hal_server_config,
         observation_dimensions=obs_dims,
         action_dim=action_dim,
+        robot_definition=KRABBY_HEX_DEFINITION,
     )
     hal_server.initialize()
 
@@ -377,6 +378,7 @@ def test_jetson_hal_server_network_communication(jetson_observation_dims):
         server_config,
         observation_dimensions=obs_dims,
         action_dim=action_dim,
+        robot_definition=KRABBY_HEX_DEFINITION,
     )
     server.initialize()
 
@@ -477,6 +479,7 @@ def test_jetson_hal_server_camera_error_handling(
         hal_server_config,
         observation_dimensions=obs_dims,
         action_dim=action_dim,
+        robot_definition=KRABBY_HEX_DEFINITION,
     )
     hal_server.initialize()
 
@@ -500,9 +503,15 @@ def test_jetson_hal_server_camera_error_handling(
 
 
 @pytest.mark.jetson
-def test_jetson_hal_server_state_error_handling(hal_server_config):
+def test_jetson_hal_server_state_error_handling(hal_server_config, jetson_observation_dims):
     """Test error handling when state source fails."""
-    hal_server = JetsonHalServer(hal_server_config)
+    obs_dims, action_dim = jetson_observation_dims
+    hal_server = JetsonHalServer(
+        hal_server_config,
+        observation_dimensions=obs_dims,
+        action_dim=action_dim,
+        robot_definition=KRABBY_HEX_DEFINITION,
+    )
     hal_server.initialize()
 
     hal_server.set_debug(True)
@@ -531,6 +540,7 @@ def test_jetson_hal_server_sustained_bidirectional_messaging(
         hal_server_config,
         observation_dimensions=obs_dims,
         action_dim=action_dim,
+        robot_definition=KRABBY_HEX_DEFINITION,
     )
     hal_server.initialize()
 
@@ -702,6 +712,7 @@ def test_jetson_hal_server_joystick_input_integration(
         hal_server_config,
         observation_dimensions=obs_dims,
         action_dim=action_dim,
+        robot_definition=KRABBY_HEX_DEFINITION,
     )
     hal_server.initialize()
 
@@ -796,6 +807,7 @@ def test_jetson_hal_server_cleanup(hal_server_config, jetson_observation_dims):
         hal_server_config,
         observation_dimensions=obs_dims,
         action_dim=action_dim,
+        robot_definition=KRABBY_HEX_DEFINITION,
     )
     hal_server.initialize()
 

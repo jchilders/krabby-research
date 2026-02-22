@@ -120,11 +120,13 @@ def test_get_joint_command():
 
         # Send command as JointCommand (multipart message)
         from hal.client.data_structures.hardware import JointCommand
+        from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
         command = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)  # 18 DOF (hexapod)
         joint_cmd = JointCommand(
-            joint_positions=command,
+            _joint_positions=command,
             timestamp_ns=time.time_ns(),
             observation_timestamp_ns=time.time_ns(),
+            joint_names=KRABBY_HEX_DEFINITION.get_joint_names(),
         )
         command_parts = joint_cmd.to_bytes()
         pusher.send_multipart(command_parts)
@@ -132,10 +134,9 @@ def test_get_joint_command():
         server_thread.join(timeout=2.0)
         received = received_command[0]
         assert received is not None
-        # get_joint_command now returns JointCommand instance
-        assert hasattr(received, 'joint_positions')
-        assert hasattr(received, 'timestamp_ns')
-        np.testing.assert_array_equal(received.joint_positions, command)
+        d = received.to_positions_dict()
+        for i, name in enumerate(received.joint_names):
+            assert d[name] == pytest.approx(float(command[i]))
 
         pusher.close()
 

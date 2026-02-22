@@ -93,6 +93,7 @@ def main():
             hal_server_config,
             observation_dimensions=observation_dimensions,
             action_dim=model_definition.action_dim,
+            robot_definition=robot_definition,
         )
         hal_server.initialize()
 

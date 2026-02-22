@@ -241,9 +241,9 @@ class ParkourInferenceClient(HalClient):
         self.put_joint_command(joint_cmd)
         
         # Update mapper with previous action for next step (model uses observation_joint_count)
-        n = self.observation_dimensions.observation_joint_count
-        action_array = joint_cmd.joint_positions[:n]
-        self._mapper.set_previous_action(action_array)
+        self._mapper.set_previous_action(
+            joint_cmd.to_positions_dict(), joint_cmd.joint_names
+        )
         
         return True
 

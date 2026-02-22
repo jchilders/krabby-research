@@ -80,10 +80,12 @@ class ParkourLocomotionToHWMapper:
         joint_positions = np.zeros(n, dtype=np.float32)
         joint_positions[: len(model_joints)] = model_joints
 
+        joint_names = self.robot_definition.get_joint_names()
         return JointCommand(
-            joint_positions=joint_positions,
+            _joint_positions=joint_positions,
             timestamp_ns=model_output.timestamp_ns,
             observation_timestamp_ns=observation_timestamp_ns,
+            joint_names=joint_names,
         )
     
     def _map_to_krabby_joints(self, model_action: np.ndarray) -> np.ndarray:

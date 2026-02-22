@@ -8,7 +8,7 @@ via model_definition.get_observation_dimensions(robot_definition).obs_dim in com
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -28,10 +28,27 @@ class RobotDefinition:
     legs: Tuple[str, ...]
     joint_types: Tuple[str, ...]
     observation_scaling: ObservationScalingDefinition
+    mcu_joints: Tuple[str, ...] = ()  # Joint names for the MCU (subset of get_joint_names()); empty if no MCU
 
     def get_total_joint_count(self) -> int:
         """Total DOF from topology (len(legs) × len(joint_types))."""
         return len(self.legs) * len(self.joint_types)
+
+    def get_joint_names(self) -> Tuple[str, ...]:
+        """Ordered joint names for this robot: '{leg}_{joint_type}' per leg, then per joint type.
+        Same order as get_joint_index(leg, joint_type) and as policy action/observation vectors.
+        Use this tuple (not dict key iteration) whenever converting between dict[str, float] and
+        ordered sequences (arrays, packets) so indices stay in sync.
+        """
+        return tuple(
+            f"{leg}_{joint_type}"
+            for leg in self.legs
+            for joint_type in self.joint_types
+        )
+
+    def get_mcu_joints(self) -> Tuple[str, ...]:
+        """Joint names for the MCU. Empty if this robot has no MCU mapping."""
+        return self.mcu_joints
 
     def get_observation_joint_count(self) -> int:
         """Observation joint count (matches total joint count)."""

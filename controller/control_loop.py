@@ -221,9 +221,10 @@ class ControlLoop:
             # Send command via HAL client
             self._hal_client.put_joint_command(joint_cmd)
             
+            d = joint_cmd.to_positions_dict()
             logger.debug(
                 f"Sent joint command: "
-                f"joint_range=[{joint_cmd.joint_positions.min():.3f}, {joint_cmd.joint_positions.max():.3f}]"
+                f"joint_range=[{min(d.values()):.3f}, {max(d.values()):.3f}]"
             )
         except Exception as e:
             logger.error(f"Error processing gamepad state: {e}", exc_info=True)
@@ -246,9 +247,10 @@ class ControlLoop:
             # Send command via HAL client
             self._hal_client.put_joint_command(joint_cmd)
             
+            d = joint_cmd.to_positions_dict()
             logger.debug(
                 f"Sent joint command: "
-                f"joint_range=[{joint_cmd.joint_positions.min():.3f}, {joint_cmd.joint_positions.max():.3f}]"
+                f"joint_range=[{min(d.values()):.3f}, {max(d.values()):.3f}]"
             )
         except Exception as e:
             logger.error(f"Error processing gamepad state: {e}", exc_info=True)

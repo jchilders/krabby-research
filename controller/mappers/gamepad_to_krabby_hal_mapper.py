@@ -18,6 +18,7 @@ import numpy as np
 
 from controller.input.state import ControllerState, LegIdentifier
 from hal.client.data_structures.hardware import JointCommand
+from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 logger = logging.getLogger(__name__)
 
@@ -219,11 +220,12 @@ class GamepadToKrabbyHALMapper:
             # (In a full implementation, this would track the last received observation timestamp)
             observation_timestamp_ns = current_timestamp_ns
         
-        # Create joint command
+        # Create joint command (canonical order from robot definition)
         joint_cmd = JointCommand(
-            joint_positions=joint_positions,
+            _joint_positions=joint_positions,
             timestamp_ns=current_timestamp_ns,
             observation_timestamp_ns=observation_timestamp_ns,
+            joint_names=KRABBY_HEX_DEFINITION.get_joint_names(),
         )
         
         logger.debug(

@@ -16,7 +16,7 @@ class HardwareObservations:
     """Hardware observation data.
     
     Contains all raw sensor data from the hardware:
-    - Joint positions (12 DOF)
+    - Joint positions (robot-dependent DOF)
     - Camera data (2x RGB)
     - Depth map
     - Confidence map
@@ -28,7 +28,7 @@ class HardwareObservations:
     - Scalar values (timestamp, camera dimensions) are copied
     """
     
-    joint_positions: np.ndarray  # Shape: (12,), dtype: float32
+    joint_positions: np.ndarray  # Shape: (n,) n = robot joint count, dtype: float32
     rgb_camera_1: np.ndarray  # Shape: (camera_height, camera_width, 3), dtype: uint8 or float32
     rgb_camera_2: np.ndarray  # Shape: (camera_height, camera_width, 3), dtype: uint8 or float32
     depth_map: np.ndarray  # Shape: (camera_height, camera_width), dtype: float32
@@ -41,9 +41,9 @@ class HardwareObservations:
     base_ang_vel_b: np.ndarray  # Shape: (3,), dtype: float32 - Base angular velocity (body frame)
     base_lin_vel_b: np.ndarray  # Shape: (3,), dtype: float32 - Base linear velocity (body frame)
     base_quat_w: np.ndarray  # Shape: (4,), dtype: float32 - Base quaternion (world frame, x,y,z,w)
-    joint_velocities: np.ndarray  # Shape: (12,), dtype: float32 - Joint velocities
+    joint_velocities: np.ndarray  # Shape: (n,) n = robot joint count, dtype: float32 - Joint velocities
     contact_forces: np.ndarray  # Shape: (5,), dtype: float32 - Contact forces (5 values from environment, normalized to [-0.5, 0.5])
-    previous_action: np.ndarray  # Shape: (12,), dtype: float32 - Previous joint command
+    previous_action: np.ndarray  # Shape: (n,) n = robot joint count, dtype: float32 - Previous joint command
     
     # Environment-specific fields (for matching environment observation manager)
     delta_yaw: float = 0.0  # Target yaw - current yaw (from parkour_event)
@@ -61,10 +61,10 @@ class HardwareObservations:
         if self.camera_height <= 0 or self.camera_width <= 0:
             raise ValueError(f"Camera dimensions must be positive, got {self.camera_height}x{self.camera_width}")
         
-        # Validate joint positions
-        if self.joint_positions.shape != (12,):
+        # Validate joint positions (1D, length 1–24 per robot)
+        if self.joint_positions.ndim != 1 or self.joint_positions.size < 1 or self.joint_positions.size > 24:
             raise ValueError(
-                f"joint_positions shape {self.joint_positions.shape} != (12,)"
+                f"joint_positions must be 1D with size in [1, 24], got shape {self.joint_positions.shape}"
             )
         if self.joint_positions.dtype != np.float32:
             # Convert to float32 if needed (creates copy)
@@ -106,12 +106,16 @@ class HardwareObservations:
             raise ValueError(f"base_lin_vel_b shape {self.base_lin_vel_b.shape} != (3,)")
         if self.base_quat_w.shape != (4,):
             raise ValueError(f"base_quat_w shape {self.base_quat_w.shape} != (4,)")
-        if self.joint_velocities.shape != (12,):
-            raise ValueError(f"joint_velocities shape {self.joint_velocities.shape} != (12,)")
+        if self.joint_velocities.ndim != 1 or self.joint_velocities.size != self.joint_positions.size:
+            raise ValueError(
+                f"joint_velocities must be 1D and same length as joint_positions ({self.joint_positions.size}), got shape {self.joint_velocities.shape}"
+            )
         if self.contact_forces.shape != (5,):
             raise ValueError(f"contact_forces shape {self.contact_forces.shape} != (5,)")
-        if self.previous_action.shape != (12,):
-            raise ValueError(f"previous_action shape {self.previous_action.shape} != (12,)")
+        if self.previous_action.ndim != 1 or self.previous_action.size != self.joint_positions.size:
+            raise ValueError(
+                f"previous_action must be 1D and same length as joint_positions ({self.joint_positions.size}), got shape {self.previous_action.shape}"
+            )
         
         # Ensure all are float32
         if self.base_ang_vel_b.dtype != np.float32:
@@ -431,33 +435,41 @@ class JointCommand:
     - timestamp is always copied (scalar)
     """
     
-    joint_positions: np.ndarray  # Shape: (n,) per robot definition, dtype: float32
+    _joint_positions: np.ndarray  # Shape: (n,) per robot definition, dtype: float32; use to_positions_dict() to read
     timestamp_ns: int  # Timestamp when command was created
     observation_timestamp_ns: int  # Timestamp of the observation this command responds to.
         # Used for tracking command-observation relationships and measuring round-trip latency.
-    
+    joint_names: tuple[str, ...]  # Names in same order as positions; keeps dict view in sync.
+
     def __post_init__(self) -> None:
         """Validate desired joint positions."""
         if self.timestamp_ns < 0:
             raise ValueError("timestamp_ns must be non-negative")
-        
-        if self.joint_positions.ndim != 1 or self.joint_positions.size == 0:
+        if len(self.joint_names) != self._joint_positions.size:
             raise ValueError(
-                f"joint_positions must be 1D non-empty, got shape {self.joint_positions.shape}"
+                f"joint_names length {len(self.joint_names)} must match joint_positions size {self._joint_positions.size}"
             )
-        if self.joint_positions.size > 24:
+        if self._joint_positions.ndim != 1 or self._joint_positions.size == 0:
             raise ValueError(
-                f"joint_positions length {self.joint_positions.size} exceeds max 24"
+                f"joint_positions must be 1D non-empty, got shape {self._joint_positions.shape}"
             )
-        if self.joint_positions.dtype != np.float32:
+        if self._joint_positions.size > 24:
+            raise ValueError(
+                f"joint_positions length {self._joint_positions.size} exceeds max 24"
+            )
+        if self._joint_positions.dtype != np.float32:
             # Convert to float32 if needed (creates copy)
-            self.joint_positions = self.joint_positions.astype(np.float32)
+            object.__setattr__(self, "_joint_positions", self._joint_positions.astype(np.float32))
         
         # Runtime type validation: Validate values (check for NaN/Inf)
-        if not np.isfinite(self.joint_positions).all():
-            nan_count = np.isnan(self.joint_positions).sum()
-            inf_count = np.isinf(self.joint_positions).sum()
+        if not np.isfinite(self._joint_positions).all():
+            nan_count = np.isnan(self._joint_positions).sum()
+            inf_count = np.isinf(self._joint_positions).sum()
             raise ValueError(f"Invalid joint_positions values: {nan_count} NaN, {inf_count} Inf")
+    
+    def to_positions_dict(self) -> dict[str, float]:
+        """Return joint positions as a dict keyed by this command's joint names (canonical order)."""
+        return dict(zip(self.joint_names, (float(x) for x in self._joint_positions)))
     
     def to_bytes(self) -> list[bytes]:
         """Serialize to bytes for ZMQ transport.
@@ -470,13 +482,14 @@ class JointCommand:
             List of bytes for multipart ZMQ message
         """
         # Ensure array is contiguous and correct dtype
-        joint_pos = np.ascontiguousarray(self.joint_positions, dtype=np.float32)
+        joint_pos = np.ascontiguousarray(self._joint_positions, dtype=np.float32)
         
         # Create metadata
         metadata = {
             "joint_positions": {"shape": list(joint_pos.shape), "dtype": str(joint_pos.dtype)},
             "timestamp_ns": self.timestamp_ns,
             "observation_timestamp_ns": self.observation_timestamp_ns,
+            "joint_names": list(self.joint_names),
         }
         
         return [
@@ -508,10 +521,18 @@ class JointCommand:
         joint_pos = np.frombuffer(parts[1], dtype=np.dtype(metadata["joint_positions"]["dtype"]))
         joint_pos = joint_pos.reshape(tuple(metadata["joint_positions"]["shape"])).astype(np.float32)
         
+        if "joint_names" not in metadata:
+            raise ValueError("wire format must include joint_names (list of strings in same order as joint_positions)")
+        joint_names = tuple(metadata["joint_names"])
+        if len(joint_names) != joint_pos.size:
+            raise ValueError(
+                f"metadata joint_names length {len(joint_names)} must match array size {joint_pos.size}"
+            )
         return cls(
-            joint_positions=joint_pos,
+            _joint_positions=joint_pos,
             timestamp_ns=metadata.get("timestamp_ns", 0),
             observation_timestamp_ns=metadata.get("observation_timestamp_ns", 0),
+            joint_names=joint_names,
         )
     
 

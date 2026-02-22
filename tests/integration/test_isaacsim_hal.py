@@ -12,16 +12,18 @@ import numpy as np
 import pytest
 import torch
 
-from hal.server.isaac import IsaacSimHalServer
+from hal.client.data_structures.hardware import JointCommand
 from hal.client.client import HalClient
 from hal.client.config import HalClientConfig
 from hal.server import HalServerConfig
 from hal.client.observation.types import NavigationCommand
+from hal.server.isaac import IsaacSimHalServer
+from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+from hal.server.isaac.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
+from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
 from compute.testing.inference_test_runner import InferenceTestRunner
-from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
-from hal.server.isaac.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
 
 _TEST_OBS_DIMS = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
     KRABBY_QUAD_DEFINITION
@@ -218,12 +220,12 @@ def test_isaacsim_hal_server_joint_command_application(mock_isaac_env, hal_serve
     # apply_command() calls get_joint_command(timeout_ms=poll_delay_ms) internally
     # Server defaults to 12 joints (quad) when robot_definition is None
     def mock_get_joint_command(timeout_ms=10):
-        from hal.client.data_structures.hardware import JointCommand
         command_array = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF (quad)
         return JointCommand(
-            joint_positions=command_array,
+            _joint_positions=command_array,
             timestamp_ns=time.time_ns(),
             observation_timestamp_ns=time.time_ns(),
+            joint_names=KRABBY_QUAD_DEFINITION.get_joint_names(),
         )
 
     hal_server.get_joint_command = mock_get_joint_command
@@ -432,12 +434,12 @@ def test_isaacsim_hal_server_behavior_matches_baseline(mock_isaac_env, hal_serve
     # Mock command reception to return JointCommand instance
     # apply_command() calls get_joint_command(timeout_ms=poll_delay_ms) internally
     def mock_get_joint_command(timeout_ms=10):
-        from hal.client.data_structures.hardware import JointCommand
         command_array = np.array([0.0] * 18, dtype=np.float32)  # 18 joints for hexapod
         return JointCommand(
-            joint_positions=command_array,
+            _joint_positions=command_array,
             timestamp_ns=time.time_ns(),
             observation_timestamp_ns=time.time_ns(),
+            joint_names=KRABBY_HEX_DEFINITION.get_joint_names(),
         )
 
     hal_server.get_joint_command = mock_get_joint_command
@@ -513,10 +515,7 @@ def test_isaacsim_hal_server_with_real_zmq_communication(mock_isaac_env, hal_ser
     server_thread.join(timeout=2.0)
     received = received_command[0]
     assert received is not None
-    # get_joint_command now returns JointCommand instance
-    assert hasattr(received, 'joint_positions')
-    # Compare against mapped joint positions (12 DOF), matching original action array
-    np.testing.assert_array_equal(received.joint_positions, joint_positions.joint_positions)
+    assert received.to_positions_dict() == joint_positions.to_positions_dict()
 
     hal_client.close()
     hal_server.close()

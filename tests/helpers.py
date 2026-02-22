@@ -9,6 +9,7 @@ from hal.client.data_structures.hardware import (
     HardwareObservations,
     JointCommand,
 )
+from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
 
 
 def create_dummy_hw_obs(
@@ -62,8 +63,9 @@ def create_dummy_joint_positions(
         timestamp_ns = time.time_ns()
     
     return JointCommand(
-        joint_positions=np.zeros(12, dtype=np.float32),
+        _joint_positions=np.zeros(12, dtype=np.float32),
         timestamp_ns=timestamp_ns,
         observation_timestamp_ns=timestamp_ns,
+        joint_names=KRABBY_QUAD_DEFINITION.get_joint_names(),
     )
 

@@ -14,4 +14,8 @@ KRABBY_HEX_DEFINITION = RobotDefinition(
         joint_vel=0.05,
         base_lin_vel=2.0,
     ),
+    # 6 joints the MCU drives (FL/FR): names match firmware slots LHY, RHY, LHL, LKL, RHL, RKL
+    mcu_joints=(
+        "FL_hip_yaw", "FR_hip_yaw", "FL_hip_pitch", "FL_knee", "FR_hip_pitch", "FR_knee",
+    ),
 )

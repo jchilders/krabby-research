@@ -40,14 +40,18 @@ class HWObservationsToParkourMapper:
         self._episode_step = 0
         self._previous_action = np.zeros(d.observation_joint_count, dtype=np.float32)
     
-    def set_previous_action(self, action: np.ndarray) -> None:
+    def set_previous_action(
+        self, action: dict[str, float], joint_names: tuple[str, ...]
+    ) -> None:
         """Set the previous action for history tracking.
 
         Args:
-            action: Previous joint command (truncated/padded to observation_joint_count)
+            action: Previous joint command by name.
+            joint_names: Order of joints (used to fill _previous_action).
         """
-        n = min(self._dims.observation_joint_count, len(action))
-        self._previous_action[:n] = action[:n]
+        n = min(self._dims.observation_joint_count, len(joint_names))
+        for i in range(n):
+            self._previous_action[i] = action.get(joint_names[i], 0.0)
     
     def map(self, hw_obs: HardwareObservations, nav_cmd: Optional[NavigationCommand] = None, observation_type: Type[ParkourObservation] = TeacherObservation) -> ParkourObservation:
         """Map hardware observations to model format.

@@ -192,7 +192,8 @@ class HalClient:
             raise ValueError(f"cmd must be JointCommand, got {type(cmd)}")
 
         # Validate joint positions
-        if cmd.joint_positions is None or len(cmd.joint_positions) == 0:
+        cmd_dict = cmd.to_positions_dict()
+        if not cmd_dict:
             raise ValueError("Cannot send empty joint positions")
 
         # Serialize and send as multipart message (metadata + array)
@@ -201,11 +202,11 @@ class HalClient:
 
         # Debug logging (conditional to avoid overhead when disabled)
         if self._debug_enabled:
+            vals = list(cmd_dict.values())
             logger.debug(
                 f"[ZMQ SEND] command: payload_size={sum(len(p) for p in command_parts)} bytes, "
-                f"joint_positions_shape={cmd.joint_positions.shape}, "
-                f"joint_positions_dtype={cmd.joint_positions.dtype}, "
-                f"min={cmd.joint_positions.min():.3f}, max={cmd.joint_positions.max():.3f}, "
+                f"joint_positions_len={len(vals)}, "
+                f"min={min(vals):.3f}, max={max(vals):.3f}, "
                 f"timestamp_ns={cmd.timestamp_ns}"
             )
 

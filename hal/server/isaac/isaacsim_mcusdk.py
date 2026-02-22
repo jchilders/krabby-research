@@ -5,92 +5,84 @@ to IsaacSim environments.
 """
 
 import logging
-
-import numpy as np
+import statistics
 
 from hal.client.data_structures.hardware import JointCommand
 
 logger = logging.getLogger(__name__)
 
+# Only expose these names for "from hal.server.isaac.isaacsim_mcusdk import *"
+__all__ = ["IsaacSimMCUSDK"]
+
 
 class IsaacSimMCUSDK:
     """Standardized SDK interface for applying joint commands to IsaacSim.
 
-    
+    Accepts JointCommand (same as Jetson MCU SDK). Order and timestamps come from the command.
+
     The SDK handles:
-    - Processing normalized PWM values (-1.0 to 1.0) from JointCommand
+    - Processing normalized PWM values (-1.0 to 1.0) from the command
     - Logging commands in Isaac's preferred joint format
-    - Validating joint command structure
+    - Validating that command has expected keys
     """
+
     def __init__(self):
         logger.info("IsaacSimMCUSDK initialized")
-    
+
     def apply_command(
         self,
         command: JointCommand,
         num_envs: int = 1,
-    ) -> np.ndarray:
+    ) -> dict[str, float]:
         """Apply joint command to IsaacSim environment.
-        
-        Processes normalized PWM values from JointCommand for prismatic joints.
+
+        Processes normalized PWM values from the command for prismatic joints.
         Logs the command in Isaac's preferred joint format for debugging.
-        
+
         Args:
-            command: JointCommand containing normalized joint positions (-1.0 to 1.0)
-                     representing PWM values for 12 joints (quadruped) or 18 joints (hexapod)
-            num_envs: Number of environments (currently unused, kept for API compatibility)
-            
+            command: JointCommand with positions keyed by joint names (from to_positions_dict()).
+                     Values are normalized PWM: -1.0 to 1.0 (0.0 = hold).
+            num_envs: Number of environments (currently unused, kept for API compatibility).
+
         Returns:
-            Normalized joint positions as numpy array.
-            Shape: (n,) per robot definition (12 quad, 18 hex).
-            Values are normalized PWM values: -1.0 (move in at max speed) to 1.0 (move out at max speed),
-            with 0.0 meaning keep joint in current position.
-            
+            Command as dict (command.to_positions_dict()) so the caller can convert to array/tensor.
+
         Raises:
-            ValueError: If command is invalid.
+            ValueError: If command is empty or invalid.
         """
-        
-        # Extract joint positions array from command (length from robot definition)
-        command_array = command.joint_positions
-        
-        if command_array.ndim != 1 or command_array.size == 0:
-            raise ValueError(
-                f"joint_positions must be 1D non-empty, got shape {command_array.shape}"
-            )
-        
+        cmd_dict = command.to_positions_dict()
+        if not cmd_dict:
+            raise ValueError("command must be non-empty")
+
+        order = command.joint_names
+        present = [name for name in order if name in cmd_dict]
+        if not present:
+            raise ValueError("command must contain at least one joint name from robot definition")
+
         # TODO: Add actual IsaacSim code to control prismatic joints here.
         # IsaacSim uses prismatic joints with position/velocity targets.
-        # The normalized PWM values (-1.0 to 1.0) in command_array should be
+        # The normalized PWM values (-1.0 to 1.0) in command should be
         # converted to appropriate position/velocity targets for the prismatic joints.
-        
+
         # Log command in Isaac's preferred joint format
-        # Format: joint positions as comma-separated values with joint names
-        # For hexapod: 6 legs × 3 DOF (hip_yaw, hip_pitch, knee)
-        # Joint order: FL, FR, ML, MR, RL, RR (each leg has 3 joints)
-        joint_names = [
-            "FL_hip_yaw", "FL_hip_pitch", "FL_knee",
-            "FR_hip_yaw", "FR_hip_pitch", "FR_knee",
-            "ML_hip_yaw", "ML_hip_pitch", "ML_knee",
-            "MR_hip_yaw", "MR_hip_pitch", "MR_knee",
-            "RL_hip_yaw", "RL_hip_pitch", "RL_knee",
-            "RR_hip_yaw", "RR_hip_pitch", "RR_knee",
-        ]
-        
-        # Log joint positions in Isaac's preferred format
+        # Format: joint positions as comma-separated name=value pairs.
+        # Order follows robot definition (e.g. hexapod: FL, FR, ML, MR, RL, RR, 3 DOF per leg).
         joint_values_str = ", ".join(
-            f"{name}={val:.4f}" for name, val in zip(joint_names, command_array)
+            f"{name}={cmd_dict[name]:.4f}" for name in order if name in cmd_dict
         )
         logger.debug(
-            f"IsaacSimMCUSDK: Applying joint command (timestamp_ns={command.timestamp_ns}, "
-            f"observation_timestamp_ns={command.observation_timestamp_ns}): "
+            f"IsaacSimMCUSDK: Applying joint command "
+            f"(timestamp_ns={command.timestamp_ns}, observation_timestamp_ns={command.observation_timestamp_ns}): "
             f"{joint_values_str}"
         )
-        
+
         # Log summary statistics
-        logger.debug(
-            f"IsaacSimMCUSDK: Joint command stats - "
-            f"min={command_array.min():.4f}, max={command_array.max():.4f}, "
-            f"mean={command_array.mean():.4f}, std={command_array.std():.4f}"
-        )
-        
-        return command_array
+        vals = [cmd_dict[name] for name in order if name in cmd_dict]
+        if vals:
+            stdev = statistics.stdev(vals) if len(vals) > 1 else 0.0
+            logger.debug(
+                f"IsaacSimMCUSDK: Joint command stats - "
+                f"min={min(vals):.4f}, max={max(vals):.4f}, mean={statistics.mean(vals):.4f}, std={stdev:.4f}"
+            )
+
+        return cmd_dict

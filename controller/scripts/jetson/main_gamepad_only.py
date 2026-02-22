@@ -90,6 +90,7 @@ def main() -> None:
             config,
             observation_dimensions=observation_dimensions,
             action_dim=action_dim,
+            robot_definition=KRABBY_HEX_DEFINITION,
             mcu_port=args.mcu_port,
             mcu_baud=args.mcu_baud,
             mcu_auto_connect=True,

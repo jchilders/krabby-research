@@ -207,10 +207,11 @@ class HalServerBase:
             if self._debug_enabled:
                 round_trip_latency_ns = command.timestamp_ns - command.observation_timestamp_ns
                 round_trip_latency_ms = round_trip_latency_ns / 1e6
+                d = command.to_positions_dict()
+                vals = list(d.values())
+                min_max = f"min={min(vals):.3f}, max={max(vals):.3f}, " if vals else ""
                 logger.debug(
-                    f"[ZMQ RECV] command: shape={command.joint_positions.shape}, "
-                    f"dtype={command.joint_positions.dtype}, "
-                    f"min={command.joint_positions.min():.3f}, max={command.joint_positions.max():.3f}, "
+                    f"[ZMQ RECV] command: shape=({len(vals)},), dtype=float32, {min_max}"
                     f"timestamp_ns={command.timestamp_ns}, "
                     f"observation_timestamp_ns={command.observation_timestamp_ns}, "
                     f"round_trip_latency_ms={round_trip_latency_ms}"
