@@ -157,6 +157,7 @@ def main():
     from hal.server import HalServerConfig
     from hal.server.isaac import IsaacSimHalServer
     from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+    from hal.server.isaac.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
     from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
     from compute.parkour.inference_client import ParkourInferenceClient
     from compute.parkour.policy_interface import ModelWeights
@@ -215,7 +216,14 @@ def main():
     )
 
     # Create and initialize HAL server
-    robot_definition = KRABBY_QUAD_DEFINITION
+    # Select robot definition based on task name
+    # Unitree Go2 tasks require num_prop=53 to match checkpoint
+    if "Unitree-Go2" in args.task or "unitree_go2" in args.task.lower():
+        robot_definition = UNITREE_GO2_DEFINITION
+        logger.info(f"Using Unitree Go2 robot definition (num_prop=53) for task: {args.task}")
+    else:
+        robot_definition = KRABBY_QUAD_DEFINITION
+        logger.info(f"Using Krabby Quad robot definition for task: {args.task}")
     model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
     observation_dimensions = model_definition.get_observation_dimensions(robot_definition)
     hal_server = IsaacSimHalServer(hal_server_config, robot_definition, env=env, observation_dimensions=observation_dimensions)
