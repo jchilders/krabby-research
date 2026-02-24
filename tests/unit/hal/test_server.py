@@ -120,13 +120,13 @@ def test_get_joint_command():
 
         # Send command as JointCommand (multipart message)
         from hal.client.data_structures.hardware import JointCommand
-        from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+        from tests.helpers import TEST_HEX_DEFINITION
         command = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)  # 18 DOF (hexapod)
         joint_cmd = JointCommand(
             _joint_positions=command,
             timestamp_ns=time.time_ns(),
             observation_timestamp_ns=time.time_ns(),
-            joint_names=KRABBY_HEX_DEFINITION.get_joint_names(),
+            joint_names=TEST_HEX_DEFINITION.get_joint_names(),
         )
         command_parts = joint_cmd.to_bytes()
         pusher.send_multipart(command_parts)

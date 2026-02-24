@@ -27,6 +27,19 @@ TEST_QUAD_DEFINITION = RobotDefinition(
     ),
 )
 
+# Test-only robot definition (hex, 18 joints). Avoids importing hal.server.jetson
+# so hal-server publish tests can run without ZED/camera/compute deps.
+TEST_HEX_DEFINITION = RobotDefinition(
+    name="test_hex",
+    legs=("FL", "FR", "ML", "MR", "RL", "RR"),
+    joint_types=("hip_yaw", "hip_pitch", "knee"),
+    observation_scaling=ObservationScalingDefinition(
+        base_ang_vel=0.25,
+        joint_vel=0.05,
+        base_lin_vel=2.0,
+    ),
+)
+
 
 def create_dummy_hw_obs(
     camera_height: int = 480,
