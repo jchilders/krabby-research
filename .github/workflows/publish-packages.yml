@@ -31,7 +31,7 @@ jobs:
       - name: Install build and publish tools
         run: |
           python -m pip install --upgrade pip
-          pip install build twine
+          pip install build twine wheel setuptools
 
       - name: Determine package from tag
         id: pkg
@@ -41,30 +41,37 @@ jobs:
             echo "path=hal/server/isaac" >> $GITHUB_OUTPUT
             echo "deps=hal/client hal/server compute/parkour" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/hal/server/isaac/" >> $GITHUB_OUTPUT
+            echo "build_self_first=" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == hal-server-jetson-v* ]]; then
             echo "path=hal/server/jetson" >> $GITHUB_OUTPUT
             echo "deps=hal/client hal/server compute/parkour" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/hal/" >> $GITHUB_OUTPUT
+            echo "build_self_first=" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == hal-client-v* ]]; then
             echo "path=hal/client" >> $GITHUB_OUTPUT
             echo "deps=hal/server compute/parkour" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/hal/" >> $GITHUB_OUTPUT
+            echo "build_self_first=hal/client" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == hal-server-v* ]]; then
             echo "path=hal/server" >> $GITHUB_OUTPUT
             echo "deps=" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/hal/test_server.py tests/unit/hal/test_zmq_push_pull.py" >> $GITHUB_OUTPUT
+            echo "build_self_first=" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == compute-parkour-v* ]]; then
             echo "path=compute/parkour" >> $GITHUB_OUTPUT
             echo "deps=hal/client" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/test_compute_parkour_policy.py" >> $GITHUB_OUTPUT
+            echo "build_self_first=" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == controller-v* ]]; then
             echo "path=controller" >> $GITHUB_OUTPUT
             echo "deps=hal/client" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/controller/" >> $GITHUB_OUTPUT
+            echo "build_self_first=" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == hal-tools-v* ]]; then
             echo "path=hal/tools" >> $GITHUB_OUTPUT
             echo "deps=hal/client hal/server" >> $GITHUB_OUTPUT
             echo "test_path=" >> $GITHUB_OUTPUT
+            echo "build_self_first=" >> $GITHUB_OUTPUT
           else
             echo "Unrecognized tag: $TAG"
             exit 1
@@ -72,17 +79,21 @@ jobs:
 
       - name: Build and install dependency wheels
         run: |
+          if [[ -n "${{ steps.pkg.outputs.build_self_first }}" ]]; then
+            echo "Building and installing ${{ steps.pkg.outputs.build_self_first }} first..."
+            cd "${{ steps.pkg.outputs.build_self_first }}" && python -m build --wheel --no-isolation && pip install dist/*.whl && cd ../..
+          fi
           for dep in ${{ steps.pkg.outputs.deps }}; do
             if [[ -n "$dep" ]]; then
               echo "Building and installing $dep..."
-              cd "$dep" && python -m build --wheel && pip install dist/*.whl && cd ../..
+              cd "$dep" && python -m build --wheel --no-isolation && pip install dist/*.whl && cd ../..
             fi
           done
 
       - name: Build package wheel
         run: |
           cd "${{ steps.pkg.outputs.path }}"
-          python -m build --wheel
+          python -m build --wheel --no-isolation
 
       - name: Install package and dev deps for testing
         run: |
