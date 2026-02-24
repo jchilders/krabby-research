@@ -86,15 +86,16 @@ run_one_job() {
   cd "$ROOT/$path" && python -m build --wheel --no-isolation && cd "$ROOT"
 
   echo "Installing package and test deps..."
-  cd "$ROOT/$path" && pip install dist/*.whl && pip install pytest pytest-cov keyboard pyserial
-  if [[ -n "$test_path" ]]; then
-    pip install torch scipy
+  cd "$ROOT/$path" && pip install dist/*.whl && pip install pytest pytest-cov pytest-timeout keyboard pyserial
+  if [[ "$key" == hal-server-isaac ]] || [[ "$key" == hal-server-jetson ]] || [[ "$key" == compute-parkour ]] || [[ "$key" == hal-client ]]; then
+    pip install torch --index-url https://download.pytorch.org/whl/cpu
+    pip install scipy
   fi
   cd "$ROOT"
 
   if [[ -n "$test_path" ]]; then
-    echo "Running tests: pytest $test_path -v"
-    pytest $test_path -v
+    echo "Running tests: pytest $test_path -v --timeout=300"
+    pytest $test_path -v --timeout=300
   else
     echo "No tests for $key (test_path empty)."
   fi

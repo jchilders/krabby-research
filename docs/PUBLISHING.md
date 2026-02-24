@@ -107,20 +107,3 @@ git push origin <tag-name>     # e.g. git push origin controller-v0.1.0
 
 To tag a specific commit: `git tag <tag-name> <commit-hash>`. List tags: `git tag` or `git tag -l 'controller-v*'`.
 
-### (c) How to test locally without PyPI
-
-Use the script (see [Testing locally (same as CI)](#testing-locally-same-as-ci)) or run the same steps manually for one package (e.g. controller). The commands below match the workflow (use `--no-isolation` for build):
-
-```bash
-python3.12 -m venv testenv && source testenv/bin/activate
-
-pip install --upgrade pip build pytest pytest-cov keyboard pyserial torch scipy
-
-cd hal/client && python -m build --wheel --no-isolation && pip install dist/*.whl && cd ../..
-
-cd controller && python -m build --wheel --no-isolation && pip install dist/*.whl && cd ..
-
-pytest tests/unit/controller/ -v
-```
-
-If this passes, the workflow’s build and test steps will work for that package. No tag or PyPI needed.

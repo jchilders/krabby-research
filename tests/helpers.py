@@ -9,7 +9,23 @@ from hal.client.data_structures.hardware import (
     HardwareObservations,
     JointCommand,
 )
-from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+from hal.server.robot_definition import (
+    ObservationScalingDefinition,
+    RobotDefinition,
+)
+
+# Test-only robot definition (quad, 12 joints). Avoids importing hal.server.isaac
+# so hal-server publish tests can run without torch.
+TEST_QUAD_DEFINITION = RobotDefinition(
+    name="test_quad",
+    legs=("FL", "FR", "RL", "RR"),
+    joint_types=("hip_yaw", "hip_pitch", "knee"),
+    observation_scaling=ObservationScalingDefinition(
+        base_ang_vel=0.25,
+        joint_vel=0.05,
+        base_lin_vel=2.0,
+    ),
+)
 
 
 def create_dummy_hw_obs(
@@ -66,6 +82,6 @@ def create_dummy_joint_positions(
         _joint_positions=np.zeros(12, dtype=np.float32),
         timestamp_ns=timestamp_ns,
         observation_timestamp_ns=timestamp_ns,
-        joint_names=KRABBY_QUAD_DEFINITION.get_joint_names(),
+        joint_names=TEST_QUAD_DEFINITION.get_joint_names(),
     )
 

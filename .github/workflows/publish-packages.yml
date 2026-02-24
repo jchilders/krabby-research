@@ -19,6 +19,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,36 +39,43 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           if [[ "$TAG" == hal-server-isaac-v* ]]; then
+            echo "pkg_key=hal-server-isaac" >> $GITHUB_OUTPUT
             echo "path=hal/server/isaac" >> $GITHUB_OUTPUT
             echo "deps=hal/client hal/server compute/parkour" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/hal/server/isaac/" >> $GITHUB_OUTPUT
             echo "build_self_first=" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == hal-server-jetson-v* ]]; then
+            echo "pkg_key=hal-server-jetson" >> $GITHUB_OUTPUT
             echo "path=hal/server/jetson" >> $GITHUB_OUTPUT
             echo "deps=hal/client hal/server compute/parkour" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/hal/" >> $GITHUB_OUTPUT
             echo "build_self_first=" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == hal-client-v* ]]; then
+            echo "pkg_key=hal-client" >> $GITHUB_OUTPUT
             echo "path=hal/client" >> $GITHUB_OUTPUT
             echo "deps=hal/server compute/parkour" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/hal/" >> $GITHUB_OUTPUT
             echo "build_self_first=hal/client" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == hal-server-v* ]]; then
+            echo "pkg_key=hal-server" >> $GITHUB_OUTPUT
             echo "path=hal/server" >> $GITHUB_OUTPUT
             echo "deps=" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/hal/test_server.py tests/unit/hal/test_zmq_push_pull.py" >> $GITHUB_OUTPUT
             echo "build_self_first=" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == compute-parkour-v* ]]; then
+            echo "pkg_key=compute-parkour" >> $GITHUB_OUTPUT
             echo "path=compute/parkour" >> $GITHUB_OUTPUT
             echo "deps=hal/client" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/test_compute_parkour_policy.py" >> $GITHUB_OUTPUT
             echo "build_self_first=" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == controller-v* ]]; then
+            echo "pkg_key=controller" >> $GITHUB_OUTPUT
             echo "path=controller" >> $GITHUB_OUTPUT
             echo "deps=hal/client" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/controller/" >> $GITHUB_OUTPUT
             echo "build_self_first=" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == hal-tools-v* ]]; then
+            echo "pkg_key=hal-tools" >> $GITHUB_OUTPUT
             echo "path=hal/tools" >> $GITHUB_OUTPUT
             echo "deps=hal/client hal/server" >> $GITHUB_OUTPUT
             echo "test_path=" >> $GITHUB_OUTPUT
@@ -76,6 +84,12 @@ jobs:
             echo "Unrecognized tag: $TAG"
             exit 1
           fi
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: publish-pip-${{ runner.os }}-py312-${{ steps.pkg.outputs.pkg_key }}
 
       - name: Build and install dependency wheels
         run: |
@@ -99,16 +113,18 @@ jobs:
         run: |
           cd "${{ steps.pkg.outputs.path }}"
           pip install dist/*.whl
-          pip install pytest pytest-cov keyboard pyserial
-          if [[ -n "${{ steps.pkg.outputs.test_path }}" ]]; then
-            pip install torch scipy
+          pip install pytest pytest-cov pytest-timeout keyboard pyserial
+          PKG_KEY="${{ steps.pkg.outputs.pkg_key }}"
+          if [[ "$PKG_KEY" == hal-server-isaac ]] || [[ "$PKG_KEY" == hal-server-jetson ]] || [[ "$PKG_KEY" == compute-parkour ]] || [[ "$PKG_KEY" == hal-client ]]; then
+            pip install torch --index-url https://download.pytorch.org/whl/cpu
+            pip install scipy
           fi
           cd -
 
       - name: Run tests
         if: steps.pkg.outputs.test_path != ''
         run: |
-          pytest ${{ steps.pkg.outputs.test_path }} -v
+          pytest ${{ steps.pkg.outputs.test_path }} -v --timeout=300
 
       - name: Publish to PyPI
         env:
