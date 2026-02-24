@@ -47,7 +47,7 @@ jobs:
             echo "test_path=tests/unit/hal/" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == hal-client-v* ]]; then
             echo "path=hal/client" >> $GITHUB_OUTPUT
-            echo "deps=" >> $GITHUB_OUTPUT
+            echo "deps=hal/server compute/parkour" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/hal/" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == hal-server-v* ]]; then
             echo "path=hal/server" >> $GITHUB_OUTPUT
@@ -89,6 +89,9 @@ jobs:
           cd "${{ steps.pkg.outputs.path }}"
           pip install dist/*.whl
           pip install pytest pytest-cov keyboard pyserial
+          if [[ -n "${{ steps.pkg.outputs.test_path }}" ]]; then
+            pip install torch scipy
+          fi
           cd -
 
       - name: Run tests
