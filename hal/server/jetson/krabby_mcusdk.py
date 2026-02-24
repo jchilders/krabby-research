@@ -97,7 +97,7 @@ class KrabbyMCUSDK:
         jog = {}
         for name in self._mcu_joints:
             rad = cmd_dict.get(name, 0.0)
-            fw = _hal_to_firmware_name(name) hal/server/jetson/robot_definition_krabby_hex.py
+            fw = _hal_to_firmware_name(name)
 
             jog[fw] = 0 if abs(rad) <= NEUTRAL_RAD_THRESHOLD else _rad_to_pwm(rad)
         self._mcu.send_commands_jog(jog)

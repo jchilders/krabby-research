@@ -6,6 +6,7 @@ and handles various inputs correctly. They test the model independently of HAL.
 
 import os
 import time
+import warnings
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -86,11 +87,12 @@ class TestParkourPolicyModel:
         For now, we'll test that we can load the checkpoint and run inference.
         
         """
-        # Find checkpoint path (tries multiple locations)
+        # Find checkpoint path (tries multiple locations); skip if unset or missing
         try:
             checkpoint_path = _find_checkpoint_path()
         except FileNotFoundError as e:
-            pytest.fail(str(e))
+            warnings.warn("PARKOUR_CHECKPOINT_PATH not set or checkpoint missing; skipping.", UserWarning)
+            pytest.skip(str(e))
 
         # Use Unitree Go2 robot so observation dimensions match the checkpoint (num_prop=53, obs_dim=753).
         observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(

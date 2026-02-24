@@ -7,8 +7,6 @@ from typing import Dict, Optional
 from serial.tools import list_ports
 from firmware.interfaces.joint_telemetry import JointTelemetry
 
-import keyboard
-
 # --- LOGGING SETUP ---
 logging.basicConfig(
     level=logging.INFO,
