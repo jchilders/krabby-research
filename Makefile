@@ -137,6 +137,13 @@ install-editable:
 	@$(PIP) install -e compute/parkour
 	@echo "Packages installed in editable mode. Edit files in hal/*/, controller/, and compute/*/ directories."
 
+# Run the same build-and-test steps as the publish workflow for a package (or all).
+# Usage: make test-publish-job PKG=hal-client  or  make test-publish-job PKG=all
+# Package keys: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson
+.PHONY: test-publish-job
+test-publish-job:
+	@./scripts/test-publish-job.sh $(PKG)
+
 # Build cache directory (for heavy downloads like Isaac Lab, reused across Docker builds)
 BUILD_CACHE := $(CURDIR)/.build-cache
 ISAACLAB_CACHE := $(BUILD_CACHE)/isaaclab

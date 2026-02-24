@@ -1,17 +1,8 @@
 # Publishing to PyPI
 
-Short checklist for publishing **krabby‑*** packages to PyPI using the existing GitHub Actions workflow.
+This document is a short checklist for publishing **krabby‑*** packages to PyPI using the GitHub Actions workflow. The workflow runs when you push a version tag; it builds the package, runs that package’s tests, then uploads the wheel to PyPI.
 
-TODO: Complete credential setup (PyPI token or Trusted Publishing) to enable uploads.
-
-**Workflow file:** `.github/workflows/publish-packages.yml`
-
-**The workflow has been dry‑run** by pushing a tag and verifying all steps pass except the final PyPI upload (which fails until credentials are added) :  [Example run](https://github.com/flliver/krabby-research/actions/runs/21758235909)
-  ```
-  git tag controller-v0.1.0 
-  git push origin controller-v0.1.0
-  ``` 
- 
+**Workflow:** [.github/workflows/publish-packages.yml](../.github/workflows/publish-packages.yml)
 
 ## Tag patterns and package names
 
@@ -29,7 +20,7 @@ TODO: Complete credential setup (PyPI token or Trusted Publishing) to enable upl
 
 ## Account
 
-- Create an account at [pypi.org](https://pypi.org).
+- Create an account at [pypi.org](https://pypi.org) if you do not have one.
 
 ## Token
 
@@ -58,6 +49,31 @@ TODO: Complete credential setup (PyPI token or Trusted Publishing) to enable upl
   2. `compute-parkour-v*`, `controller-v*`, `hal-tools-v*`
   3. `hal-server-isaac-v*`, `hal-server-jetson-v*`
 
+## Testing locally (same as CI)
+
+To run the same build-and-test steps as the publish workflow locally (no tag or PyPI):
+
+1. **One-time setup:** From the repo root, create a venv, activate it, and install build and test deps:
+   ```bash
+   python3 -m venv testenv && source testenv/bin/activate   # Windows: testenv\Scripts\activate
+   pip install --upgrade pip build pytest pytest-cov keyboard pyserial torch scipy
+   ```
+
+2. **Test a single package** (e.g. before pushing a tag):
+   ```bash
+   ./scripts/test-publish-job.sh <package-key>
+   ```
+   Or via Make (with venv active or `testenv` present): `make test-publish-job PKG=<package-key>`.
+
+   `<package-key>` is one of: `hal-client`, `hal-server`, `compute-parkour`, `controller`, `hal-tools`, `hal-server-isaac`, `hal-server-jetson`.
+
+3. **Test all seven packages:**
+   ```bash
+   ./scripts/test-publish-job.sh all
+   ```
+   Or: `make test-publish-job PKG=all`.
+
+This mirrors the workflow’s build and test steps only; it does not upload to PyPI. See appendix (c) for a manual controller example.
 
 ## First-time: reserve package names
 
@@ -93,18 +109,18 @@ To tag a specific commit: `git tag <tag-name> <commit-hash>`. List tags: `git ta
 
 ### (c) How to test locally without PyPI
 
-From the repo root, run the same steps the workflow runs for one package (e.g. controller):
+Use the script (see [Testing locally (same as CI)](#testing-locally-same-as-ci)) or run the same steps manually for one package (e.g. controller). The commands below match the workflow (use `--no-isolation` for build):
 
 ```bash
 python3.12 -m venv testenv && source testenv/bin/activate
 
-pip install --upgrade pip && pip install build twine pytest pytest-cov
+pip install --upgrade pip build pytest pytest-cov keyboard pyserial torch scipy
 
-cd hal/client && python -m build --wheel && pip install dist/*.whl && cd ../..
+cd hal/client && python -m build --wheel --no-isolation && pip install dist/*.whl && cd ../..
 
-cd controller && python -m build --wheel && pip install dist/*.whl && cd ..
+cd controller && python -m build --wheel --no-isolation && pip install dist/*.whl && cd ..
 
 pytest tests/unit/controller/ -v
 ```
 
-If this passes, the workflow’s build and test steps will work. No tag or PyPI needed.
+If this passes, the workflow’s build and test steps will work for that package. No tag or PyPI needed.
