@@ -18,7 +18,7 @@ import numpy as np
 
 from controller.input.state import ControllerState, LegIdentifier
 from hal.client.data_structures.hardware import JointCommand
-from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 logger = logging.getLogger(__name__)
 
