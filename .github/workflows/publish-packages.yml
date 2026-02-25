@@ -1,5 +1,6 @@
 # Publish krabby-* packages to PyPI on version tags.
 # Tag format: <package-prefix>-v<version> (e.g. hal-client-v0.1.0, controller-v0.1.0).
+# Version is derived from the tag and written into the package's pyproject.toml before build.
 # Runs tests for the package before uploading. Install internal krabby-* deps from repo wheels.
 # Requires: PYPI_API_TOKEN in repo secrets (or configure Trusted Publishing).
 
@@ -38,6 +39,7 @@ jobs:
         id: pkg
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
+          echo "version=${TAG#*-v}" >> $GITHUB_OUTPUT
           if [[ "$TAG" == hal-server-isaac-v* ]]; then
             echo "pkg_key=hal-server-isaac" >> $GITHUB_OUTPUT
             echo "path=hal/server/isaac" >> $GITHUB_OUTPUT
@@ -103,6 +105,12 @@ jobs:
               cd "$dep" && python -m build --wheel --no-isolation && pip install dist/*.whl && cd ../..
             fi
           done
+
+      - name: Set package version from tag
+        run: |
+          VERSION="${{ steps.pkg.outputs.version }}"
+          PATH_PKG="${{ steps.pkg.outputs.path }}"
+          sed -i 's/^version = ".*"/version = "'"$VERSION"'"/' "$PATH_PKG/pyproject.toml"
 
       - name: Build package wheel
         run: |
