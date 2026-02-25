@@ -73,7 +73,7 @@ To run the same build-and-test steps as the publish workflow locally (no tag or 
    ```
    Or: `make test-publish-job PKG=all`.
 
-This mirrors the workflow’s build and test steps only; it does not upload to PyPI. See appendix (c) for a manual controller example.
+This mirrors the workflow’s build and test steps only; it does not upload to PyPI.
 
 ## First-time: reserve package names
 
