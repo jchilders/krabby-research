@@ -1,0 +1,6 @@
+# Only include Python package; exclude Arduino C++ and venv
+include *.py
+recursive-include interfaces *.py
+prune arduino
+prune venv
+prune Task2_SixAxis

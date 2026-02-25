@@ -3,10 +3,10 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "krabby-hal-server-jetson"
+name = "krabby-firmware"
 version = "0.1.0"
-description = "HAL server implementation for Jetson with integrated inference"
-readme = "README.md"
+description = "Python SDK for Krabby MCU (e.g. Arduino) communication"
+readme = "SETUP.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [
@@ -22,24 +22,17 @@ classifiers = [
 ]
 
 dependencies = [
-    "krabby-firmware>=0.1.0",
-    "krabby-hal-server>=0.1.0",
-    "krabby-hal-client>=0.1.0",
-    "krabby-compute-parkour>=0.1.0",
-    "numpy>=1.24.0",
-    "scipy>=1.10.0",
+    "pyserial>=3.5",
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
+menu = [
+    "keyboard",
 ]
 
 [project.scripts]
-krabby-hal-server-jetson = "hal.server.jetson.main:main"
+krabby-firmware = "firmware.__main__:main"
 
 [tool.setuptools]
-package-dir = {"hal" = "../.."}
-packages = ["hal.server.jetson"]
-
+package-dir = {"firmware" = ".", "firmware.interfaces" = "interfaces"}
+packages = ["firmware", "firmware.interfaces"]

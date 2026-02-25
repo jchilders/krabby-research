@@ -9,6 +9,8 @@ Two-process E2E on Jetson Orin: **Pro Controller** → **ControlLoop (INPUT_CONT
 - Server **exits with error** if firmware or MCU not available.
 - When using the helper scripts to start the container, the scripts check that the MCU device (default `/dev/ttyACM0`) exists before starting; if not, they exit with a clear error. For a different port, set `KRABBY_MCU_PORT` (e.g. `export KRABBY_MCU_PORT=/dev/ttyUSB0`).
 
+It is recommended to use a Python virtual environment to isolate dependencies: create with `python -m venv .venv`, then activate with `source .venv/bin/activate` (Linux/macOS) or `.venv\Scripts\activate` (Windows).
+
 ## Communication
 
 - **Server:** Binds ZMQ — PUB observation, PULL command (e.g. `tcp://*:6001`, `tcp://*:6002`).
@@ -30,10 +32,19 @@ Wait for: `Gamepad-only HAL server initialized (ZMQ TCP). ... Waiting for joint 
 
 ### Terminal 2: Control-loop client
 
-From **krabby-research**:
+Run the client in either of these ways:
+
+**From repo (krabby-research):**
 
 ```bash
 python controller/scripts/jetson/run_gamepad_to_krabby_client.py
+```
+
+**Alternative (pip):** In an activated virtual environment, install and run the client via the published package:
+
+```bash
+pip install krabby-controller
+krabby-uno
 ```
 
 Explicit endpoints: `--observation_endpoint tcp://localhost:6001 --command_endpoint tcp://localhost:6002`. Optional: `--device-id N`, `--rate` (Hz).
@@ -94,12 +105,14 @@ docker run --rm --privileged --runtime=nvidia \
 
 #### Terminal 2: Control-loop client (on host)
 
-On the Orin host (with repo and venv), connect the Pro Controller to the host and run:
+On the Orin host (with a venv activated), connect the Pro Controller to the host and run the client. You can use the repo script or the pip-installed `krabby-uno` (after `pip install krabby-controller` in that venv):
 
 ```bash
 python controller/scripts/jetson/run_gamepad_to_krabby_client.py \
   --observation_endpoint tcp://localhost:6001 --command_endpoint tcp://localhost:6002
 ```
+
+Or with the pip client: `krabby-uno --observation_endpoint tcp://localhost:6001 --command_endpoint tcp://localhost:6002` (defaults are already these endpoints).
 
 The client talks to the server in the container via localhost.
 

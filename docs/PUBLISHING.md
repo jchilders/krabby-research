@@ -8,6 +8,7 @@ This document is a short checklist for publishing **krabby‑*** packages to PyP
 
 | Tag pattern | PyPI package |
 | :-- | :-- |
+| `firmware-v*` | krabby-firmware |
 | `hal-client-v*` | krabby-hal-client |
 | `hal-server-v*` | krabby-hal-server |
 | `compute-parkour-v*` | krabby-compute-parkour |
@@ -45,7 +46,7 @@ This document is a short checklist for publishing **krabby‑*** packages to PyP
   - `git tag hal-client-v0.1.0 && git push origin hal-client-v0.1.0`
 - CI builds the package, runs its tests, then uploads to PyPI.
 - **Publish in dependency order** so dependents can install from PyPI:
-  1. `hal-client-v*`, `hal-server-v*` (no internal deps)
+  1. `hal-client-v*`, `hal-server-v*`, `firmware-v*` (no internal deps)
   2. `compute-parkour-v*`, `controller-v*`, `hal-tools-v*`
   3. `hal-server-isaac-v*`, `hal-server-jetson-v*`
 
@@ -65,9 +66,9 @@ To run the same build-and-test steps as the publish workflow locally (no tag or 
    ```
    Or via Make (with venv active or `testenv` present): `make test-publish-job PKG=<package-key>`.
 
-   `<package-key>` is one of: `hal-client`, `hal-server`, `compute-parkour`, `controller`, `hal-tools`, `hal-server-isaac`, `hal-server-jetson`.
+   `<package-key>` is one of: `hal-client`, `hal-server`, `compute-parkour`, `controller`, `hal-tools`, `hal-server-isaac`, `hal-server-jetson`, `firmware`.
 
-3. **Test all seven packages:**
+3. **Test all eight packages:**
    ```bash
    ./scripts/test-publish-job.sh all
    ```
@@ -79,7 +80,7 @@ This mirrors the workflow’s build and test steps only; it does not upload to P
 
 - Reserve each name on PyPI so no one else can use it.
 - Either create a minimal release (e.g. push a tag and let CI publish) or use the PyPI web UI to create the project.
-- Package names to reserve: `krabby-hal-client`, `krabby-hal-server`, `krabby-compute-parkour`, `krabby-controller`, `krabby-hal-tools`, `krabby-hal-server-isaac`, `krabby-hal-server-jetson`.
+- Package names to reserve: `krabby-hal-client`, `krabby-hal-server`, `krabby-compute-parkour`, `krabby-controller`, `krabby-hal-tools`, `krabby-hal-server-isaac`, `krabby-hal-server-jetson`, `krabby-firmware`.
 
 ---
 

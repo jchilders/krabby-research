@@ -3,7 +3,7 @@
 # Usage: from repo root with venv activated:
 #   ./scripts/test-publish-job.sh <package-key>
 #   ./scripts/test-publish-job.sh all
-# Package keys: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson
+# Package keys: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson, firmware
 # Does not upload to PyPI.
 
 set -e
@@ -28,9 +28,15 @@ run_one_job() {
       ;;
     hal-server-jetson)
       path="hal/server/jetson"
-      deps="hal/client hal/server compute/parkour"
+      deps="hal/client hal/server compute/parkour firmware"
       build_self_first=""
       test_path="tests/unit/hal/"
+      ;;
+    firmware)
+      path="firmware"
+      deps=""
+      build_self_first=""
+      test_path=""
       ;;
     hal-client)
       path="hal/client"
@@ -64,7 +70,7 @@ run_one_job() {
       ;;
     *)
       echo "Unknown package key: $key"
-      echo "Valid keys: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson"
+      echo "Valid keys: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson, firmware"
       exit 1
       ;;
   esac
@@ -104,14 +110,14 @@ run_one_job() {
 }
 
 if [[ "$1" == "all" ]]; then
-  for key in hal-server-isaac hal-server-jetson hal-client hal-server compute-parkour controller hal-tools; do
+  for key in firmware hal-server-isaac hal-server-jetson hal-client hal-server compute-parkour controller hal-tools; do
     run_one_job "$key"
   done
 elif [[ -n "$1" ]]; then
   run_one_job "$1"
 else
   echo "Usage: $0 <package-key|all>"
-  echo "  package-key: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson"
-  echo "  all: run all seven jobs in sequence"
+  echo "  package-key: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson, firmware"
+  echo "  all: run all eight jobs in sequence"
   exit 1
 fi

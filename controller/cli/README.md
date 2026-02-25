@@ -14,7 +14,7 @@ Use `pip install -e ./hal/client` and `pip install -e ./controller` for editable
 ## krabby-uno (real HAL)
 
 1. **Start the HAL server** (one terminal, from `krabby-research`):
-
+   E.g. 
    ```bash
    python controller/scripts/jetson/main_gamepad_only.py
    ```
