@@ -118,6 +118,7 @@ jobs:
           if [[ "$PKG_KEY" == hal-server-isaac ]] || [[ "$PKG_KEY" == hal-server-jetson ]] || [[ "$PKG_KEY" == compute-parkour ]] || [[ "$PKG_KEY" == hal-client ]] || [[ "$PKG_KEY" == controller ]]; then
             pip install torch --index-url https://download.pytorch.org/whl/cpu
             pip install scipy
+            pip install pyyaml
           fi
           cd -
 
