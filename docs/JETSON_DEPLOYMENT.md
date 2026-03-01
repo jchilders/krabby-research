@@ -197,89 +197,21 @@ After the next reboot, the service will set max power mode and lock clocks. To r
 
 ### 6. ZED 2i Camera (Optional — Host Verification)
 
-Optional: verify the ZED 2i on the host before using it in the container. The Docker image includes the ZED SDK; production uses the camera from inside the container.
+Optional: verify the ZED 2i on the host before using it in the container.
 
-- **L4T match**: Use a ZED SDK build that matches L4T (check with `cat /etc/nv_tegra_release`). Get the installer from [Stereolabs ZED SDK](https://www.stereolabs.com/developers/release/) for your L4T (e.g. L4T 36.4 → `ZED_SDK_Tegra_L4T36.4_*.zstd.run`).
-- **Install**: `sudo apt-get install -y zstd` then run the downloaded `.zstd.run` installer; accept the license.
-- **Verify USB**: `lsusb | grep -i zed` — device must appear. Use a USB 3.0 port; if missing, try `sudo nvpmodel -m 0` and `sudo jetson_clocks` (see [§5](#5-power-and-performance-mode-optional)).
+1. **Match L4T**: Check your L4T version (`cat /etc/nv_tegra_release`) and download the matching ZED SDK installer from [Stereolabs](https://www.stereolabs.com/developers/release/) (e.g. L4T 36.4 → `ZED_SDK_Tegra_L4T36.4_*.zstd.run`).
+2. **Install**: `sudo apt-get install -y zstd` then run the `.zstd.run` installer.
+3. **Verify USB**: `lsusb | grep -i zed` — device must appear on a USB 3.0 port.
+4. **Run diagnostics**: `ZED_Diagnostic -c -d`
 
-#### 6.2 Run ZED Explorer for verification
-
-ZED Explorer is a GUI application. Use one of these options:
-
-**Option A — X11 forwarding over SSH (no physical display)**
-
-From your local machine, connect with X11 forwarding:
+**If the SDK can’t open the camera** (appears in `lsusb` but diagnostic fails), install udev rules:
 
 ```bash
-ssh -X jetson
-# Or: ssh -X <username>@<hostname-or-ip>
+echo ‘SUBSYSTEM==”usb”, ATTR{idVendor}==”2b03”, MODE=”0666”’ | sudo tee /etc/udev/rules.d/99-slabs.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-On the Jetson, run:
-
-```bash
-ZED_Explorer
-```
-
-Ensure an X server is running on your local machine (e.g. XQuartz on macOS, VcXsrv or Windows X Server on Windows, or a native X/Wayland session on Linux). If you get “cannot open display”, X11 forwarding is not in use or your local DISPLAY is not set.
-
-**Option B — Direct display on the Jetson**
-
-Connect a monitor, keyboard, and mouse to the Jetson. Log in locally (or over SSH and set `DISPLAY=:0` if a user is logged in on the console). Then run:
-
-```bash
-ZED_Explorer
-```
-
-#### 6.3 ZED Diagnostic (CLI troubleshooting)
-
-**ZED_Diagnostic** runs hardware and system checks without a GUI. Useful when you don’t have a display or want quick feedback in the terminal.
-
-```bash
-# Command-line mode, auto-run diagnostics (camera, GPU, SDK, CUDA)
-ZED_Diagnostic -c -d
-```
-
-Other useful flags (run `ZED_Diagnostic -h` for full list):
-
-- `-c` — Command-line mode (no GUI)
-- `-d` — Auto-start diagnostics
-- `-nrlo` — Download and optimize NEURAL depth model
-- `-nrlo_plus` — NEURAL PLUS depth model
-- `-aio` — Download and optimize all AI models
-
-If the camera is detected, the diagnostic will report device info and run tests. If it fails to open the camera, the output helps narrow down USB vs SDK vs driver issues.
-
-**Troubleshooting**
-
-- **Camera not in lsusb**: Try another USB 3.0 port; if the board is in low power mode, run `sudo nvpmodel -m 0` and `sudo jetson_clocks` (see [§5](#5-power-and-performance-mode-optional)).
-- **ZED appears in lsusb but ZED Explorer stays on “waiting for camera”**: The kernel sees the USB device, but the SDK cannot open it—usually due to **udev permissions**. You can run `sudo ZED_Explorer` as a quick test (root can access the device); for a proper fix, install udev rules so the ZED (vendor ID `2b03`) is accessible without root:
-  1. **Option A — From the ZED SDK installer** (if you have the `.run` file): extract and install the rules:  
-     `bash ./ZED_SDK_*.run --tar -x 99-slabs.rules`  
-     (The file is extracted into the current directory; ignore tar “Not found” messages if `99-slabs.rules` appears.) Then:  
-     `sudo mv 99-slabs.rules /etc/udev/rules.d/`  
-     `sudo udevadm control --reload-rules && sudo udevadm trigger`
-  2. **Option B — Manual udev rule**: create `/etc/udev/rules.d/99-slabs.rules` with:
-     ```
-     # Stereolabs ZED (2b03:f880 ZED 2i, 2b03:f881 HID interface)
-     SUBSYSTEM=="usb", ATTR{idVendor}=="2b03", MODE="0666"
-     ```
-     Then run:  
-     `sudo udevadm control --reload-rules && sudo udevadm trigger`  
-  Unplug and replug the ZED, or reboot (`sudo reboot`), then try ZED Explorer again.
-- **Still “waiting for camera” after udev and reboot:**  
-  1. **Confirm it’s permissions**: Run `sudo ZED_Explorer`. If it works with sudo, the SDK still can’t open the device as your user.  
-  2. **Override with a simple rule**: The installer’s `99-slabs.rules` may use a group your user isn’t in. Replace or add a rule that opens the device to everyone:  
-     `echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2b03", MODE="0666"' | sudo tee /etc/udev/rules.d/99-slabs.rules`  
-     Then `sudo udevadm control --reload-rules && sudo udevadm trigger`, unplug and replug the ZED, and try again without sudo.  
-  3. **Check device permissions**: After replug, run `ls -l /dev/bus/usb/001/` and find the two ZED devices (e.g. `008` and `009`). They should show `crw-rw-rw-` (0666) or your user in the group. If they’re `root:root` and `crw-r--r--`, the rule didn’t apply.  
-  4. **Check kernel/driver messages**: Run `dmesg -w`, then unplug and replug the ZED. Look for `uvcvideo` or `usb` errors or “Permission denied”.  
-  5. **SDK vs L4T**: Ensure your ZED SDK build matches L4T (e.g. 5.2 for L4T 36.4). Mismatches can cause the SDK to fail to open the camera even when USB is visible. See [Stereolabs ZED SDK releases](https://www.stereolabs.com/developers/release/) and the [Stereolabs forum](https://community.stereolabs.com/) for your board and JetPack version.
-- **ZED_Diagnostic segfaults (Segmentation fault / core dumped) during or after the USB camera step:** The diagnostic can crash on Jetson when probing the USB camera (known with some SDK/JetPack combinations). Try: (1) **Connect the ZED directly** to a Jetson USB 3.0 port (no hub). (2) **Skip the diagnostic** and test with `ZED_Explorer` or your application—the camera may work even if the diagnostic crashes. (3) If you need a working diagnostic, try another ZED SDK version (e.g. 5.1.x) matching your L4T. (4) Report to [Stereolabs support](https://community.stereolabs.com/) with your JetPack/L4T version, ZED SDK version, and the stack trace.
-- **ZED_Diagnostic reports “USB Camera Diagnostic: Failed – No Camera detected” but lsusb shows the ZED (and Argus errors appear):** The SDK may be failing to open the UVC device or may be affected by Jetson’s camera stack. Try: (1) **Connect the ZED directly** to a Jetson USB 3.0 port (no hub)—some hubs cause enumeration or descriptor issues. (2) **Check the video device**: run `ls -l /dev/video*` and `v4l2-ctl --list-devices`; the ZED 2i (2b03:f880) should appear as a UVC device (e.g. `/dev/video0`). If there is no video node or permissions are wrong, the SDK cannot open it. (3) **Restart the Argus daemon**: `sudo systemctl restart nvargus-daemon` (sometimes needed after hotplug). (4) If it still fails, the Argus “EndOfFile” messages may be a known Jetson/USB interaction—report to [Stereolabs support](https://community.stereolabs.com/) or [support@stereolabs.com](mailto:support@stereolabs.com) with your JetPack/L4T and ZED SDK versions.
-- **Permission denied on device**: Ensure your user is in the appropriate group (e.g. `plugdev`) or run with `sudo` only for testing. If the problem persists, install the udev rules above.
-- **ZED_Explorer not found**: Ensure the ZED SDK installer completed and that your shell’s `PATH` includes the ZED install directory (the installer usually adds it; log out and back in if needed).
+Unplug and replug the ZED, then retry.
 
 ## Obtaining the Docker Image
 
@@ -323,9 +255,7 @@ docker run --rm --runtime=nvidia \
 
 ### With ZED 2i Camera
 
-The ZED SDK talks to the camera over **USB** (libusb), not only V4L2. The container needs access to the USB device (e.g. under `/dev/bus/usb`). Stereolabs recommend `--privileged` and `-v /dev:/dev` for ZED in Docker; `--device /dev/video0` alone is usually **not** enough.
-
-If using the ZED 2i camera, run with full device access:
+The ZED SDK accesses the camera over USB (libusb). `--device /dev/video0` alone is not enough; the container requires `-v /dev:/dev` and `--privileged`:
 
 ```bash
 docker run --rm --runtime=nvidia \
@@ -338,28 +268,24 @@ docker run --rm --runtime=nvidia \
     --control_rate 100.0
 ```
 
-**Note**: The ZED SDK is installed automatically in the Docker image during build using **silent mode** (license is accepted non-interactively). The camera will be detected automatically if connected. `-v /dev:/dev` exposes all host devices (including `/dev/bus/usb`); `--privileged` allows the container to open them.
-
-**NEURAL depth models**: The ZED SDK downloads and optimizes NEURAL/NEURAL PLUS depth models on first use, which can add several minutes to startup and will prompt *"Do you want to download and optimize the NEURAL Depth models now? [Y/n]"* if run interactively. To avoid that delay and prompt on every deployment, see [Pre-optimizing ZED NEURAL depth models](#pre-optimizing-zed-neural-depth-models) below.
+**Note**: On first use the ZED SDK downloads and optimizes NEURAL depth models, adding several minutes to startup. Pre-optimize using the section below to avoid this.
 
 ### Pre-optimizing ZED NEURAL depth models
 
-Optimization is **GPU-specific** and must run on the target Jetson. To bake optimized models into your workflow so they are reused and you don’t wait (or get prompted) at first runtime:
+Optimization is GPU-specific and must run on the target Jetson. Use a persistent volume to avoid re-downloading on every run:
 
-**Option A — One-time setup with a persistent volume (recommended)**
-
-1. Create a host directory (or Docker named volume) to hold ZED resources, e.g. `~/zed-resources`.
-2. Run the image once with GPU and device access, mounting that directory over the ZED resources path, and run the diagnostic to download and optimize NEURAL (and optionally NEURAL PLUS) depth models:
+1. Run the image once to download and optimize the models:
 
    ```bash
-   docker run --rm --runtime=nvidia -v /dev:/dev --privileged \
+   yes | docker run --rm --runtime=nvidia -v /dev:/dev --privileged \
        -v ~/zed-resources:/usr/local/zed/resources \
-       krabby-locomotion:latest \
+       -i krabby-locomotion:latest \
        bash -c "ZED_Diagnostic -nrlo && ZED_Diagnostic -nrlo_plus"
    ```
 
-   If the tool prompts *"Do you want to download and optimize... [Y/n]"*, answer `Y`. To run fully non-interactively (e.g. from a script), pipe `yes` from the host: `yes | docker run --rm --runtime=nvidia -v /dev:/dev --privileged -v ~/zed-resources:/usr/local/zed/resources -i krabby-locomotion:latest bash -c "ZED_Diagnostic -nrlo && ZED_Diagnostic -nrlo_plus"`. Optimization can take several minutes.
-3. When running your app, mount the same directory so the SDK uses the pre-optimized models:
+   This takes several minutes. The models are saved to `~/zed-resources` on the host.
+
+2. Mount the same directory on subsequent runs:
 
    ```bash
    docker run --rm --runtime=nvidia \
@@ -370,10 +296,6 @@ Optimization is **GPU-specific** and must run on the target Jetson. To bake opti
        --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
        --inference_device cuda --control_rate 100.0
    ```
-
-**Option B — Build image on Jetson and optimize in a post-build step**
-
-If you build the image on the Jetson (not cross-build from x86), you can run a one-off container that performs the optimization and then commit the updated `/usr/local/zed` (or just the resources) into a new image layer. Because Docker build does not expose the GPU to `RUN` by default, the optimization cannot be done in a normal `RUN` in the Dockerfile; it must be done in a container that has `--runtime=nvidia`, then commit. Alternatively, use a [BuildKit GPU mount](https://github.com/NVIDIA/nvidia-container-toolkit/blob/main/docs/buildkit.md) if your setup supports it.
 
 ### In-Process Mode (Default - Recommended for Production)
 
