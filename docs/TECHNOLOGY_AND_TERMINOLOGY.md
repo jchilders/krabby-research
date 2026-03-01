@@ -336,7 +336,7 @@ The project implements a Hardware Abstraction Layer (HAL) using ZMQ for communic
 
 5. **Jetson HAL Server**:
    - Runs on Jetson Orin hardware (JetPack/L4T - see Embedded Hardware section for details)
-   - Publishes real camera frames (ZED Mini) and robot state
+   - Publishes real camera frames (ZED 2i) and robot state
    - Receives joint commands for real actuators
    - Mirrors the IsaacSim server interface for seamless switching
 

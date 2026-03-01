@@ -73,7 +73,7 @@ All containers use inproc ZMQ for communication within the same process. The par
 │  │                                                                   │  │
 │  │  ┌────────────────────────────────────────────────────────────┐ │  │
 │  │  │  JetsonHalServer                                            │ │  │
-│  │  │  - ZED Mini Camera → depth features                         │ │  │
+│  │  │  - ZED 2i Camera → depth features                           │ │  │
 │  │  │  - IMU/Encoders → robot state                               │ │  │
 │  │  │  - Publishes: camera frames, robot state                    │ │  │
 │  │  │  - Receives: joint commands                                 │ │  │

@@ -110,7 +110,7 @@ The ZED SDK is installed automatically during the Docker build. The Dockerfile u
 - **Installer Type**: `.zstd.run` (self-extracting installer script)
 
 **Installation Process:**
-The Dockerfile downloads the ZED SDK installer from Stereolabs, extracts it, and runs the installation script in silent mode. The installer is a self-extracting `.run` file that contains the installation scripts and binaries.
+The Dockerfile downloads the ZED SDK installer from Stereolabs, extracts it, and runs the installation script in **silent mode** (`-- silent`). The license is accepted non-interactively; no manual prompts during build. The installer is a self-extracting `.run` file that contains the installation scripts and binaries. AI models (NEURAL depth, etc.) are not included in the installer and are downloaded/optimized on first use unless pre-optimized; see [JETSON_DEPLOYMENT.md — Pre-optimizing ZED NEURAL depth models](JETSON_DEPLOYMENT.md#pre-optimizing-zed-neural-depth-models) to bake them into your workflow.
 
 **Available ZED SDK versions by JetPack** (for reference):
 
@@ -148,13 +148,13 @@ The Dockerfile downloads the ZED SDK installer from Stereolabs, extracts it, and
 - **ZED SDK installed automatically** during Docker build (see ZED SDK Installation section above)
 - PyTorch version may differ from x86 (use Jetson-optimized builds)
 - TensorRT may be needed for optimized inference (included in JetPack)
-- Camera access requires device mounting: `--device=/dev/video0`
+- ZED 2i camera access: ZED SDK uses USB (libusb). Use `-v /dev:/dev` and `--privileged` (see [JETSON_DEPLOYMENT.md](JETSON_DEPLOYMENT.md)); `--device=/dev/video0` alone is usually insufficient.
 - Real sensors (camera, IMU, encoders) connected via HAL server
 - **JetPack 7.0 users**: Be aware that ZED SDK 5.1 for JetPack 7.0 is in beta and has limitations (video encoding/decoding not functional)
 
 #### Runtime Requirements
 - Jetson Orin hardware
-- ZED Mini camera (if using): `--device=/dev/video0`
+- ZED 2i camera (if using): `-v /dev:/dev` and `--privileged` (USB access)
 - GPU access: `--gpus all` (if using nvidia-docker)
 
 ---
