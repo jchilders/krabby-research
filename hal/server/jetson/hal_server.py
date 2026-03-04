@@ -145,10 +145,30 @@ class JetsonHalServer(HalServerBase):
         now_s = time.time()
         elapsed_s = now_s - self._fake_telemetry_started_s
         joints: dict[str, dict[str, Any]] = {}
+        leg_phase_offsets = {
+            "FL": 0.0,
+            "FR": 0.8,
+            "RL": 1.6,
+            "ML": 2.4,
+            "RR": 3.2,
+            "MR": 4.0,
+        }
 
         for idx, joint_name in enumerate(FAKE_TELEMETRY_JOINTS):
-            phase = elapsed_s * 1.1 + idx * 0.31
-            pos = 0.5 + 0.25 * math.sin(phase)
+            leg = joint_name[:2]
+            axis = joint_name[2:]
+            leg_phase = elapsed_s * 1.1 + leg_phase_offsets.get(leg, 0.0)
+
+            if axis == "KL":
+                # Knees flex mostly in one direction with unique per-leg timing.
+                knee_wave = max(0.0, math.sin(leg_phase + 0.9))
+                pos = 0.45 + 0.4 * knee_wave
+            elif axis == "HL":
+                pos = 0.5 + 0.22 * math.sin(leg_phase + 0.35)
+            else:
+                pos = 0.5 + 0.2 * math.sin(leg_phase)
+
+            phase = leg_phase + idx * 0.07
             pot = int(round(512 + 240 * math.sin(phase + 0.7)))
             current = int(round(580 + 120 * abs(math.sin(phase * 1.3 + 0.2))))
             drive = int(round(42 * math.sin(phase + 0.4)))

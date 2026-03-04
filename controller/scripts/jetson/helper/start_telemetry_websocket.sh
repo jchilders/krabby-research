@@ -68,9 +68,14 @@ USE_NVIDIA_RUNTIME="${KRABBY_USE_NVIDIA_RUNTIME:-0}"
 DOCKER_NETWORK_MODE="${KRABBY_DOCKER_NETWORK_MODE:-auto}"
 
 if [[ -z "$TOKEN" ]]; then
-  echo "Error: KRABBY_TELEMETRY_TOKEN is required." >&2
-  echo "Example: export KRABBY_TELEMETRY_TOKEN=dev-token" >&2
-  exit 1
+  if [[ "$DRY_RUN" == "1" ]]; then
+    TOKEN="<set-KRABBY_TELEMETRY_TOKEN>"
+    echo "Warning: KRABBY_TELEMETRY_TOKEN is not set; using placeholder token in dry run." >&2
+  else
+    echo "Error: KRABBY_TELEMETRY_TOKEN is required." >&2
+    echo "Example: export KRABBY_TELEMETRY_TOKEN=dev-token" >&2
+    exit 1
+  fi
 fi
 
 if [[ "$FAKE_DATA" != "1" && ! -e "$MCU_PORT" ]]; then
