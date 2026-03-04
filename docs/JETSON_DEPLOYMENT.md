@@ -357,7 +357,6 @@ Telemetry data can be streamed over a websocket.
 For local UI/client testing without robot hardware, start the websocket server with synthetic data:
 
 ```bash
-export KRABBY_TELEMETRY_TOKEN=dev-token
 export KRABBY_TELEMETRY_FAKE_DATA=1
 ./controller/scripts/jetson/helper/start_telemetry_websocket.sh
 ```
@@ -375,17 +374,17 @@ If you want the telemetry websocket server to start automatically when the robot
 Run from the repo root on the Jetson host:
 
 ```bash
-./controller/scripts/jetson/helper/install_telemetry_service.sh --token <shared-token>
+./controller/scripts/jetson/helper/install_telemetry_service.sh
 ```
 
 Useful options:
 
 ```bash
 # Preview what will be created/started
-./controller/scripts/jetson/helper/install_telemetry_service.sh --token <shared-token> --dry-run
+./controller/scripts/jetson/helper/install_telemetry_service.sh --dry-run
 
 # Enable on boot but do not start immediately
-./controller/scripts/jetson/helper/install_telemetry_service.sh --token <shared-token> --no-start
+./controller/scripts/jetson/helper/install_telemetry_service.sh --no-start
 ```
 
 Verify:

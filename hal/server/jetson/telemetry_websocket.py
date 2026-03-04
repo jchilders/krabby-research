@@ -8,7 +8,6 @@ import logging
 import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
-from urllib.parse import parse_qs
 
 try:
     import websockets
@@ -17,7 +16,6 @@ except ModuleNotFoundError:  # pragma: no cover - exercised only in missing-depe
 
 logger = logging.getLogger(__name__)
 
-UNAUTHORIZED_CLOSE_CODE = 4401
 INVALID_PATH_CLOSE_CODE = 4404
 
 
@@ -30,7 +28,6 @@ class TelemetryWebSocketConfig:
     port: int = 8787
     path: str = "/krabby/telemetry"
     publish_hz: float = 10.0
-    token: str = ""
     fake_data: bool = False
 
     def __post_init__(self) -> None:
@@ -40,8 +37,6 @@ class TelemetryWebSocketConfig:
             raise ValueError("telemetry websocket publish_hz must be > 0")
         if not self.path.startswith("/"):
             raise ValueError("telemetry websocket path must start with '/'")
-        if self.enabled and not self.token:
-            raise ValueError("telemetry websocket token is required when enabled")
 
 
 class TelemetryWebSocketServer:
@@ -62,40 +57,6 @@ class TelemetryWebSocketServer:
         self._broadcast_task: Optional[asyncio.Task[Any]] = None
         self._clients: set[Any] = set()
 
-    @staticmethod
-    def _extract_bearer_token(auth_header: Optional[str]) -> Optional[str]:
-        if not auth_header:
-            return None
-        parts = auth_header.strip().split(" ", 1)
-        if len(parts) != 2:
-            return None
-        if parts[0].lower() != "bearer":
-            return None
-        token = parts[1].strip()
-        return token or None
-
-    @classmethod
-    def _extract_client_token(cls, websocket: Any, query_string: str) -> Optional[str]:
-        auth_header = None
-
-        headers = getattr(websocket, "request_headers", None)
-        if headers is not None:
-            auth_header = headers.get("Authorization")
-
-        if auth_header is None:
-            request = getattr(websocket, "request", None)
-            if request is not None and getattr(request, "headers", None) is not None:
-                auth_header = request.headers.get("Authorization")
-
-        bearer = cls._extract_bearer_token(auth_header)
-        if bearer:
-            return bearer
-
-        query_token = parse_qs(query_string).get("token", [None])[0]
-        if query_token:
-            return query_token
-        return None
-
     def _resolve_request_path(self, websocket: Any, path: Optional[str]) -> str:
         if path:
             return path
@@ -111,15 +72,10 @@ class TelemetryWebSocketServer:
 
     async def _handle_client(self, websocket: Any, path: Optional[str] = None) -> None:
         request_path = self._resolve_request_path(websocket, path)
-        base_path, _, query_string = request_path.partition("?")
+        base_path, _, _ = request_path.partition("?")
 
         if base_path != self._config.path:
             await websocket.close(code=INVALID_PATH_CLOSE_CODE, reason="invalid path")
-            return
-
-        token = self._extract_client_token(websocket, query_string)
-        if token != self._config.token:
-            await websocket.close(code=UNAUTHORIZED_CLOSE_CODE, reason="unauthorized")
             return
 
         self._clients.add(websocket)

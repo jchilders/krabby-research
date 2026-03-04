@@ -7,7 +7,6 @@
 #
 # Environment overrides:
 #   KRABBY_LOCOMOTION_IMAGE     (default: krabby-locomotion:latest)
-#   KRABBY_TELEMETRY_TOKEN      (required)
 #   KRABBY_MCU_PORT             (default: /dev/ttyACM0)
 #   KRABBY_TELEMETRY_WS_HOST    (default: 0.0.0.0)
 #   KRABBY_TELEMETRY_WS_PORT    (default: 8787)
@@ -37,7 +36,6 @@ while [[ $# -gt 0 ]]; do
 Usage: ./controller/scripts/jetson/helper/start_telemetry_websocket.sh [--dry-run] [-- <extra hal args>]
 
 Starts Jetson HAL websocket telemetry in telemetry-only mode.
-Set KRABBY_TELEMETRY_TOKEN before running.
 Set KRABBY_TELEMETRY_FAKE_DATA=1 to stream synthetic telemetry.
 EOF
       exit 0
@@ -57,7 +55,6 @@ EOF
 done
 
 IMAGE="${KRABBY_LOCOMOTION_IMAGE:-krabby-locomotion:latest}"
-TOKEN="${KRABBY_TELEMETRY_TOKEN:-}"
 MCU_PORT="${KRABBY_MCU_PORT:-/dev/ttyACM0}"
 WS_HOST="${KRABBY_TELEMETRY_WS_HOST:-0.0.0.0}"
 WS_PORT="${KRABBY_TELEMETRY_WS_PORT:-8787}"
@@ -66,17 +63,6 @@ WS_HZ="${KRABBY_TELEMETRY_WS_HZ:-10}"
 FAKE_DATA="${KRABBY_TELEMETRY_FAKE_DATA:-0}"
 USE_NVIDIA_RUNTIME="${KRABBY_USE_NVIDIA_RUNTIME:-0}"
 DOCKER_NETWORK_MODE="${KRABBY_DOCKER_NETWORK_MODE:-auto}"
-
-if [[ -z "$TOKEN" ]]; then
-  if [[ "$DRY_RUN" == "1" ]]; then
-    TOKEN="<set-KRABBY_TELEMETRY_TOKEN>"
-    echo "Warning: KRABBY_TELEMETRY_TOKEN is not set; using placeholder token in dry run." >&2
-  else
-    echo "Error: KRABBY_TELEMETRY_TOKEN is required." >&2
-    echo "Example: export KRABBY_TELEMETRY_TOKEN=dev-token" >&2
-    exit 1
-  fi
-fi
 
 if [[ "$FAKE_DATA" != "1" && ! -e "$MCU_PORT" ]]; then
   echo "Warning: MCU device not found at $MCU_PORT. Telemetry stream will start in disconnected mode." >&2
@@ -122,7 +108,6 @@ run_cmd+=(
   --telemetry_ws_port "$WS_PORT"
   --telemetry_ws_path "$WS_PATH"
   --telemetry_ws_publish_hz "$WS_HZ"
-  --telemetry_ws_token "$TOKEN"
 )
 if [[ "$FAKE_DATA" == "1" ]]; then
   run_cmd+=(--telemetry_ws_fake_data)

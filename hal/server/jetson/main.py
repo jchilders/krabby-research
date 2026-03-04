@@ -12,7 +12,6 @@ and applies commands to control the robot actuators.
 
 import argparse
 import logging
-import os
 import signal
 import sys
 import time
@@ -109,12 +108,6 @@ def main():
         default=False,
         help="Serve synthetic telemetry data instead of MCU telemetry",
     )
-    parser.add_argument(
-        "--telemetry_ws_token",
-        type=str,
-        default=None,
-        help="Telemetry websocket auth token (fallback: KRABBY_TELEMETRY_TOKEN env var)",
-    )
 
     args = parser.parse_args()
 
@@ -138,11 +131,6 @@ def main():
     parkour_client = None
 
     try:
-        telemetry_token = args.telemetry_ws_token or os.getenv("KRABBY_TELEMETRY_TOKEN", "")
-        if args.telemetry_ws_enabled and not telemetry_token:
-            raise ValueError(
-                "--telemetry_ws_enabled requires --telemetry_ws_token or KRABBY_TELEMETRY_TOKEN"
-            )
         if args.telemetry_only and not args.telemetry_ws_enabled:
             raise ValueError("--telemetry_only requires --telemetry_ws_enabled")
         if not args.telemetry_only and not args.checkpoint:
@@ -154,7 +142,6 @@ def main():
             port=args.telemetry_ws_port,
             path=args.telemetry_ws_path,
             publish_hz=args.telemetry_ws_publish_hz,
-            token=telemetry_token,
             fake_data=args.telemetry_ws_fake_data,
         )
 

@@ -205,7 +205,6 @@ The HAL client sends joint commands via `put_joint_command()`, which accepts a `
 Jetson HAL can optionally expose parsed MCU joint telemetry over a read-only websocket stream.
 
 - Default endpoint: `ws://0.0.0.0:8787/krabby/telemetry`
-- Auth: shared token via `Authorization: Bearer <token>` or `?token=<token>`
 - Publish mode: latest-only snapshot at fixed rate (default `10 Hz`)
 - Optional fake-data mode: `--telemetry_ws_fake_data` streams synthetic `connected` telemetry without MCU hardware
 - `source` is `mcu` for real hardware telemetry and `fake` when fake-data mode is enabled
@@ -218,8 +217,7 @@ Enable it with:
 ```bash
 python -m hal.server.jetson.main \
   --telemetry_only \
-  --telemetry_ws_enabled \
-  --telemetry_ws_token your-shared-token
+  --telemetry_ws_enabled
 ```
 
 Run with fake telemetry (no robot/MCU required):
@@ -228,8 +226,7 @@ Run with fake telemetry (no robot/MCU required):
 python -m hal.server.jetson.main \
   --telemetry_only \
   --telemetry_ws_enabled \
-  --telemetry_ws_fake_data \
-  --telemetry_ws_token your-shared-token
+  --telemetry_ws_fake_data
 ```
 
 If you want full control-loop + inference + telemetry, include a model checkpoint and omit `--telemetry_only`:
@@ -237,8 +234,7 @@ If you want full control-loop + inference + telemetry, include a model checkpoin
 ```bash
 python -m hal.server.jetson.main \
   --checkpoint /path/to/checkpoint.pt \
-  --telemetry_ws_enabled \
-  --telemetry_ws_token your-shared-token
+  --telemetry_ws_enabled
 ```
 
 Example payload:
@@ -258,8 +254,7 @@ Example payload:
 Minimal browser client:
 
 ```javascript
-const token = "your-shared-token";
-const ws = new WebSocket(`ws://robot-host:8787/krabby/telemetry?token=${encodeURIComponent(token)}`);
+const ws = new WebSocket("ws://robot-host:8787/krabby/telemetry");
 ws.onmessage = (event) => {
   const payload = JSON.parse(event.data);
   console.log(payload.status, payload.joints.FLHY);
@@ -273,7 +268,7 @@ import asyncio
 import websockets
 
 async def main():
-    uri = "ws://robot-host:8787/krabby/telemetry?token=your-shared-token"
+    uri = "ws://robot-host:8787/krabby/telemetry"
     async with websockets.connect(uri) as ws:
         while True:
             print(await ws.recv())

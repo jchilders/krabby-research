@@ -2,9 +2,9 @@
 # Install/start a systemd service that runs telemetry websocket at boot.
 #
 # Usage:
-#   ./controller/scripts/jetson/helper/install_telemetry_service.sh --token <shared-token>
-#   ./controller/scripts/jetson/helper/install_telemetry_service.sh --token <shared-token> --no-start
-#   ./controller/scripts/jetson/helper/install_telemetry_service.sh --token <shared-token> --dry-run
+#   ./controller/scripts/jetson/helper/install_telemetry_service.sh
+#   ./controller/scripts/jetson/helper/install_telemetry_service.sh --no-start
+#   ./controller/scripts/jetson/helper/install_telemetry_service.sh --dry-run
 
 set -euo pipefail
 
@@ -19,7 +19,6 @@ SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 ENABLE_NOW=1
 DRY_RUN=0
 
-TOKEN="${KRABBY_TELEMETRY_TOKEN:-}"
 IMAGE="${KRABBY_LOCOMOTION_IMAGE:-krabby-locomotion:latest}"
 MCU_PORT="${KRABBY_MCU_PORT:-/dev/ttyACM0}"
 WS_HOST="${KRABBY_TELEMETRY_WS_HOST:-0.0.0.0}"
@@ -32,10 +31,9 @@ DOCKER_NETWORK_MODE="${KRABBY_DOCKER_NETWORK_MODE:-auto}"
 
 usage() {
   cat <<'EOF'
-Usage: ./controller/scripts/jetson/helper/install_telemetry_service.sh --token <shared-token> [options]
+Usage: ./controller/scripts/jetson/helper/install_telemetry_service.sh [options]
 
 Options:
-  --token <value>                Required if KRABBY_TELEMETRY_TOKEN is not already set.
   --service-name <value>         Service name (default: krabby-telemetry).
   --no-start                     Install/enable at boot, but do not start immediately.
   --dry-run                      Print actions without writing files or running systemctl.
@@ -49,10 +47,6 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --token)
-      TOKEN="${2:-}"
-      shift 2
-      ;;
     --service-name)
       SERVICE_NAME="${2:-}"
       shift 2
@@ -76,11 +70,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-if [[ -z "$TOKEN" ]]; then
-  echo "Error: telemetry token is required. Pass --token or set KRABBY_TELEMETRY_TOKEN." >&2
-  exit 1
-fi
 
 if [[ ! -x "$START_SCRIPT" ]]; then
   echo "Error: start script not found or not executable: $START_SCRIPT" >&2
@@ -131,7 +120,6 @@ cleanup() {
 trap cleanup EXIT
 
 cat >"$tmp_env" <<EOF
-KRABBY_TELEMETRY_TOKEN=$TOKEN
 KRABBY_LOCOMOTION_IMAGE=$IMAGE
 KRABBY_MCU_PORT=$MCU_PORT
 KRABBY_TELEMETRY_WS_HOST=$WS_HOST
