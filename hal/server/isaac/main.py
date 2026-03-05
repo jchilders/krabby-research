@@ -8,8 +8,7 @@ For standalone server mode (client runs separately), use TCP endpoints instead.
 
 Simulates a robot environment (default: single robot), gathers observations,
 runs inference, and applies commands to control the robot. Supports visual display
-and video recording. In joystick mode (--joystick), runs with a minimal window
-(small size), single env, and viewport enabled for quick startup and validation.
+and video recording. 
 """
 
 import argparse
@@ -154,26 +153,12 @@ def main():
     if args.command_bind is None:
         args.command_bind = "tcp://*:5556" if args.joystick else "inproc://hal_commands"
 
-    if args.joystick:
-        # Minimal window (small size) for quick startup while keeping viewport for validation.
-        args.enable_cameras = True
-        extra = (
-            " --/app/window/width=640 --/app/window/height=360"
-            " --/rtx/post/dlss/execMode=0"
-        )
-        args.kit_args = (args.kit_args or "") + extra
-    else:
-        args.enable_cameras = True
-        logger.info("Setting enable_cameras=True (required for camera sensors)")
+    args.enable_cameras = True
+    logger.info("Setting enable_cameras=True (required for camera sensors)")
 
     # Launch IsaacLab
     app_launcher = AppLauncher(args)
     simulation_app = app_launcher.app
-
-    if args.joystick:
-        import carb
-        carb.settings.get_settings().set_int("/rtx/debugMaterialType", 0)
-        logger.info("Joystick: disabled PBR materials (debugMaterialType=0) for faster rendering")
 
     # Wait for app window when not headless (needed for camera controller).
     # In joystick mode use a short wait so startup is not blocked.
@@ -248,17 +233,6 @@ def main():
     if args.joystick:
         # One env is enough for joystick control and significantly speeds up startup and step time.
         env_cfg.scene.num_envs = 1
-        # Disable custom UI window for minimal GUI and fast startup.
-        env_cfg.ui_window_class_type = None
-        # Skip texture wait and extra rerenders for faster launch and resets.
-        env_cfg.wait_for_textures = False
-        env_cfg.rerender_on_reset = False
-        # Reduce viewport update frequency to save GPU time per control step.
-        env_cfg.sim.render_interval = env_cfg.sim.render_interval * 2
-        # Closer camera for joystick so the robot is clearly visible in the viewport.
-        if hasattr(env_cfg, "viewer") and env_cfg.viewer is not None:
-            env_cfg.viewer.eye = (0.0, 1.2, 0.8)
-            logger.info("Joystick: set viewer eye to (0, 1.2, 0.8) for closer robot visibility")
 
     # Determine render mode based on video flag
     # For visual display, use None (default window rendering)
