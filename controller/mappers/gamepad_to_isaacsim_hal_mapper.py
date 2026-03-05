@@ -2,9 +2,13 @@
 
 This mapper encapsulates the complete mapping from:
 - Input: Gamepad controller state (ControllerState)
-- Robot embodiment: Hexapod (6 legs, 3 DOF per leg = 18 joints)
+- Robot embodiment: Quad (4 legs, 12 joints) or hexapod (6 legs, 18 joints), via robot_definition
 - Input control type: Gamepad
 - Output: HAL JointCommand format (used with IsaacSim HAL server)
+
+Works for both quad and hexapod: pass robot_definition with legs (e.g. FL, FR, RL, RR for quad
+or FL, FR, ML, MR, RL, RR for hex). Leg selection buttons (LT/LB/RT/RB/LS/RS) only affect legs
+that exist on the robot; middle legs (ML/MR) are ignored for quad.
 
 The mapper handles leg selection, axis mapping, and joint position calculation,
 outputting absolute joint positions in JointCommand format.
@@ -18,39 +22,36 @@ import numpy as np
 
 from controller.input.state import ControllerState, LegIdentifier
 from hal.client.data_structures.hardware import JointCommand
+from hal.server.robot_definition import RobotDefinition
 from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 logger = logging.getLogger(__name__)
 
-# Joint ordering: 18 joints total (6 legs × 3 DOF per leg: hip_yaw, hip_pitch, knee)
-# Order: FL, FR, ML, MR, RL, RR (each leg has 3 joints: hip_yaw, hip_pitch, knee)
-# Joint indices per leg: hip_yaw, hip_pitch, knee
-# FL: 0,1,2; FR: 3,4,5; ML: 6,7,8; MR: 9,10,11; RL: 12,13,14; RR: 15,16,17
+LEG_NAME_TO_ID = {e.value: e for e in LegIdentifier}
 
-# Leg to joint index mapping (3 joints per leg: hip_yaw, hip_pitch, knee)
 LEG_TO_JOINT_INDICES = {
-    LegIdentifier.FRONT_LEFT: (0, 1, 2),      # hip_yaw, hip_pitch, knee
-    LegIdentifier.FRONT_RIGHT: (3, 4, 5),    # hip_yaw, hip_pitch, knee
-    LegIdentifier.MIDDLE_LEFT: (6, 7, 8),     # hip_yaw, hip_pitch, knee
-    LegIdentifier.MIDDLE_RIGHT: (9, 10, 11),  # hip_yaw, hip_pitch, knee
-    LegIdentifier.REAR_LEFT: (12, 13, 14),    # hip_yaw, hip_pitch, knee
-    LegIdentifier.REAR_RIGHT: (15, 16, 17),   # hip_yaw, hip_pitch, knee
+    LegIdentifier.FRONT_LEFT: (0, 1, 2),
+    LegIdentifier.FRONT_RIGHT: (3, 4, 5),
+    LegIdentifier.MIDDLE_LEFT: (6, 7, 8),
+    LegIdentifier.MIDDLE_RIGHT: (9, 10, 11),
+    LegIdentifier.REAR_LEFT: (12, 13, 14),
+    LegIdentifier.REAR_RIGHT: (15, 16, 17),
 }
 
-# Default scaling factors (radians per unit of normalized input)
-# These can be configured per mapper instance
-DEFAULT_HIP_UP_DOWN_SCALE = 0.3  # radians per unit (max ~0.3 rad = ~17 degrees)
-DEFAULT_KNEE_OUT_IN_SCALE = 0.3  # radians per unit
-DEFAULT_HIP_YAW_SCALE = 0.2      # radians per unit (yaw is typically smaller range)
+# Radians per unit normalized stick: full stick (±1) = ±scale rad (so joint moves through noticeable range)
+# Set to ~1.0 so full deflection gives ±1 rad; Go2 hip ±~1.05 rad, knee ~1 rad range.
+DEFAULT_HIP_UP_DOWN_SCALE = 1.0
+DEFAULT_KNEE_OUT_IN_SCALE = 1.0
+DEFAULT_HIP_YAW_SCALE = 1.0
 
 
 class GamepadToIsaacSimHALMapper:
     """Maps gamepad controller state to IsaacSim HAL joint commands.
     
     This mapper encapsulates the complete transformation from raw gamepad input
-    to joint commands for a hexapod robot in IsaacSim:
+    to joint commands for a robot in IsaacSim (quad 12 joints or hex 18 joints
+    via robot_definition):
     
-    - Robot embodiment: Hexapod (6 legs × 3 DOF = 18 joints)
     - Input control type: Gamepad
     - Output environment: IsaacSim
     
@@ -69,20 +70,18 @@ class GamepadToIsaacSimHALMapper:
         hip_up_down_scale: float = DEFAULT_HIP_UP_DOWN_SCALE,
         knee_out_in_scale: float = DEFAULT_KNEE_OUT_IN_SCALE,
         hip_yaw_scale: float = DEFAULT_HIP_YAW_SCALE,
+        robot_definition: Optional[RobotDefinition] = None,
     ):
-        """Initialize the mapper.
-        
-        Args:
-            hip_up_down_scale: Scaling factor for hip up/down axis (radians per unit).
-                Default: 0.3 rad (~17 degrees max deflection).
-            knee_out_in_scale: Scaling factor for knee out/in axis (radians per unit).
-                Default: 0.3 rad (~17 degrees max deflection).
-            hip_yaw_scale: Scaling factor for hip yaw axis (radians per unit).
-                Default: 0.2 rad (~11 degrees max deflection).
-        """
         self.hip_up_down_scale = hip_up_down_scale
         self.knee_out_in_scale = knee_out_in_scale
         self.hip_yaw_scale = hip_yaw_scale
+        self._robot = robot_definition or KRABBY_HEX_DEFINITION
+        self._n_joints = self._robot.get_total_joint_count()
+        self._leg_to_indices: dict[LegIdentifier, tuple[int, int, int]] = {}
+        for i, leg_name in enumerate(self._robot.legs):
+            if leg_name in LEG_NAME_TO_ID:
+                self._leg_to_indices[LEG_NAME_TO_ID[leg_name]] = (i * 3, i * 3 + 1, i * 3 + 2)
+        self._allowed_legs = set(self._leg_to_indices.keys())
     
     def _select_legs(self, state: ControllerState) -> Set[LegIdentifier]:
         """Select legs based on controller button state.
@@ -134,8 +133,7 @@ class GamepadToIsaacSimHALMapper:
                 legs.add(LegIdentifier.FRONT_RIGHT)
             if select_RR:
                 legs.add(LegIdentifier.REAR_RIGHT)
-        
-        return legs
+        return legs & self._allowed_legs
     
     def _map_axes(self, state: ControllerState) -> tuple[float, float, float]:
         """Map controller stick axes to control axes.
@@ -186,62 +184,30 @@ class GamepadToIsaacSimHALMapper:
         
         # Map stick axes to control axes
         hip_up_down, knee_out_in, hip_yaw = self._map_axes(state)
-        
+
         # Start from neutral position (all joints at 0.0)
-        # TODO: In the future, starting joint positions will be available from the robot state/observations
-        joint_positions = np.zeros(18, dtype=np.float32)
-        
-        # Apply control to selected legs (absolute positions)
+        # TODO: In the future, starting joint positions will be available from the robot state/observations   
+        joint_positions = np.zeros(self._n_joints, dtype=np.float32)
         if selected_legs:
             for leg in selected_legs:
-                if leg in LEG_TO_JOINT_INDICES:
-                    hip_yaw_idx, hip_pitch_idx, knee_idx = LEG_TO_JOINT_INDICES[leg]
-                    
-                    # Apply hip up/down (hip_pitch joint)
-                    # Positive hip_up_down = up = positive joint angle
-                    joint_positions[hip_pitch_idx] = hip_up_down * self.hip_up_down_scale
-                    
-                    # Apply knee out/in (knee joint)
-                    # Positive knee_out_in = out = positive joint angle
-                    joint_positions[knee_idx] = knee_out_in * self.knee_out_in_scale
-                    
-                    # Apply hip yaw (hip_yaw joint)
-                    # Positive hip_yaw = forward/back rotation
-                    joint_positions[hip_yaw_idx] = hip_yaw * self.hip_yaw_scale
-                    
-                    logger.debug(
-                        f"Leg {leg.value}: hip_yaw_idx={hip_yaw_idx} pos={joint_positions[hip_yaw_idx]:.3f}, "
-                        f"hip_pitch_idx={hip_pitch_idx} pos={joint_positions[hip_pitch_idx]:.3f}, "
-                        f"knee_idx={knee_idx} pos={joint_positions[knee_idx]:.3f}"
-                    )
-                else:
-                    logger.warning(f"Unknown leg identifier: {leg}")
-        else:
-            # No legs selected, all joints remain at 0.0 (neutral position)
-            logger.debug("No legs selected, all joints at neutral position")
-        
-        
-        # Create timestamps
-        # JointCommand requires timestamps for:
-        # 1. timestamp_ns: When this command was created (used for ordering and latency tracking)
-        # 2. observation_timestamp_ns: Timestamp of the observation this command responds to
-        #    (used for tracking command-observation relationships and measuring round-trip latency)
-        # These timestamps enable the HAL system to:
-        # - Match commands to their corresponding observations
-        # - Measure round-trip latency (observation → command)
-        # - Debug timing issues and ensure proper synchronization
+                hip_yaw_idx, hip_pitch_idx, knee_idx = self._leg_to_indices[leg]
+                joint_positions[hip_pitch_idx] = hip_up_down * self.hip_up_down_scale
+                joint_positions[knee_idx] = knee_out_in * self.knee_out_in_scale
+                joint_positions[hip_yaw_idx] = hip_yaw * self.hip_yaw_scale
+                logger.debug(
+                    "Leg %s: hip_yaw=%.3f hip_pitch=%.3f knee=%.3f",
+                    leg.value, joint_positions[hip_yaw_idx], joint_positions[hip_pitch_idx], joint_positions[knee_idx],
+                )
+
         current_timestamp_ns = time.time_ns()
         if observation_timestamp_ns is None:
-            # If no observation timestamp provided, use current time
-            # (In a full implementation, this would track the last received observation timestamp)
             observation_timestamp_ns = current_timestamp_ns
-        
-        # Create joint command (canonical order from robot definition)
+
         joint_cmd = JointCommand(
             _joint_positions=joint_positions,
             timestamp_ns=current_timestamp_ns,
             observation_timestamp_ns=observation_timestamp_ns,
-            joint_names=KRABBY_HEX_DEFINITION.get_joint_names(),
+            joint_names=self._robot.get_joint_names(),
         )
         
         logger.debug(

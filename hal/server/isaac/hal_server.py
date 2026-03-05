@@ -24,7 +24,15 @@ class IsaacSimHalServer(HalServerBase):
     Applies joint commands received via HAL to the environment.
     """
 
-    def __init__(self, config: HalServerConfig, robot_definition: RobotDefinition, env=None, observation_dimensions=None):
+    def __init__(
+        self,
+        config: HalServerConfig,
+        robot_definition: RobotDefinition,
+        env=None,
+        observation_dimensions=None,
+        *,
+        command_timeout_s: Optional[float] = 1.0,
+    ):
         """Initialize IsaacSim HAL server.
         
         Args:
@@ -33,6 +41,8 @@ class IsaacSimHalServer(HalServerBase):
             env: IsaacSim environment. If provided, environment component
                 references will be cached via _cache_references().
             observation_dimensions: Observation dimensions from model definition. Used for history buffer calculations.
+            command_timeout_s: Max seconds to wait for a joint command in apply_command(). If None, wait forever
+                and log every 30s while waiting. Used in joystick mode so the server does not exit when no client is connected.
         
         Note:
             If env is provided, this will call _cache_references() to extract
@@ -60,6 +70,10 @@ class IsaacSimHalServer(HalServerBase):
         # Initialize IsaacSim MCU SDK for standardized command application
         # Device will be set when environment is available
         self._mcusdk: Optional[IsaacSimMCUSDK] = None
+
+        self._command_timeout_s = command_timeout_s
+        self._first_command_received = False
+        self._waiting_log_last_t: Optional[float] = None
 
         if env is not None:
             self._cache_references()
@@ -120,7 +134,7 @@ class IsaacSimHalServer(HalServerBase):
         
         # Cache contact sensor if available
         if hasattr(self.scene, 'sensors') and 'contact_forces' in self.scene.sensors:
-            self.contact_sensor = self.scene.sensors['contact_forces']
+            self.contacvt_sensor = self.scene.sensors['contact_forces']
 
         # Verify we have required references
         if self.robot is None:
@@ -313,9 +327,10 @@ class IsaacSimHalServer(HalServerBase):
             )
         privileged_latent = obs_vals[194:223].astype(np.float32)
         
-        # Use joint positions extracted from observation manager (ensures exact match)
-        # Pad to 12 joints (hardware format) with zeros if needed
-        joint_positions = np.zeros(12, dtype=np.float32)
+        # Use joint positions extracted from observation manager (ensures exact match).
+        # Pad to robot joint count (12 or 18, hardware format) with zeros if needed.
+        n_joints = self.robot_definition.get_total_joint_count()
+        joint_positions = np.zeros(n_joints, dtype=np.float32)
         joint_positions[:len(joint_positions_from_obs)] = joint_positions_from_obs
 
         # Extract camera data from sensors
@@ -412,10 +427,9 @@ class IsaacSimHalServer(HalServerBase):
                 quat = quat[0]
             base_quat_w = quat.detach().cpu().numpy().astype(np.float32)
             
-            # Use joint velocities extracted from observation manager (ensures exact match)
-            # Note: observation manager already applies * 0.05 scaling, so we use them directly
-            # Pad to 12 joints (hardware format) with zeros if needed
-            joint_velocities = np.zeros(12, dtype=np.float32)
+            # Use joint velocities extracted from observation manager (ensures exact match).
+            # Observation manager already applies * 0.05 scaling. Pad to 12 or 18 joints (hardware format) with zeros if needed.
+            joint_velocities = np.zeros(n_joints, dtype=np.float32)
             joint_velocities[:len(joint_velocities_from_obs)] = joint_velocities_from_obs
         
         # Use previous action and contact forces extracted from observation manager (ensures exact match)
@@ -471,7 +485,8 @@ class IsaacSimHalServer(HalServerBase):
     def apply_command(self) -> torch.Tensor:
         """Get joint command from transport layer and convert to action tensor.
         
-        Loops until a command is received or timeout is reached.
+        Loops until a command is received or timeout is reached (if command_timeout_s is set).
+        If command_timeout_s is None, waits forever and logs every 30s while waiting.
         Gets the latest command from the transport layer and uses IsaacSimMCUSDK
         to get normalized PWM values as a numpy array, then converts it to a
         torch tensor for compatibility with env.step() and calling code.
@@ -481,7 +496,7 @@ class IsaacSimHalServer(HalServerBase):
             Action tensor ready to be passed to env.step().
             
         Raises:
-            RuntimeError: If environment not available, SDK not initialized, or no command received within timeout.
+            RuntimeError: If environment not available, SDK not initialized, or no command received within timeout (when timeout is not None).
         """
         if self.env is None:
             raise RuntimeError("No environment set, cannot apply command")
@@ -489,28 +504,58 @@ class IsaacSimHalServer(HalServerBase):
         if self._mcusdk is None:
             raise RuntimeError("IsaacSimMCUSDK not initialized. Call _initialize_mcusdk() first.")
 
-        # Loop until command received or timeout
-        timeout_s = 1.0  # 1s timeout
+        timeout_s = self._command_timeout_s
         poll_delay_s = 0.01  # 10ms between poll attempts
+        wait_log_interval_s = 30.0
         start_time = time.time()
         
         while True:
-            # Check timeout
-            elapsed = time.time() - start_time
-            if elapsed >= timeout_s:
-                error_msg = (
-                    f"Failed to receive joint command after {timeout_s}s timeout. "
-                    f"Inference client may not be responding or is too slow."
-                )
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
+            # Check timeout (only when a timeout is configured)
+            if timeout_s is not None:
+                elapsed = time.time() - start_time
+                if elapsed >= timeout_s:
+                    error_msg = (
+                        f"Failed to receive joint command after {timeout_s}s timeout. "
+                        f"Inference client may not be responding or is too slow."
+                    )
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+            
+            # Log every 30s while waiting for command (when waiting forever)
+            if timeout_s is None:
+                now = time.time()
+                if self._waiting_log_last_t is None or (now - self._waiting_log_last_t) >= wait_log_interval_s:
+                    logger.info("Waiting for joint command (start krabby-uno-sim to connect)...")
+                    self._waiting_log_last_t = now
             
             # Poll for incoming command (non-blocking, 10ms timeout)
             poll_delay_ms = int(poll_delay_s * 1000)  # Convert to milliseconds for get_joint_command
             command = self.get_joint_command(timeout_ms=poll_delay_ms)
             if command is not None:
+                # Drain queue so we apply the latest command, not stale ones (client sends ~50 Hz, we step at control_rate)
+                while True:
+                    latest = self.get_joint_command(timeout_ms=0)
+                    if latest is None:
+                        break
+                    command = latest
+                if not self._first_command_received:
+                    self._first_command_received = True
+                    logger.info("Client connected (joint command received).")
+                d = command.to_positions_dict()
+                non_zero = [(k, v) for k, v in d.items() if v != 0.0]
+                logger.debug(
+                    "Joint command received: %d joints, range=[%.3f, %.3f]",
+                    len(d), min(d.values()), max(d.values()),
+                )
+                if non_zero:
+                    logger.debug(
+                        "  non-zero positions (joint=rad): %s",
+                        ", ".join(f"{k}={v:.3f}" for k, v in non_zero),
+                    )
+                else:
+                    logger.debug("  all positions zero (no leg selected or sticks neutral)")
                 break
-            
+
             # No command available, sleep and retry
             time.sleep(poll_delay_s)
 

@@ -31,15 +31,21 @@ Use `pip install -e ./hal/client` and `pip install -e ./controller` for editable
 
 ## krabby-uno-sim (IsaacSim)
 
-1. Start the IsaacSim HAL server first (e.g. from Isaac or `controller/scripts/demo/test_gamepad_to_isaacsim_hal.py`).
+The Isaac Sim HAL server must run in an environment that has Isaac Sim and Isaac Lab (Docker or native). **Recommended:** run the server inside the Isaac Sim Docker image. See [controller/scripts/demo/isaacsim_demo_runbook.md](controller/scripts/demo/isaacsim_demo_runbook.md) for Docker and native commands.
 
-2. Run:
-
+1. Start the Isaac Sim HAL server (joystick mode). Example with Docker (from **krabby-research** after `make build-isaacsim-image`):
    ```bash
-   git status
+   xhost +local:docker 2>/dev/null
+   docker run --rm --gpus all -p 5555:5555 -p 5556:5556 \
+     -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
+     krabby-isaacsim:latest --joystick --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0
    ```
 
-   Defaults: observation `tcp://127.0.0.1:5555`, command `tcp://127.0.0.1:5556`.
+2. Run the client:
+   ```bash
+   krabby-uno-sim --quad
+   ```
+   Defaults: observation `tcp://127.0.0.1:5555`, command `tcp://127.0.0.1:5556`. Use `--InputController <id>` for a specific gamepad.
 
 ## Gamepad
 

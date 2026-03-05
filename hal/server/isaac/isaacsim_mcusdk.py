@@ -59,10 +59,10 @@ class IsaacSimMCUSDK:
         if not present:
             raise ValueError("command must contain at least one joint name from robot definition")
 
-        # TODO: Add actual IsaacSim code to control prismatic joints here.
-        # IsaacSim uses prismatic joints with position/velocity targets.
-        # The normalized PWM values (-1.0 to 1.0) in command should be
-        # converted to appropriate position/velocity targets for the prismatic joints.
+        # Joint control is applied by the env via env.step(action); the action term
+        # (e.g. DelayedJointPositionAction) converts normalized values to position
+        # targets. This module returns the normalized command dict for the caller
+        # to pass to env.step().
 
         # Log command in Isaac's preferred joint format
         # Format: joint positions as comma-separated name=value pairs.
