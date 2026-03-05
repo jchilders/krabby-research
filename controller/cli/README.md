@@ -31,7 +31,7 @@ Use `pip install -e ./hal/client` and `pip install -e ./controller` for editable
 
 ## krabby-uno-sim (IsaacSim)
 
-The Isaac Sim HAL server must run in an environment that has Isaac Sim and Isaac Lab (Docker or native). **Recommended:** run the server inside the Isaac Sim Docker image. See [controller/scripts/demo/isaacsim_demo_runbook.md](controller/scripts/demo/isaacsim_demo_runbook.md) for Docker and native commands.
+The Isaac Sim HAL server must run in an environment that has Isaac Sim and Isaac Lab (Docker or native). **Recommended:** run the server inside the Isaac Sim Docker image. See [controller/scripts/isaac/isaacsim_demo_runbook.md](controller/scripts/isaac/isaacsim_demo_runbook.md) for Docker and native commands.
 
 1. Start the Isaac Sim HAL server (joystick mode). Example with Docker (from **krabby-research** after `make build-isaacsim-image`):
    ```bash

@@ -25,7 +25,7 @@ This directory contains demonstration scripts for testing the controller → HAL
 **Usage**:
 ```bash
 # From the krabby-research root directory
-python controller/scripts/demo/test_gamepad_to_isaacsim_hal.py
+python controller/scripts/isaac/test_gamepad_to_isaacsim_hal.py
 ```
 
 **Expected Output**: 

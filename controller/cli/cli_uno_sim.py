@@ -2,7 +2,7 @@
 """CLI entry point for krabby-uno-sim: gamepad → IsaacSim HAL (simulation path).
 
 Connects to the IsaacSim HAL server via ZMQ TCP and sends joint commands from
-the gamepad. Start the IsaacSim HAL server first; see controller/scripts/demo/isaacsim_demo_runbook.md.
+the gamepad. Start the IsaacSim HAL server first; see controller/scripts/isaac/isaacsim_demo_runbook.md.
 
 Usage:
   krabby-uno-sim --quad   # 12-joint quad/Go2 sim

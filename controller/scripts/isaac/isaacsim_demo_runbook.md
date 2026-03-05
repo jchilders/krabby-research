@@ -1,6 +1,8 @@
 # Isaac Sim joystick demo runbook
 
-**Overview.** This runbook describes how to test Isaac Sim with a Nintendo Pro Controller (or compatible gamepad): run the HAL server in joystick mode, then the `krabby-uno-sim` client on the host. Joystick mode uses a minimal window, disables texture wait and heavy PBR/RTX for faster startup; use the Teacher task for quickest launch (Student adds a depth camera).
+**Overview.** This runbook describes how to test Isaac Sim with a Nintendo Pro Controller (or a compatible gamepad). First, run the HAL server in joystick mode, then launch the krabby-uno-sim client on the host.
+In joystick mode, Isaac Sim starts with a minimal window, disables texture wait, and turns off heavy PBR/RTX features to reduce startup time.
+The goal is to keep the configuration lightweight so the simulator launches as quickly as possible.
 
 ## Pairing (Ubuntu)
 
