@@ -114,16 +114,16 @@ class IsaacSimHalServer(HalServerBase):
         # Entity name "robot" is defined by the scene config attribute name.
         self.robot = self.scene["robot"]
 
-        # Cache camera sensors if available
+        # Cache camera sensors if available (depth and RGB for ZED 2i-style front camera)
         # Cameras are accessed via scene.sensors dictionary, which supports .items() iteration
         self.camera_sensors = {}
         if hasattr(self.scene, 'sensors'):
-            # Find camera sensors in the sensors dictionary
             for sensor_name, sensor in self.scene.sensors.items():
-                # Check if it's a camera-like sensor (RayCasterCamera, Camera, etc.)
                 if hasattr(sensor, 'data') and hasattr(sensor.data, 'output'):
-                    # Check for depth or RGB outputs
-                    if 'distance_to_camera' in sensor.data.output or 'distance_to_image_plane' in sensor.data.output:
+                    out = sensor.data.output
+                    has_depth = 'distance_to_camera' in out or 'distance_to_image_plane' in out
+                    has_rgb = 'rgb' in out
+                    if has_depth or has_rgb:
                         self.camera_sensors[sensor_name] = sensor
 
         # Cache managers (use unwrapped to access underlying environment)
@@ -333,75 +333,71 @@ class IsaacSimHalServer(HalServerBase):
         joint_positions = np.zeros(n_joints, dtype=np.float32)
         joint_positions[:len(joint_positions_from_obs)] = joint_positions_from_obs
 
-        # Extract camera data from sensors
+        # Extract camera data: depth from front_camera (RayCaster), RGB from front_rgb (Pinhole) to simulate ZED 2i
         camera_height, camera_width = 480, 640  # IsaacSim fixed resolution
         rgb_camera_1 = np.zeros((camera_height, camera_width, 3), dtype=np.uint8)
-        rgb_camera_2 = np.zeros((camera_height, camera_width, 3), dtype=np.uint8)
         depth_map = np.zeros((camera_height, camera_width), dtype=np.float32)
-        confidence_map = np.ones((camera_height, camera_width), dtype=np.float32)
 
-        # Try to get depth data from camera sensors
-        camera_list = list(self.camera_sensors.values()) if self.camera_sensors else []
-        
-        if len(camera_list) > 0:
-            # Get depth from first camera
-            camera_0 = camera_list[0]
-            if hasattr(camera_0, 'data') and hasattr(camera_0.data, 'output'):
-                # Try different depth output formats
-                depth_data = None
-                if 'distance_to_camera' in camera_0.data.output:
-                    depth_data = camera_0.data.output["distance_to_camera"]
-                elif 'distance_to_image_plane' in camera_0.data.output:
-                    depth_data = camera_0.data.output["distance_to_image_plane"]
-                
-                if depth_data is not None:
-                    # Convert to numpy
-                    if isinstance(depth_data, torch.Tensor):
-                        # Handle batched data - take first environment
-                        if depth_data.ndim > 2:
-                            depth_data = depth_data[0]
-                        # Remove channel dimension if present
-                        if depth_data.ndim == 3 and depth_data.shape[-1] == 1:
-                            depth_data = depth_data.squeeze(-1)
-                        depth_np = depth_data.detach().cpu().numpy().astype(np.float32)
-                        
-                        # Resize if needed
-                        if depth_np.shape != (camera_height, camera_width):
-                            zoom_factors = (camera_height / depth_np.shape[0], 
-                                          camera_width / depth_np.shape[1])
-                            depth_map = zoom(depth_np, zoom_factors, order=1).astype(np.float32)
+        # Depth from named sensor "front_camera" (RayCaster)
+        depth_sensor = self.camera_sensors.get("front_camera") if self.camera_sensors else None
+        if depth_sensor is not None and hasattr(depth_sensor, 'data') and hasattr(depth_sensor.data, 'output'):
+            depth_data = None
+            if 'distance_to_camera' in depth_sensor.data.output:
+                depth_data = depth_sensor.data.output["distance_to_camera"]
+            elif 'distance_to_image_plane' in depth_sensor.data.output:
+                depth_data = depth_sensor.data.output["distance_to_image_plane"]
+            if depth_data is not None:
+                if isinstance(depth_data, torch.Tensor):
+                    if depth_data.ndim > 2:
+                        depth_data = depth_data[0]
+                    if depth_data.ndim == 3 and depth_data.shape[-1] == 1:
+                        depth_data = depth_data.squeeze(-1)
+                    depth_np = depth_data.detach().cpu().numpy().astype(np.float32)
+                    if depth_np.shape != (camera_height, camera_width):
+                        zoom_factors = (camera_height / depth_np.shape[0], camera_width / depth_np.shape[1])
+                        depth_map = zoom(depth_np, zoom_factors, order=1).astype(np.float32)
+                    else:
+                        depth_map = depth_np
+
+        # RGB from named sensor "front_rgb" (PinholeCamera) when available
+        rgb_sensor = self.camera_sensors.get("front_rgb") if self.camera_sensors else None
+        if rgb_sensor is not None and hasattr(rgb_sensor, 'data') and hasattr(rgb_sensor.data, 'output') and 'rgb' in rgb_sensor.data.output:
+            rgb_data = rgb_sensor.data.output["rgb"]
+            if isinstance(rgb_data, torch.Tensor):
+                if rgb_data.ndim > 3:
+                    rgb_data = rgb_data[0]
+                rgb_np = rgb_data.detach().cpu().numpy()
+                if rgb_np.dtype != np.uint8:
+                    rgb_np = (rgb_np * 255).astype(np.uint8)
+                if rgb_np.shape[:2] != (camera_height, camera_width):
+                    zoom_factors = (camera_height / rgb_np.shape[0], camera_width / rgb_np.shape[1], 1)
+                    rgb_camera_1 = zoom(rgb_np, zoom_factors, order=1).astype(np.uint8)
+                else:
+                    rgb_camera_1 = rgb_np.copy()
+        else:
+            # Fallback: RGB from any camera in list
+            camera_list = list(self.camera_sensors.values()) if self.camera_sensors else []
+            for cam in camera_list:
+                if hasattr(cam, 'data') and hasattr(cam.data, 'output') and 'rgb' in cam.data.output:
+                    rgb_data = cam.data.output["rgb"]
+                    if isinstance(rgb_data, torch.Tensor):
+                        if rgb_data.ndim > 3:
+                            rgb_data = rgb_data[0]
+                        rgb_np = rgb_data.detach().cpu().numpy()
+                        if rgb_np.dtype != np.uint8:
+                            rgb_np = (rgb_np * 255).astype(np.uint8)
+                        if rgb_np.shape[:2] != (camera_height, camera_width):
+                            zoom_factors = (camera_height / rgb_np.shape[0], camera_width / rgb_np.shape[1], 1)
+                            rgb_camera_1 = zoom(rgb_np, zoom_factors, order=1).astype(np.uint8)
                         else:
-                            depth_map = depth_np
-            
-            # Try to get RGB from second camera or render product
-            if len(camera_list) > 1:
-                camera_1 = camera_list[1]
-                # Try to get RGB if available
-                if hasattr(camera_1, 'data') and hasattr(camera_1.data, 'output'):
-                    if 'rgb' in camera_1.data.output:
-                        rgb_data = camera_1.data.output["rgb"]
-                        if isinstance(rgb_data, torch.Tensor):
-                            if rgb_data.ndim > 3:
-                                rgb_data = rgb_data[0]
-                            rgb_np = rgb_data.detach().cpu().numpy()
-                            # Convert to uint8 if needed
-                            if rgb_np.dtype != np.uint8:
-                                rgb_np = (rgb_np * 255).astype(np.uint8)
-                            if rgb_np.shape[:2] != (camera_height, camera_width):
-                                zoom_factors = (camera_height / rgb_np.shape[0], 
-                                              camera_width / rgb_np.shape[1], 1)
-                                rgb_camera_2 = zoom(rgb_np, zoom_factors, order=1).astype(np.uint8)
-                            else:
-                                rgb_camera_2 = rgb_np
-
-        # Try to get RGB from render product if available (for first camera)
-        if hasattr(self.env, 'render') and self.env.render_mode == "rgb_array":
+                            rgb_camera_1 = rgb_np.copy()
+                    break
+        # Fallback: viewport render when no sensor RGB
+        if not np.any(rgb_camera_1) and hasattr(self.env, 'render') and self.env.render_mode == "rgb_array":
             rgb_data = self.env.render()
             if rgb_data is not None and rgb_data.size > 0:
-                # rgb_data is typically (H, W, 3) uint8
                 if rgb_data.shape[:2] != (camera_height, camera_width):
-                    zoom_factors = (camera_height / rgb_data.shape[0], 
-                                  camera_width / rgb_data.shape[1], 1)
+                    zoom_factors = (camera_height / rgb_data.shape[0], camera_width / rgb_data.shape[1], 1)
                     rgb_camera_1 = zoom(rgb_data, zoom_factors, order=1).astype(np.uint8)
                 else:
                     rgb_camera_1 = rgb_data.astype(np.uint8)
@@ -445,13 +441,12 @@ class IsaacSimHalServer(HalServerBase):
         terrain_type_flag = float(obs_vals[10])
         flat_terrain_flag = float(obs_vals[11])
         
-        # Create hardware observation
+        has_camera_data = np.any(rgb_camera_1) or np.any(depth_map)
+        camera_rgb = rgb_camera_1 if has_camera_data else None
+        camera_depth = depth_map if has_camera_data else None
+
         hw_obs = HardwareObservations(
             joint_positions=joint_positions,
-            rgb_camera_1=rgb_camera_1,
-            rgb_camera_2=rgb_camera_2,
-            depth_map=depth_map,
-            confidence_map=confidence_map,
             camera_height=camera_height,
             camera_width=camera_width,
             timestamp_ns=time.time_ns(),
@@ -467,6 +462,8 @@ class IsaacSimHalServer(HalServerBase):
             flat_terrain_flag=flat_terrain_flag,
             scan_features=scan_features,
             privileged_latent=privileged_latent,
+            camera_rgb=camera_rgb,
+            camera_depth=camera_depth,
         )
 
         # Publish hardware observation via base-class publisher
@@ -561,7 +558,7 @@ class IsaacSimHalServer(HalServerBase):
 
         # Get number of environments from unwrapped environment
         unwrapped_env = self.env.unwrapped if hasattr(self.env, 'unwrapped') else self.env
-        num_envs = getattr(unwrapped_env, 'num_envs', 1)
+        num_envs = unwrapped_env.num_envs
 
         # SDK takes JointCommand and returns dict for array conversion
         joint_names = self.robot_definition.get_joint_names()
@@ -573,7 +570,7 @@ class IsaacSimHalServer(HalServerBase):
         action_np = np.array(action_list, dtype=np.float32)
 
         # Convert to torch tensor for compatibility with env.step() and calling code
-        device = getattr(unwrapped_env, 'device', torch.device("cpu"))
+        device = unwrapped_env.device
         action = torch.from_numpy(action_np).to(device=device, dtype=torch.float32)
         
         # Add batch dimension if needed (env.step() expects (num_envs, action_dim))

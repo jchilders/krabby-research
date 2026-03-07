@@ -70,15 +70,10 @@ def test_set_observation():
 
         poll_result = subscriber.poll(200, zmq.POLLIN)
         assert poll_result > 0, "No message received within timeout"
-        parts = subscriber.recv_multipart(zmq.NOBLOCK)
-
-        # Message format: [topic] + hw_obs.to_bytes() => 1 + 12 = 13 parts (metadata + 11 arrays)
-        assert len(parts) == 13, f"Expected 13 parts (topic + 12 hw_obs), got {len(parts)}"
-        assert parts[0] == b"observation", f"Expected topic 'observation', got {parts[0]}"
-        hw_obs_parts = parts[1:]
-        assert len(hw_obs_parts) == 12, f"Expected 12 parts for hw_obs (metadata + 11 arrays), got {len(hw_obs_parts)}"
-
-        received_hw_obs = HardwareObservations.from_bytes(hw_obs_parts)
+        frame = subscriber.recv(zmq.NOBLOCK)
+        assert frame.startswith(b"observation"), "Expected frame to start with topic 'observation'"
+        payload = frame[len(b"observation"):]
+        received_hw_obs = HardwareObservations.from_bytes(payload)
         assert received_hw_obs.joint_positions.shape == hw_obs.joint_positions.shape
         np.testing.assert_array_equal(received_hw_obs.joint_positions, hw_obs.joint_positions)
 
@@ -118,7 +113,6 @@ def test_get_joint_command():
         # Small delay to ensure server thread is waiting
         time.sleep(0.01)
 
-        # Send command as JointCommand (multipart message)
         from hal.client.data_structures.hardware import JointCommand
         from tests.helpers import TEST_HEX_DEFINITION
         command = np.array([0.1, 0.2, 0.3] + [0.0] * 15, dtype=np.float32)  # 18 DOF (hexapod)
@@ -128,8 +122,8 @@ def test_get_joint_command():
             observation_timestamp_ns=time.time_ns(),
             joint_names=TEST_HEX_DEFINITION.get_joint_names(),
         )
-        command_parts = joint_cmd.to_bytes()
-        pusher.send_multipart(command_parts)
+        command_blob = joint_cmd.to_bytes()
+        pusher.send(command_blob)
 
         server_thread.join(timeout=2.0)
         received = received_command[0]
@@ -175,7 +169,7 @@ def test_hwm_behavior():
         # With observation_buffer_size=1, subscriber should receive messages (with shared context, connection is reliable)
         received_count = 0
         while subscriber.poll(100, zmq.POLLIN):
-            subscriber.recv_multipart()
+            subscriber.recv()
             received_count += 1
 
         # Should receive at least one message

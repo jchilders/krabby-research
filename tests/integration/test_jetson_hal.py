@@ -103,7 +103,7 @@ def test_jetson_hal_server_observation_publishing(
     mock_camera = MagicMock(spec=ZedCamera)
     mock_camera.is_ready.return_value = True
     mock_camera.get_depth_features.return_value = None
-    hal_server.zed_camera = mock_camera
+    hal_server.front_camera = mock_camera
 
     hal_client = HalClient(hal_client_config, context=hal_server.get_transport_context())
     hal_client.initialize()
@@ -229,7 +229,7 @@ def test_jetson_hal_server_end_to_end_with_game_loop(
     depth_features = np.zeros(obs_dims.num_scan, dtype=np.float32)
     depth_features[0:64] = 1.0  # Set first 64 features
     mock_camera.get_depth_features.return_value = depth_features
-    hal_server.zed_camera = mock_camera
+    hal_server.front_camera = mock_camera
 
     # Mock state vector
     def mock_build_state():
@@ -335,7 +335,7 @@ def test_jetson_hal_server_end_to_end_with_game_loop(
 
 
 @pytest.mark.jetson
-def test_jetson_hal_server_zed_camera_integration():
+def test_jetson_hal_server_front_camera_integration():
     """Test ZED camera integration (requires hardware).
     
     Note: This test requires:
@@ -405,7 +405,7 @@ def test_jetson_hal_server_network_communication(jetson_observation_dims):
     depth_features = np.zeros(NUM_SCAN, dtype=np.float32)
     depth_features[0:64] = 1.0  # Set first 64 features
     mock_camera.get_depth_features.return_value = depth_features
-    server.zed_camera = mock_camera
+    server.front_camera = mock_camera
 
     def mock_build_state():
         return np.concatenate([
@@ -486,7 +486,7 @@ def test_jetson_hal_server_camera_error_handling(
     hal_server.set_debug(True)
 
     # Test with None camera (camera not initialized)
-    hal_server.zed_camera = None
+    hal_server.front_camera = None
     depth_features = hal_server._build_depth_features()
     assert depth_features is None  # Should return None gracefully
 
@@ -494,7 +494,7 @@ def test_jetson_hal_server_camera_error_handling(
     mock_camera = MagicMock(spec=ZedCamera)
     mock_camera.is_ready.return_value = True
     mock_camera.get_depth_features.return_value = None
-    hal_server.zed_camera = mock_camera
+    hal_server.front_camera = mock_camera
 
     depth_features = hal_server._build_depth_features()
     assert depth_features is None  # Should handle None gracefully
@@ -557,7 +557,7 @@ def test_jetson_hal_server_sustained_bidirectional_messaging(
     mock_camera.is_ready.return_value = True
     depth_features = np.zeros(obs_dims.num_scan, dtype=np.float32)
     mock_camera.get_depth_features.return_value = depth_features
-    hal_server.zed_camera = mock_camera
+    hal_server.front_camera = mock_camera
 
     # Mock state vector builder
     def mock_build_state():
@@ -729,7 +729,7 @@ def test_jetson_hal_server_joystick_input_integration(
     mock_camera.is_ready.return_value = True
     depth_features = np.zeros(obs_dims.num_scan, dtype=np.float32)
     mock_camera.get_depth_features.return_value = depth_features
-    hal_server.zed_camera = mock_camera
+    hal_server.front_camera = mock_camera
 
     # Mock state vector builder
     def mock_build_state():
@@ -815,7 +815,7 @@ def test_jetson_hal_server_cleanup(hal_server_config, jetson_observation_dims):
 
     # Mock camera
     mock_camera = MagicMock(spec=ZedCamera)
-    hal_server.zed_camera = mock_camera
+    hal_server.front_camera = mock_camera
 
     # Close server
     hal_server.close()
@@ -825,5 +825,5 @@ def test_jetson_hal_server_cleanup(hal_server_config, jetson_observation_dims):
 
     # Verify server is closed
     assert not hal_server._initialized
-    assert hal_server.zed_camera is None
+    assert hal_server.front_camera is None
 

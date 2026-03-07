@@ -69,6 +69,13 @@ COPY parkour/dist/*.whl /tmp/wheels/
 RUN . /workspace/testenv/bin/activate && \
     bash -c "pip install --no-cache-dir /tmp/wheels/*.whl"
 
+# Copy hal and controller source so coverage can report on our packages (not just site-packages).
+# Reinstall hal in editable mode so tests run from /workspace/hal and coverage includes it.
+COPY hal/ /workspace/hal/
+RUN . /workspace/testenv/bin/activate && \
+    pip install --no-cache-dir -e /workspace/hal/client -e /workspace/hal/server \
+        -e /workspace/hal/server/isaac -e /workspace/hal/server/jetson
+
 # Copy remaining code that's not in wheels (e.g., compute/testing for test runner)
 COPY compute/ /workspace/compute/
 

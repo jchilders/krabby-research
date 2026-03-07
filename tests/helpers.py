@@ -61,10 +61,6 @@ def create_dummy_hw_obs(
     
     return HardwareObservations(
         joint_positions=np.zeros(12, dtype=np.float32),
-        rgb_camera_1=np.zeros((camera_height, camera_width, 3), dtype=np.uint8),
-        rgb_camera_2=np.zeros((camera_height, camera_width, 3), dtype=np.uint8),
-        depth_map=np.zeros((camera_height, camera_width), dtype=np.float32),
-        confidence_map=np.ones((camera_height, camera_width), dtype=np.float32),
         camera_height=camera_height,
         camera_width=camera_width,
         timestamp_ns=timestamp_ns,

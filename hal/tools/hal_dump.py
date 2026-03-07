@@ -131,19 +131,19 @@ def dump_hal_state(
     time.sleep(0.1)  # Give time for connection
 
     if obs_sub.poll(1000, zmq.POLLIN):
-        parts = obs_sub.recv_multipart()
-        if len(parts) >= 2:
-            topic = parts[0].decode("utf-8")
-            hw_obs_parts = parts[1:]
+        frame = obs_sub.recv()
+        topic_prefix = b"observation"
+        if frame.startswith(topic_prefix) and len(frame) > len(topic_prefix):
+            payload = frame[len(topic_prefix):]
             try:
-                hw_obs = HardwareObservations.from_bytes(hw_obs_parts)
-                
+                hw_obs = HardwareObservations.from_bytes(payload)
+
                 mapper = HWObservationsToParkourMapper(observation_dimensions)
                 model_obs = mapper.map(hw_obs)
                 observation = model_obs.to_array()
 
                 print(f"\n📊 Observation:")
-                print(f"  Topic: {topic}")
+                print(f"  Topic: observation")
                 timestamp_s = hw_obs.timestamp_ns / 1e9
                 print(f"  Timestamp: {hw_obs.timestamp_ns} ns ({timestamp_s:.6f} s)")
                 print(f"  Shape: {observation.shape}")

@@ -78,7 +78,7 @@ class HWObservationsToParkourMapper:
             vision: list = []
         else:
             # To implement vision on hardware we would need:
-            # - Run the same vision encoder used at training on hw_obs (rgb_camera_1, rgb_camera_2).
+            # - Run the same vision encoder used at training on hw_obs (camera_rgb).
             # - Match training preprocessing (resize, normalization, etc.).
             # - Output one feature vector per camera with sizes matching observation_dimensions.vision_dims.
             # - Integrate the encoder (and any GPU usage) into the inference path.
@@ -191,22 +191,23 @@ class HWObservationsToParkourMapper:
     
     def _extract_scan_features(self, hw_obs: HardwareObservations) -> np.ndarray:
         """Extract scan/depth features from hardware observations.
-        
+
         Matches training format: 132 height measurements from ray scanner.
-        The HAL server now extracts scan features directly from the observation manager's
-        measured_heights, which ensures exact matching with the environment.
-        
-        If scan_features is available in HardwareObservations (extracted from observation
-        manager), use it directly. Otherwise, fall back to reconstructing from depth_map.
-        
+        Scan features must be provided by the HAL server:
+        - Isaac: from observation manager measured_heights.
+        - Jetson: from ZED via get_depth_features() when the camera is initialized.
+
+        If scan_features is None (e.g. Jetson without ZED), returns zeros. Policy
+        behavior will be degraded without real scan/terrain data.
+
         Args:
             hw_obs: Hardware observations
-            
+
         Returns:
             Scan features array of shape (num_scan,)
         """
         num_scan = self._dims.num_scan
-        if hasattr(hw_obs, "scan_features") and hw_obs.scan_features is not None:
+        if hw_obs.scan_features is not None:
             scan_features = hw_obs.scan_features
             if len(scan_features) == num_scan:
                 return scan_features.astype(np.float32)
@@ -216,30 +217,7 @@ class HWObservationsToParkourMapper:
             features[: len(scan_features)] = scan_features.astype(np.float32)
             return features
 
-        height, width = hw_obs.depth_map.shape
-        grid_rows = int(np.sqrt(num_scan))
-        grid_cols = (num_scan + grid_rows - 1) // grid_rows
-        features = np.zeros(num_scan, dtype=np.float32)
-        row_indices = np.linspace(0, height - 1, grid_rows, dtype=np.int32)
-        col_indices = np.linspace(0, width - 1, grid_cols, dtype=np.int32)
-        idx = 0
-        for row in row_indices:
-            for col in col_indices:
-                if idx >= num_scan:
-                    break
-                # Get depth value at this point
-                depth_value = hw_obs.depth_map[row, col]
-                
-                # Convert depth to height measurement (relative to camera)
-                # Depth is distance from camera, height is relative to camera position
-                # For simplicity, use depth directly as height measurement
-                # Apply normalization: clip(height - 0.3, -1, 1)
-                height_measurement = np.clip(depth_value - 0.3, -1.0, 1.0)
-                features[idx] = height_measurement
-                idx += 1
-            if idx >= num_scan:
-                break
-        return features
+        return np.zeros(num_scan, dtype=np.float32)
 
     def _extract_priv_explicit(self, hw_obs: HardwareObservations) -> np.ndarray:
         """Extract privileged explicit features from hardware observations.

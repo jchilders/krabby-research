@@ -527,7 +527,8 @@ def test_isaacsim_hal_server_observation_rate(mock_isaac_env, hal_server_config,
     hal_server.initialize()
     hal_server.observation_dimensions = _TEST_OBS_DIMS
 
-    hal_client = HalClient(hal_client_config)
+    # Use server's context so inproc works and client does not term() the context on close (avoids segfault)
+    hal_client = HalClient(hal_client_config, context=hal_server.get_transport_context())
     hal_client.initialize()
 
     # Mock observation manager to return valid observations

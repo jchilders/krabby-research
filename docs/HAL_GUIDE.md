@@ -8,7 +8,7 @@ The HAL uses ZMQ (ZeroMQ) for communication with two distinct channels:
 
 1. **Observation** (PUB/SUB) - Topic: `"observation"` - HAL Server → Policy Wrapper (100+ Hz)
    - Hardware observation format containing raw sensor data
-   - `KrabbyHardwareObservations` object with joint positions, camera images, depth map, etc.
+   - `HardwareObservations` object with joint positions, optional front camera (camera_rgb, camera_depth), etc.
 2. **Joint Commands** (PUSH/PULL) - No topic - Policy Wrapper → HAL Server (100+ Hz)
 
 All channels support both `inproc://` (same process) and `tcp://` (network) transports.
@@ -20,49 +20,38 @@ All channels support both `inproc://` (same process) and `tcp://` (network) tran
 ### Observation (PUB/SUB)
 
 - **Topic**: `"observation"`
-- **Message**: Hardware observation data as `KrabbyHardwareObservations`
-- **Format**: Topic-prefixed multipart message `[topic_string, schema_version_string, ...hw_obs_parts]`
-  - Part 0: Topic string `"observation"` (UTF-8 encoded)
-  - Part 1: Schema version string (e.g., `"1.0"`, UTF-8 encoded)
-  - Parts 2-7: Hardware observation parts (6 parts total)
-    - Part 2: Metadata JSON (includes timestamp_ns, shapes, dtypes)
-    - Part 3: joint_positions bytes (18 DOF, float32)
-    - Part 4: rgb_camera_1 bytes (H×W×3, uint8)
-    - Part 5: rgb_camera_2 bytes (H×W×3, uint8)
-    - Part 6: depth_map bytes (H×W, float32)
-    - Part 7: confidence_map bytes (H×W, float32)
-- **Semantics**: Latest-only (HWM=1)
+- **Message**: Hardware observation data as `HardwareObservations`
+- **Format**: Single ZMQ frame = topic prefix `b"observation"` + one payload blob. The blob is: 4-byte metadata length (uint32 LE), then metadata JSON, then array bytes in a fixed order (sizes from metadata). Required arrays: joint_positions, base_ang_vel_b, base_lin_vel_b, base_quat_w, joint_velocities, contact_forces, previous_action. Optional (when present): scan_features, privileged_latent, camera_rgb, camera_depth. See `hal/client/data_structures/hardware.py` for the exact layout.
+- **Semantics**: Latest-only (HWM=1, CONFLATE on subscriber)
 - **Content**: Raw hardware sensor data:
-  - Joint positions (18 DOF)
-  - RGB camera images (2 cameras)
-  - Depth map
-  - Confidence map
-  - Timestamp (included in metadata)
+  - Joint positions (robot-dependent DOF)
+  - Base pose/velocities, joint velocities, contact forces, previous action
+  - Optional: front camera (camera_rgb, camera_depth), scan_features, privileged_latent
+  - Timestamp (in metadata)
 
 ### Joint Commands (PUSH/PULL)
 
-- **Message**: Joint positions as `float32[18]` array (18 DOF for Krabby robot)
+- **Message**: `JointCommand` serialized as a single blob (4-byte metadata length + metadata JSON + joint_positions bytes). DOF is robot-dependent (e.g. 12 or 18).
 - **Semantics**: PUSH/PULL pattern ensures FIFO ordering with backpressure (HWM=5)
 
 ## Hardware Data Structures
 
-### KrabbyHardwareObservations
+### HardwareObservations
 
-Raw hardware sensor data from the Krabby robot:
-- **joint_positions**: `float32[18]` - Joint positions (18 DOF)
-- **rgb_camera_1**: `uint8[H, W, 3]` - First RGB camera image
-- **rgb_camera_2**: `uint8[H, W, 3]` - Second RGB camera image
-- **depth_map**: `float32[H, W]` - Depth map
-- **confidence_map**: `float32[H, W]` - Confidence map
-- **timestamp_ns**: Integer (nanoseconds)
+Raw hardware sensor data (see `hal/client/data_structures/hardware.py`):
+- **joint_positions**, **base_ang_vel_b**, **base_lin_vel_b**, **base_quat_w**, **joint_velocities**, **contact_forces**, **previous_action**: required arrays (float32)
+- **camera_height**, **camera_width**, **timestamp_ns**: required scalars
+- **scan_features**, **privileged_latent**: optional (simulation or when available)
+- **camera_rgb**, **camera_depth**: optional front camera (single camera; both or neither)
 
 This is the format sent by the HAL server and received by the HAL client via `poll()`.
 
-### KrabbyDesiredJointPositions
+### JointCommand
 
 Desired joint positions for robot control:
-- **joint_positions**: `float32[18]` - Target joint positions (18 DOF)
-- **timestamp_ns**: Integer (nanoseconds)
+- **joint_positions**: float32 array (robot-dependent DOF, e.g. 12 or 18)
+- **timestamp_ns**, **observation_timestamp_ns**: timestamps
+- **joint_names**: names matching the positions
 
 This is the format sent to the HAL server via `put_joint_command()`.
 
@@ -138,11 +127,10 @@ All coordinate frames follow the **ROS (REP-103) convention**:
 The HAL implementation includes runtime type validation for all message payloads:
 
 ### Observation Validation
-- **Type**: Must be `KrabbyHardwareObservations`
+- **Type**: Must be `HardwareObservations`
 - **joint_positions**: Shape `(18,)`, dtype `float32`
-- **rgb_camera_1/2**: Shape `(H, W, 3)`, dtype `uint8`
-- **depth_map**: Shape `(H, W)`, dtype `float32`
-- **confidence_map**: Shape `(H, W)`, dtype `float32`
+- **camera_rgb** (optional): Shape `(H, W, 3)`, dtype `uint8`
+- **camera_depth** (optional): Shape `(H, W)`, dtype `float32`
 - **timestamp_ns**: Non-negative integer
 
 ### Command Validation
@@ -159,12 +147,12 @@ The HAL implementation includes runtime type validation for all message payloads
 
 The HAL client interface supports:
 
-- **Poll for Observation** - `poll()` returns `KrabbyHardwareObservations` if new data is available, `None` otherwise (100+ Hz)
+- **Poll for Observation** - `poll()` returns `HardwareObservations` if new data is available, `None` otherwise (100+ Hz)
 - **Send Joint Command** - `put_joint_command()` sends `KrabbyDesiredJointPositions` to actuators
 
-**Observation Format**: The observation is a `KrabbyHardwareObservations` object containing raw hardware sensor data (joint positions, camera images, depth map, etc.).
+**Observation Format**: The observation is a `HardwareObservations` object containing raw hardware sensor data (joint positions, base state, optional front camera rgb/depth, etc.).
 
-**Mapping to Model Format**: The policy inference code uses mappers (`compute.parkour.mappers.hardware_to_model`) to convert `KrabbyHardwareObservations` to model-specific observation formats (e.g., `ParkourObservation`).
+**Mapping to Model Format**: The policy inference code uses mappers (`compute.parkour.mappers.hardware_to_model`) to convert `HardwareObservations` to model-specific observation formats (e.g., `ParkourObservation`).
 
 ### Constraints
 
@@ -218,8 +206,8 @@ The HAL client sends joint commands via `put_joint_command()`, which accepts a `
 2. Bind to endpoints (inproc or TCP)
 3. Set HWM=1 for latest-only semantics on PUB socket
 4. Main loop:
-   - Build `KrabbyHardwareObservations` from hardware sensors (100+ Hz)
-   - Publish observation: Send as multipart `[topic, schema_version, ...hw_obs_parts]` (8 parts total)
+   - Build `HardwareObservations` from hardware sensors (100+ Hz)
+   - Publish observation: Send as single frame (topic prefix `b"observation"` + serialized blob)
    - Receive command messages (non-blocking): Deserialize to `float32[18]` array, apply to actuators
 
 ## HAL Client Workflow
@@ -230,7 +218,7 @@ The HAL client sends joint commands via `put_joint_command()`, which accepts a `
 4. Set HWM=1 for latest-only semantics on SUB sockets
 5. Main loop:
    - Poll for observation messages (non-blocking with timeout)
-   - `poll()` returns `KrabbyHardwareObservations` if new data is available, `None` otherwise
+   - `poll()` returns `HardwareObservations` if new data is available, `None` otherwise
    - If observation received, map it to model format and use for inference
    - Map inference output to `KrabbyDesiredJointPositions`
    - Send joint command via `put_joint_command()`
@@ -301,7 +289,7 @@ The observation PUB/SUB channel uses HWM=1 (high-watermark=1):
 
 - **Topic filtering**: Subscribers subscribe to the `"observation"` topic
 - **Message ordering**: PUB/SUB has no guaranteed ordering; PUSH/PULL guarantees FIFO ordering
-- **Timestamp synchronization**: Observation messages include timestamps in `KrabbyHardwareObservations` metadata
+- **Timestamp synchronization**: Observation messages include timestamps in `HardwareObservations` metadata
 - **Navigation command**: Managed by application code (e.g., `InferenceRunner`), not by HAL client
 
 ## Error Handling
@@ -467,7 +455,7 @@ When enabled, debug logging shows:
 **Client (Receiving):**
 ```
 [ZMQ RECV] observation: topic=observation, schema=1.0, num_parts=8
-[ZMQ RECV] observation: KrabbyHardwareObservations created successfully
+[ZMQ RECV] observation: HardwareObservations created successfully
 [ZMQ SEND] command: payload_size=72 bytes, joint_positions_shape=(18,), dtype=float32
 ```
 
@@ -555,7 +543,7 @@ If debug logs don't appear:
 ### Wrong Observation Format
 
 If observation deserialization fails:
-1. Check that server is sending `KrabbyHardwareObservations` format
+1. Check that server is sending `HardwareObservations` format
 2. Verify message has 8 parts (topic, schema, 6 hw_obs parts)
 3. Check metadata JSON is valid
 4. Verify array shapes match expected (joint_positions: 18, cameras: H×W×3, depth/confidence: H×W)

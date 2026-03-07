@@ -204,6 +204,8 @@ Optional: verify the ZED 2i on the host before using it in the container.
 3. **Verify USB**: `lsusb | grep -i zed` — device must appear on a USB 3.0 port.
 4. **Run diagnostics**: `ZED_Diagnostic -c -d`
 
+   You should see **OK** for: ZED SDK Diagnostic, Processor, Graphics Card, and CUDA Operations. Under **AI Models Diagnostic**, detection models (MULTI CLASS, HUMAN BODY, PERSON HEAD, REID) may show "not optimized" — that is normal and not used by the HAL RGB/depth pipeline. For depth, ensure **NEURAL LIGHT DEPTH**, **NEURAL DEPTH**, and **NEURAL PLUS DEPTH** show "optimized" (run the pre-optimization step below if needed).
+
 **If the SDK can’t open the camera** (appears in `lsusb` but diagnostic fails), install udev rules:
 
 ```bash
@@ -212,6 +214,9 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 Unplug and replug the ZED, then retry.
+
+**HAL front camera (camera_rgb / camera_depth)**  
+The Jetson HAL server populates `HardwareObservations.camera_rgb` and `camera_depth` from the ZED (left RGB and depth). Resolution and FPS are set when constructing the server (e.g. `camera_resolution=(640, 480)`, `camera_fps=30`; 15+ Hz required). Depth mode defaults to `PERFORMANCE` (see `hal/server/jetson/hal_server.py`, `initialize_camera()`). To confirm the pipeline: run the HAL server with the ZED and use a HAL client to poll observations and verify `camera_rgb` and `camera_depth` (see HAL_GUIDE or `hal/client/data_structures/hardware.py` for observation format). For 5-minute stability, run the server with the ZED and verify no dropped frames in logs or metrics.
 
 ## Obtaining the Docker Image
 
@@ -440,7 +445,12 @@ Adjust control rate based on actual latency:
 - **Network Isolation**: With `iptables: false`, Docker won't manage network isolation between containers. Use host networking mode if needed.
 - **Camera**: ZED camera must be initialized for production deployment to provide valid depth/scan features for inference.
 
+## Isaac Sim synthetic front camera
+
+When running the HAL server in Isaac Sim, the **synthetic front camera** is used: the first camera in `scene.sensors` that provides depth/RGB is used to fill `camera_rgb` and `camera_depth` (same as `rgb_camera_1` and `depth_map`). Add a camera in the scene that approximates the real ZED (position and FOV) and attach it to the robot or a fixed frame. Resolution is 480×640 in the current implementation. Validate by connecting a HAL client to the Isaac HAL observation endpoint and verifying `camera_rgb` and `camera_depth` in the observations.
+
 ## Additional Resources
 
 - Docker dependencies: See `docs/DOCKER_DEPENDENCIES.md`
+- HAL architecture and observation format: See `docs/HAL_GUIDE.md`
 

@@ -133,34 +133,31 @@ class MockHalServer(HalServerBase):
         # Joint positions: 12 DOF, simple sine wave pattern
         joint_positions = np.sin(np.arange(12) * 0.1 + self.tick_count * 0.01).astype(np.float32)
         
-        # RGB camera images: simple gradient pattern
-        rgb_camera_1 = np.zeros((self.camera_height, self.camera_width, 3), dtype=np.uint8)
-        rgb_camera_1[:, :, 0] = (np.arange(self.camera_width) * 255 // self.camera_width).astype(np.uint8)[None, :]
-        rgb_camera_1[:, :, 1] = (np.arange(self.camera_height) * 255 // self.camera_height).astype(np.uint8)[:, None]
-        rgb_camera_1[:, :, 2] = np.uint8((self.tick_count * 2) % 256)
-        
-        rgb_camera_2 = rgb_camera_1.copy()  # Same pattern for second camera
-        
-        # Depth map: simple gradient
-        depth_map = np.linspace(0.5, 5.0, self.camera_height * self.camera_width, dtype=np.float32).reshape(
+        # Front camera: simple gradient pattern
+        camera_rgb = np.zeros((self.camera_height, self.camera_width, 3), dtype=np.uint8)
+        camera_rgb[:, :, 0] = (np.arange(self.camera_width) * 255 // self.camera_width).astype(np.uint8)[None, :]
+        camera_rgb[:, :, 1] = (np.arange(self.camera_height) * 255 // self.camera_height).astype(np.uint8)[:, None]
+        camera_rgb[:, :, 2] = np.uint8((self.tick_count * 2) % 256)
+
+        camera_depth = np.linspace(0.5, 5.0, self.camera_height * self.camera_width, dtype=np.float32).reshape(
             (self.camera_height, self.camera_width)
         )
-        
-        # Confidence map: all ones (full confidence)
-        confidence_map = np.ones((self.camera_height, self.camera_width), dtype=np.float32)
-        
-        # Timestamp
+
         timestamp_ns = int(time.time_ns())
-        
+
         return HardwareObservations(
             joint_positions=joint_positions,
-            rgb_camera_1=rgb_camera_1,
-            rgb_camera_2=rgb_camera_2,
-            depth_map=depth_map,
-            confidence_map=confidence_map,
             camera_height=self.camera_height,
             camera_width=self.camera_width,
             timestamp_ns=timestamp_ns,
+            base_ang_vel_b=np.zeros(3, dtype=np.float32),
+            base_lin_vel_b=np.zeros(3, dtype=np.float32),
+            base_quat_w=np.array([0, 0, 0, 1], dtype=np.float32),
+            joint_velocities=np.zeros(12, dtype=np.float32),
+            contact_forces=np.zeros(5, dtype=np.float32),
+            previous_action=np.zeros(12, dtype=np.float32),
+            camera_rgb=camera_rgb,
+            camera_depth=camera_depth,
         )
 
 

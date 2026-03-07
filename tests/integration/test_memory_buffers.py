@@ -1,8 +1,11 @@
 """Integration tests for memory buffer management."""
 
+import logging
 import time
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 import pytest
 
 from hal.client.client import HalClient
@@ -96,7 +99,7 @@ def test_rapid_message_publishing():
     client.initialize()
 
     client.set_debug(True)
-    
+
     # Publish a dummy message first to establish connection
     hw_obs_init = create_dummy_hw_obs(
         camera_height=480, camera_width=640
@@ -108,7 +111,7 @@ def test_rapid_message_publishing():
     import threading
 
     publish_count = [0]
-    
+
     def rapid_publish():
         for i in range(1000):
             hw_obs = create_dummy_hw_obs(
@@ -122,17 +125,18 @@ def test_rapid_message_publishing():
     pub_thread = threading.Thread(target=rapid_publish)
     pub_thread.start()
 
-    # Poll occasionally (slower than publishing)
+    # Poll occasionally (slower than publishing); with CONFLATE we may receive the latest in any of these
+    received_any = []
     for _ in range(10):
-        time.sleep(0.005)  # 5ms between polls (reduced from 10ms)
-        client.poll(timeout_ms=100)
+        time.sleep(0.005)  # 5ms between polls
+        obs = client.poll(timeout_ms=100)
+        if obs is not None:
+            received_any.append(obs)
 
     pub_thread.join()
 
-    # Memory should stay bounded (HWM=1 ensures only latest is kept)
-    # Verify we got messages
-    final_hw_obs = client.poll(timeout_ms=100)
-    assert final_hw_obs is not None
+    # With CONFLATE/HWM=1 we receive at most one (latest) per poll; we should have received at least one
+    assert len(received_any) > 0, "Should have received at least one observation during rapid publish"
 
     client.close()
     server.close()
@@ -190,9 +194,30 @@ def test_memory_usage_bounded():
 
 
 def test_old_messages_dropped():
-    """Test that old messages are dropped (not buffered)."""
-    import zmq
-    
+    """Test that old messages are dropped (not buffered).
+
+    Why this test matters:
+    The HAL observation channel uses ZMQ PUB/SUB with High Water Mark (HWM) set to 1
+    on both server (SNDHWM) and client (RCVHWM). We need to confirm that the client
+    always receives the *latest* observation when it polls, and that older ones are
+    discarded—not queued. That keeps memory bounded and guarantees latest-only semantics.
+
+    What we mean by "old messages":
+    If the server publishes observation 1.0, then 2.0, then 3.0 faster than the client
+    polls, "old" messages are 1.0 and 2.0. The client should never see them after 3.0
+    has been sent; only 3.0 should be available on the next poll.
+
+    Why we drop them:
+    - Memory: Buffering every observation would grow without bound if the client is slow.
+    - Latency: We want the most recent state for control; stale observations would
+      lead to outdated decisions.
+    - Design: The HAL contract is "latest observation only"; dropping old messages
+      is the intended behavior, not a fallback.
+
+    How we verify: Send two observations (1.0 then 2.0) without polling in between,
+    then poll once. With HWM=1 only the latest (2.0) should be kept; we must receive
+    2.0, not 1.0, proving the old message was dropped.
+    """
     # Use shared context for inproc connections (required for reliable inproc PUB/SUB)
     server_config = HalServerConfig(
         observation_bind="inproc://test_observation_drop",
@@ -213,48 +238,30 @@ def test_old_messages_dropped():
 
     client.set_debug(True)
 
-    # With shared context and inproc, connection should be immediate
-    # Publish and poll a dummy message to establish connection
-    hw_obs_init = create_dummy_hw_obs(
-        camera_height=480, camera_width=640
-    )
+    # Establish connection: one send, one poll
+    hw_obs_init = create_dummy_hw_obs(camera_height=480, camera_width=640)
     server.set_observation(hw_obs_init)
-    client.poll(timeout_ms=1000)
-    # Connection is now established
+    init_recv = client.poll(timeout_ms=1000)
+    assert init_recv is not None, "init: no message received (connection not established)"
 
-    # Publish message 1.0 and poll - should receive it
-    hw_obs_1 = create_dummy_hw_obs(
-        camera_height=480, camera_width=640
-    )
+    # Two sends, no poll in between. With HWM=1 only the latest (2.0) is kept; 1.0 is dropped.
+    hw_obs_1 = create_dummy_hw_obs(camera_height=480, camera_width=640)
     hw_obs_1.joint_positions[0] = 1.0
     server.set_observation(hw_obs_1)
-    received_hw_obs = client.poll(timeout_ms=1000)
-    assert received_hw_obs is not None
-    assert received_hw_obs.joint_positions[0] == 1.0
 
-    # Publish message 2.0 and poll - should receive it (replacing 1.0)
-    hw_obs_2 = create_dummy_hw_obs(
-        camera_height=480, camera_width=640
-    )
+    hw_obs_2 = create_dummy_hw_obs(camera_height=480, camera_width=640)
     hw_obs_2.joint_positions[0] = 2.0
     server.set_observation(hw_obs_2)
-    time.sleep(0.01)
-    received_hw_obs = client.poll(timeout_ms=1000)
-    assert received_hw_obs is not None
-    assert received_hw_obs.joint_positions[0] == 2.0
 
-    # Publish message 3.0 and poll - should receive it (replacing 2.0)
-    hw_obs_3 = create_dummy_hw_obs(
-        camera_height=480, camera_width=640
-    )
-    hw_obs_3.joint_positions[0] = 3.0
-    server.set_observation(hw_obs_3)
+    # One poll: must get the latest (2.0), not the old (1.0)
     time.sleep(0.01)
-    received_hw_obs = client.poll(timeout_ms=1000)
-    
-    # Should have the latest value (3.0)
-    assert received_hw_obs is not None
-    assert received_hw_obs.joint_positions[0] == 3.0
+    received = client.poll(timeout_ms=1000)
+    assert received is not None, (
+        "After two sends (1.0, 2.0) and one poll: expected latest observation (2.0), got None"
+    )
+    assert received.joint_positions[0] == 2.0, (
+        f"After two sends (1.0, 2.0) and one poll: expected latest=2.0 (old dropped), got {received.joint_positions[0]}"
+    )
 
     client.close()
     server.close()

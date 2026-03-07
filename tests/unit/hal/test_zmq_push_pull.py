@@ -346,38 +346,35 @@ def test_zmq_push_pull_mimic_hal_test_structure():
     pusher.connect("inproc://test_command5")
     time.sleep(0.1)  # Give pusher time to connect
     
-    # Mimic: server_thread that calls server.get_joint_command(timeout_ms=2000)
-    # which does: poll(timeout_ms) then recv_multipart(NOBLOCK) then from_bytes()
+    # Mimic get_joint_command: poll then recv (single blob) then from_bytes()
     received_command = [None]
     thread_exception = [None]
-    
+
     def server_receive():
         try:
-            # Mimic get_joint_command: poll then recv_multipart
             if puller.poll(2000, zmq.POLLIN):
-                command_parts = puller.recv_multipart(zmq.NOBLOCK)
-                # Mimic from_bytes() - parse and validate
-                if len(command_parts) != 2:
-                    raise ValueError(f"Expected 2 parts, got {len(command_parts)}")
-                # Simulate deserialization
-                received_command[0] = np.frombuffer(command_parts[1], dtype=np.float32)
+                command_blob = puller.recv(zmq.NOBLOCK)
+                from hal.client.data_structures.hardware import JointCommand
+                cmd = JointCommand.from_bytes(command_blob)
+                received_command[0] = cmd._joint_positions
         except Exception as e:
             thread_exception[0] = e
             import traceback
             traceback.print_exc()
-    
+
     server_thread = threading.Thread(target=server_receive)
     server_thread.start()
-    # Small delay to ensure server thread is waiting
     time.sleep(0.01)
-    
-    # Mimic: Send command as JointCommand (multipart message)
+
+    from hal.client.data_structures.hardware import JointCommand
     command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
-    command_parts = [
-        b'{"joint_positions": {"shape": [12], "dtype": "float32"}, "timestamp_ns": 0}',
-        command.tobytes()
-    ]
-    pusher.send_multipart(command_parts)  # Blocking send
+    joint_cmd = JointCommand(
+        _joint_positions=command,
+        timestamp_ns=0,
+        observation_timestamp_ns=0,
+        joint_names=TEST_QUAD_DEFINITION.get_joint_names(),
+    )
+    pusher.send(joint_cmd.to_bytes())
     
     server_thread.join(timeout=2.0)
     if thread_exception[0]:
@@ -418,32 +415,35 @@ def test_zmq_push_pull_mimic_hal_with_shared_context():
     def server_receive():
         try:
             if puller.poll(2000, zmq.POLLIN):
-                command_parts = puller.recv_multipart(zmq.NOBLOCK)
-                if len(command_parts) != 2:
-                    raise ValueError(f"Expected 2 parts, got {len(command_parts)}")
-                received_command[0] = np.frombuffer(command_parts[1], dtype=np.float32)
+                command_blob = puller.recv(zmq.NOBLOCK)
+                from hal.client.data_structures.hardware import JointCommand
+                cmd = JointCommand.from_bytes(command_blob)
+                received_command[0] = cmd._joint_positions
         except Exception as e:
             thread_exception[0] = e
             import traceback
             traceback.print_exc()
-    
+
     server_thread = threading.Thread(target=server_receive)
     server_thread.start()
     time.sleep(0.05)
-    
+
+    from hal.client.data_structures.hardware import JointCommand
     command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
-    command_parts = [
-        b'{"joint_positions": {"shape": [12], "dtype": "float32"}, "timestamp_ns": 0}',
-        command.tobytes()
-    ]
-    pusher.send_multipart(command_parts)  # Blocking send
-    
+    joint_cmd = JointCommand(
+        _joint_positions=command,
+        timestamp_ns=0,
+        observation_timestamp_ns=0,
+        joint_names=TEST_QUAD_DEFINITION.get_joint_names(),
+    )
+    pusher.send(joint_cmd.to_bytes())
+
     server_thread.join(timeout=2.0)
     if thread_exception[0]:
         raise thread_exception[0]
     assert received_command[0] is not None
     np.testing.assert_array_equal(received_command[0], command)
-    
+
     pusher.close()
     puller.close()
     context.term()
@@ -469,34 +469,25 @@ def test_zmq_push_pull_mimic_hal_exact_timing():
     received_command = [None]
     
     def server_receive():
-        # Exact mimic of: server.get_joint_command(timeout_ms=2000)
         if puller.poll(2000, zmq.POLLIN):
-            command_parts = puller.recv_multipart(zmq.NOBLOCK)
-            # Mimic from_bytes() which might raise ValueError
-            if len(command_parts) != 2:
-                raise ValueError(f"Expected 2 parts, got {len(command_parts)}")
-            # Parse metadata
-            metadata = json.loads(command_parts[0].decode("utf-8"))
-            # Deserialize array
-            joint_pos = np.frombuffer(command_parts[1], dtype=np.dtype(metadata["joint_positions"]["dtype"]))
-            joint_pos = joint_pos.reshape(tuple(metadata["joint_positions"]["shape"]))
-            received_command[0] = joint_pos
-    
+            command_blob = puller.recv(zmq.NOBLOCK)
+            from hal.client.data_structures.hardware import JointCommand
+            cmd = JointCommand.from_bytes(command_blob)
+            received_command[0] = cmd._joint_positions
+
     server_thread = threading.Thread(target=server_receive)
     server_thread.start()
-    # Small delay to ensure server thread is waiting (same as HAL test)
     time.sleep(0.01)
-    
-    # Send command (exact same as HAL test)
+
+    from hal.client.data_structures.hardware import JointCommand
     command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
-    command_parts = [
-        json.dumps({
-            "joint_positions": {"shape": list(command.shape), "dtype": str(command.dtype)},
-            "timestamp_ns": time.time_ns(),
-        }).encode("utf-8"),
-        command.tobytes(),
-    ]
-    pusher.send_multipart(command_parts)  # Blocking send (same as HAL test)
+    joint_cmd = JointCommand(
+        _joint_positions=command,
+        timestamp_ns=time.time_ns(),
+        observation_timestamp_ns=time.time_ns(),
+        joint_names=TEST_QUAD_DEFINITION.get_joint_names(),
+    )
+    pusher.send(joint_cmd.to_bytes())
     
     server_thread.join(timeout=2.0)
     received = received_command[0]
@@ -524,9 +515,9 @@ def test_zmq_push_pull_mimic_hal_with_class_wrapper():
         def get_joint_command(self, timeout_ms=2000):
             """Mimic HAL server's get_joint_command method (returns JointCommand)."""
             if self.command_socket.poll(timeout_ms, zmq.POLLIN):
-                command_parts = self.command_socket.recv_multipart(zmq.NOBLOCK)
+                command_blob = self.command_socket.recv(zmq.NOBLOCK)
                 from hal.client.data_structures.hardware import JointCommand
-                return JointCommand.from_bytes(command_parts)
+                return JointCommand.from_bytes(command_blob)
             return None
         
         def close(self):
@@ -563,16 +554,16 @@ def test_zmq_push_pull_mimic_hal_with_class_wrapper():
         observation_timestamp_ns=time.time_ns(),
         joint_names=TEST_QUAD_DEFINITION.get_joint_names(),
     )
-    command_parts = joint_cmd.to_bytes()
-    pusher.send_multipart(command_parts)  # Blocking send
-    
+    command_blob = joint_cmd.to_bytes()
+    pusher.send(command_blob)
+
     server_thread.join(timeout=2.0)
     received = received_command[0]
     assert received is not None
     d = received.to_positions_dict()
     for i, name in enumerate(received.joint_names):
         assert d[name] == pytest.approx(float(command[i]))
-    
+
     pusher.close()
     server.close()
 
@@ -601,27 +592,26 @@ def test_zmq_push_pull_mimic_hal_with_context_manager():
             if not self._initialized:
                 raise RuntimeError("Server not initialized")
             if self.command_socket.poll(timeout_ms, zmq.POLLIN):
-                command_parts = self.command_socket.recv_multipart(zmq.NOBLOCK)
+                command_blob = self.command_socket.recv(zmq.NOBLOCK)
                 from hal.client.data_structures.hardware import JointCommand
-                return JointCommand.from_bytes(command_parts)
+                return JointCommand.from_bytes(command_blob)
             return None
-        
+
         def close(self):
             if self.command_socket:
                 self.command_socket.close()
             self.context.term()
             self._initialized = False
-        
+
         def __enter__(self):
             self.initialize()
             return self
-        
+
         def __exit__(self, exc_type, exc_val, exc_tb):
             self.close()
-    
+
     context = zmq.Context()
-    
-    # Use context manager like HAL test
+
     with MockServer(context) as server:
         # Create pusher using server's context
         transport_context = server.get_transport_context()
@@ -649,16 +639,16 @@ def test_zmq_push_pull_mimic_hal_with_context_manager():
             observation_timestamp_ns=time.time_ns(),
             joint_names=TEST_QUAD_DEFINITION.get_joint_names(),
         )
-        command_parts = joint_cmd.to_bytes()
-        pusher.send_multipart(command_parts)  # Blocking send
-        
+        command_blob = joint_cmd.to_bytes()
+        pusher.send(command_blob)
+
         server_thread.join(timeout=2.0)
         received = received_command[0]
         assert received is not None
         d = received.to_positions_dict()
         for i, name in enumerate(received.joint_names):
             assert d[name] == pytest.approx(float(command[i]))
-        
+
         pusher.close()
 
 
@@ -685,23 +675,23 @@ def test_zmq_push_pull_mimic_hal_exact_sequence():
         
         def get_joint_command(self, timeout_ms=2000):
             if self.command_socket.poll(timeout_ms, zmq.POLLIN):
-                command_parts = self.command_socket.recv_multipart(zmq.NOBLOCK)
+                command_blob = self.command_socket.recv(zmq.NOBLOCK)
                 from hal.client.data_structures.hardware import JointCommand
-                return JointCommand.from_bytes(command_parts)
+                return JointCommand.from_bytes(command_blob)
             return None
-        
+
         def close(self):
             if self.command_socket:
                 self.command_socket.close()
             self.context.term()
-        
+
         def __enter__(self):
             self.initialize()
             return self
-        
+
         def __exit__(self, exc_type, exc_val, exc_tb):
             self.close()
-    
+
     # Exact sequence from HAL test
     with MockServer(context) as server:
         server.set_debug = lambda x: None  # Mock set_debug
@@ -722,7 +712,6 @@ def test_zmq_push_pull_mimic_hal_exact_sequence():
         server_thread.start()
         time.sleep(0.05)  # Small delay to ensure server is waiting
         
-        # Send command as JointCommand (multipart message)
         from hal.client.data_structures.hardware import JointCommand
         command = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF
         joint_cmd = JointCommand(
@@ -731,9 +720,9 @@ def test_zmq_push_pull_mimic_hal_exact_sequence():
             observation_timestamp_ns=time.time_ns(),
             joint_names=TEST_QUAD_DEFINITION.get_joint_names(),
         )
-        command_parts = joint_cmd.to_bytes()
-        pusher.send_multipart(command_parts)
-        
+        command_blob = joint_cmd.to_bytes()
+        pusher.send(command_blob)
+
         server_thread.join(timeout=2.0)
         received = received_command[0]
         assert received is not None
@@ -778,11 +767,11 @@ def test_zmq_push_pull_mimic_hal_with_observation_socket():
             if not self._initialized:
                 raise RuntimeError("Server not initialized")
             if self.command_socket.poll(timeout_ms, zmq.POLLIN):
-                command_parts = self.command_socket.recv_multipart(zmq.NOBLOCK)
+                command_blob = self.command_socket.recv(zmq.NOBLOCK)
                 from hal.client.data_structures.hardware import JointCommand
-                return JointCommand.from_bytes(command_parts)
+                return JointCommand.from_bytes(command_blob)
             return None
-        
+
         def close(self):
             if self.observation_socket:
                 self.observation_socket.close()
@@ -790,15 +779,14 @@ def test_zmq_push_pull_mimic_hal_with_observation_socket():
                 self.command_socket.close()
             self.context.term()
             self._initialized = False
-        
+
         def __enter__(self):
             self.initialize()
             return self
-        
+
         def __exit__(self, exc_type, exc_val, exc_tb):
             self.close()
-    
-    # Use context manager like HAL test
+
     with MockServer(context) as server:
         # Create pusher using server's context
         transport_context = server.get_transport_context()
@@ -826,14 +814,14 @@ def test_zmq_push_pull_mimic_hal_with_observation_socket():
             observation_timestamp_ns=time.time_ns(),
             joint_names=TEST_QUAD_DEFINITION.get_joint_names(),
         )
-        command_parts = joint_cmd.to_bytes()
-        pusher.send_multipart(command_parts)  # Blocking send
-        
+        command_blob = joint_cmd.to_bytes()
+        pusher.send(command_blob)
+
         server_thread.join(timeout=2.0)
         received = received_command[0]
         assert received is not None
         d = received.to_positions_dict()
         for i, name in enumerate(received.joint_names):
             assert d[name] == pytest.approx(float(command[i]))
-        
+
         pusher.close()

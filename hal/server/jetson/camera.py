@@ -2,6 +2,7 @@
 
 This module provides a wrapper for the ZED camera SDK to capture depth frames
 and convert them to depth features matching the policy model's training format.
+ZedCamera implements the RgbDepthCamera protocol (see rgb_depth_camera.py).
 
 Production code: Requires ZED SDK (pyzed) and hardware to be available.
 Fails fast if dependencies are missing.
@@ -13,11 +14,13 @@ from typing import Optional
 
 import numpy as np
 
+from hal.server.jetson.rgb_depth_camera import RgbDepthCamera
+
 logger = logging.getLogger(__name__)
 
 
-class ZedCamera:
-    """ZED camera wrapper for depth frame capture and preprocessing.
+class ZedCamera(RgbDepthCamera):
+    """ZED camera wrapper implementing RgbDepthCamera.
 
     Handles ZED SDK initialization, frame capture, and conversion to depth features.
     """
@@ -53,6 +56,9 @@ class ZedCamera:
         # Pre-allocated buffers to avoid allocation in hot path
         self.depth_image = None
         self.feature_buffer = np.zeros(self.depth_feature_dim, dtype=np.float32)
+        # Last captured frame (one grab fills both; used by get_rgb_image/get_depth_map)
+        self._last_rgb: Optional[np.ndarray] = None
+        self._last_depth_np: Optional[np.ndarray] = None
 
         # Initialize camera
         self._initialize_camera()
@@ -86,8 +92,13 @@ class ZedCamera:
                 init_params.camera_resolution = self._zed_module.RESOLUTION.HD1080
 
             init_params.camera_fps = self.fps
-            init_params.depth_mode = getattr(
-                self._zed_module.DEPTH_MODE, self.depth_mode, self._zed_module.DEPTH_MODE.PERFORMANCE
+            depth_mode_map = {
+                "PERFORMANCE": self._zed_module.DEPTH_MODE.PERFORMANCE,
+                "QUALITY": self._zed_module.DEPTH_MODE.QUALITY,
+                "ULTRA": self._zed_module.DEPTH_MODE.ULTRA,
+            }
+            init_params.depth_mode = depth_mode_map.get(
+                self.depth_mode, self._zed_module.DEPTH_MODE.PERFORMANCE
             )
             init_params.coordinate_units = self._zed_module.UNIT.METER
             init_params.coordinate_system = self._zed_module.COORDINATE_SYSTEM.RIGHT_HANDED_Y_UP
@@ -102,8 +113,9 @@ class ZedCamera:
             logger.info(f"ZED camera initialized: {camera_info.camera_model}")
             logger.info(f"Resolution: {self.resolution}, FPS: {self.fps}")
 
-            # Create depth image mat
+            # Create depth and RGB image mats
             self.depth_image = self._zed_module.Mat()
+            self._rgb_image = self._zed_module.Mat()
 
             self.initialized = True
             logger.info("ZED camera initialized successfully")
@@ -133,6 +145,65 @@ class ZedCamera:
         """Context manager exit."""
         self.close()
 
+    def _grab_frame(self) -> bool:
+        """Grab one frame and fill _last_rgb and _last_depth_np. Returns True on success.
+
+        Expected failure (no frame available, USB glitch, etc.) is reported by the SDK
+        via grab() return value; we return False and callers get None. We do not catch
+        exceptions: any raise from the SDK or numpy is a bug or serious error and
+        should propagate.
+        """
+        if not self.initialized:
+            return False
+        if self.camera.grab() != self._zed_module.ERROR_CODE.SUCCESS:
+            return False
+        # Retrieve depth
+        self.camera.retrieve_measure(
+            self.depth_image, self._zed_module.MEASURE.DEPTH, self._zed_module.MEM.CPU
+        )
+        depth_array = self.depth_image.get_data()
+        self._last_depth_np = np.asarray(depth_array, dtype=np.float32).copy()
+        # Retrieve left RGB
+        self.camera.retrieve_image(
+            self._rgb_image, self._zed_module.VIEW.LEFT, self._zed_module.MEM.CPU
+        )
+        rgb_data = self._rgb_image.get_data()
+        # ZED returns BGRA (4 channels); convert to RGB uint8 (H, W, 3)
+        rgb_np = np.asarray(rgb_data)
+        if rgb_np.shape[-1] == 4:
+            rgb_np = rgb_np[:, :, :3]  # drop alpha
+        elif rgb_np.shape[-1] != 3:
+            rgb_np = rgb_np[:, :, :3]
+        self._last_rgb = np.ascontiguousarray(rgb_np.astype(np.uint8))
+        self.last_frame_time_ns = time.time_ns()
+        return True
+
+    def get_camera_frames(self) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """Capture one frame and return (RGB, depth) for HAL observations.
+
+        One grab retrieves both left RGB and depth. Use this when populating
+        camera_rgb and camera_depth to avoid double capture.
+
+        Returns:
+            (rgb, depth): rgb (H, W, 3) uint8, depth (H, W) float32 in meters; either may be None on failure.
+        """
+        if not self._grab_frame():
+            return None, None
+        return self._last_rgb, self._last_depth_np
+
+    def get_rgb_image(self) -> Optional[np.ndarray]:
+        """Capture and return left RGB image (H, W, 3) uint8. Performs one grab."""
+        if not self._grab_frame():
+            return None
+        return self._last_rgb
+
+    def get_depth_map(self) -> Optional[np.ndarray]:
+        """Return the last captured depth map (H, W) float32 in meters.
+
+        No grab is performed; use get_camera_frames() or get_rgb_image() first to capture a frame.
+        """
+        return self._last_depth_np
+
     def capture_depth_frame(self) -> Optional[np.ndarray]:
         """Capture latest depth frame from ZED camera.
 
@@ -145,29 +216,9 @@ class ZedCamera:
         if not self.initialized:
             raise RuntimeError("Camera not initialized")
 
-        try:
-            # Grab frame
-            if self.camera.grab() != self._zed_module.ERROR_CODE.SUCCESS:
-                logger.warning("Failed to grab ZED frame")
-                return None
-
-            # Retrieve depth image
-            self.camera.retrieve_measure(
-                self.depth_image, self._zed_module.MEASURE.DEPTH, self._zed_module.MEM.CPU
-            )
-
-            # Convert to numpy array
-            depth_array = self.depth_image.get_data()
-            depth_array = np.asarray(depth_array, dtype=np.float32)
-
-            # Update frame time
-            self.last_frame_time_ns = time.time_ns()
-
-            return depth_array
-
-        except Exception as e:
-            logger.error(f"Error capturing depth frame: {e}")
+        if not self._grab_frame():
             return None
+        return self._last_depth_np
 
     def _validate_depth_frame(self, depth_frame: np.ndarray) -> bool:
         """Validate depth frame.

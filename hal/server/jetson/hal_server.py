@@ -7,11 +7,11 @@ import time
 from typing import Optional
 
 import numpy as np
-from scipy.ndimage import zoom
 
 from hal.server import HalServerBase, HalServerConfig
 from hal.server.robot_definition import RobotDefinition
 from hal.client.data_structures.hardware import HardwareObservations, JointCommand
+from hal.server.jetson.rgb_depth_camera import RgbDepthCamera
 from hal.server.jetson.camera import ZedCamera, create_zed_camera
 from hal.server.jetson.krabby_mcusdk import KrabbyMCUSDK
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class JetsonHalServer(HalServerBase):
     """HAL server for Jetson robot deployment.
 
-    Integrates with ZED camera and real sensors to publish observations.
+    Integrates with a front camera (e.g. ZED) and real sensors to publish observations.
     Applies joint commands to real actuators.
     """
 
@@ -46,8 +46,8 @@ class JetsonHalServer(HalServerBase):
             observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
             action_dim: Action dimension (model output joint count)
             robot_definition: Robot definition for joint names and order (adapter uses get_joint_names()).
-            camera_resolution: ZED camera resolution (width, height)
-            camera_fps: ZED camera FPS
+            camera_resolution: Front camera resolution (width, height)
+            camera_fps: Front camera FPS
             mcu_port: Serial port for MCU connection. If None, uses default from MCU SDK.
             mcu_baud: Baud rate for MCU serial communication.
             mcu_auto_connect: If True, automatically connect to MCU on initialization.
@@ -58,7 +58,7 @@ class JetsonHalServer(HalServerBase):
         self.robot_definition = robot_definition
         self.camera_resolution = camera_resolution
         self.camera_fps = camera_fps
-        self.zed_camera: Optional[ZedCamera] = None
+        self.front_camera: Optional[RgbDepthCamera] = None
         self.state_source = None  # IMU/encoders (placeholder, real implementation in future)
         self.actuator_sink = None  # Motors (placeholder, real implementation in future)
         self._last_joint_positions: Optional[dict[str, float]] = None  # from command.to_positions_dict()
@@ -88,26 +88,27 @@ class JetsonHalServer(HalServerBase):
                 )
 
     def initialize_camera(self) -> None:
-        """Initialize ZED camera.
+        """Initialize front camera (RGB + depth + scan features).
 
-        Creates ZED camera wrapper with error handling.
+        Uses the default camera implementation (e.g. ZED). Other cameras can be
+        supported by providing a compatible interface and factory.
         """
-        logger.info("Initializing ZED camera...")
-        self.zed_camera = create_zed_camera(
+        logger.info("Initializing front camera...")
+        self.front_camera = create_zed_camera(
             resolution=self.camera_resolution,
             fps=self.camera_fps,
             depth_mode="PERFORMANCE",
             depth_feature_dim=self.observation_dimensions.num_scan,
         )
 
-        if self.zed_camera is None:
-            logger.error("Failed to initialize ZED camera")
-            raise RuntimeError("ZED camera initialization failed")
-        elif not self.zed_camera.is_ready():
-            logger.error("ZED camera initialized but not ready")
-            raise RuntimeError("ZED camera is not ready")
+        if self.front_camera is None:
+            logger.error("Failed to initialize front camera")
+            raise RuntimeError("Front camera initialization failed")
+        elif not self.front_camera.is_ready():
+            logger.error("Front camera initialized but not ready")
+            raise RuntimeError("Front camera is not ready")
         else:
-            logger.info("ZED camera initialized successfully")
+            logger.info("Front camera initialized successfully")
 
     def initialize_sensors(self) -> None:
         """Initialize state sensors (IMU/encoders).
@@ -142,7 +143,7 @@ class JetsonHalServer(HalServerBase):
         logger.info("Actuator initialization (placeholder)")
 
     def _build_depth_features(self) -> np.ndarray:
-        """Build depth features from ZED camera.
+        """Build depth features from front camera.
 
         Returns:
             Depth features as float32 array
@@ -150,17 +151,17 @@ class JetsonHalServer(HalServerBase):
         Raises:
             RuntimeError: If camera is not initialized or depth features cannot be obtained
         """
-        if self.zed_camera is None:
+        if self.front_camera is None:
             raise RuntimeError(
-                "ZED camera not initialized. "
+                "Front camera not initialized. "
                 "Camera must be initialized via initialize_camera() before building depth features."
             )
 
         # Get depth features (includes capture, validation, and feature extraction)
-        depth_features = self.zed_camera.get_depth_features()
+        depth_features = self.front_camera.get_depth_features()
         if depth_features is None:
             raise RuntimeError(
-                "Failed to get depth features from ZED camera. "
+                "Failed to get depth features from front camera. "
                 "Depth features are required for policy operation. "
                 "Check camera connection and ensure frames are being captured."
             )
@@ -248,8 +249,8 @@ class JetsonHalServer(HalServerBase):
         Constructs HardwareObservations from raw sensor data.
         Extracts:
         - Joint positions from state vector (echoed from last command)
-        - Depth maps from ZED camera (if available)
-        - RGB images if available from ZED camera (if available)
+        - Depth maps from front camera (if available)
+        - RGB images from front camera (if available)
         
         Base class will loop until observation is published or throw if client isn't consuming.
         
@@ -307,59 +308,40 @@ class JetsonHalServer(HalServerBase):
             for i in range(num_prev):
                 previous_action[i] = self._last_joint_positions.get(names[i], 0.0)
 
-        # Get camera data from ZED camera
-        # ZED camera provides depth features for model input, but we also need
-        # raw depth maps and RGB images for HardwareObservations
+        # Get camera data and scan features from ZED when available
         camera_height, camera_width = self.camera_resolution[1], self.camera_resolution[0]
-        
-        # Initialize with placeholder values
-        rgb_camera_1 = np.zeros((camera_height, camera_width, 3), dtype=np.uint8)
-        rgb_camera_2 = np.zeros((camera_height, camera_width, 3), dtype=np.uint8)
-        depth_map = np.zeros((camera_height, camera_width), dtype=np.float32)
-        confidence_map = np.ones((camera_height, camera_width), dtype=np.float32)
-        
-        if self.zed_camera is not None:
-            # Try to get raw depth map if available
-            if hasattr(self.zed_camera, 'get_depth_map'):
-                depth_map_data = self.zed_camera.get_depth_map()
-                if depth_map_data is not None:
-                    # Ensure it's a numpy array
-                    if not isinstance(depth_map_data, np.ndarray):
-                        depth_map_data = np.array(depth_map_data)
-                    
-                    # Resize if needed to match camera resolution
-                    if depth_map_data.shape != (camera_height, camera_width):
-                        zoom_factors = (camera_height / depth_map_data.shape[0], 
-                                      camera_width / depth_map_data.shape[1])
-                        depth_map = zoom(depth_map_data, zoom_factors, order=1).astype(np.float32)
-                    else:
-                        depth_map = depth_map_data.astype(np.float32)
-            
-            # Try to get RGB images if available
-            if hasattr(self.zed_camera, 'get_rgb_images'):
-                rgb_images = self.zed_camera.get_rgb_images()
-                if rgb_images is not None and len(rgb_images) >= 2:
-                    # Ensure RGB images are uint8
-                    rgb_camera_1 = np.array(rgb_images[0], dtype=np.uint8)
-                    rgb_camera_2 = np.array(rgb_images[1], dtype=np.uint8)
-                    
-                    # Resize if needed
-                    if rgb_camera_1.shape[:2] != (camera_height, camera_width):
-                        zoom_factors = (camera_height / rgb_camera_1.shape[0], 
-                                      camera_width / rgb_camera_1.shape[1], 1)
-                        rgb_camera_1 = zoom(rgb_camera_1, zoom_factors, order=1).astype(np.uint8)
-                    if rgb_camera_2.shape[:2] != (camera_height, camera_width):
-                        zoom_factors = (camera_height / rgb_camera_2.shape[0], 
-                                      camera_width / rgb_camera_2.shape[1], 1)
-                        rgb_camera_2 = zoom(rgb_camera_2, zoom_factors, order=1).astype(np.uint8)
+        camera_rgb: Optional[np.ndarray] = None
+        camera_depth: Optional[np.ndarray] = None
+        scan_features: Optional[np.ndarray] = None
 
-        # Create hardware observation
+        if self.front_camera is not None:
+            rgb_frame, depth_frame = self.front_camera.get_camera_frames()
+            if rgb_frame is None or depth_frame is None:
+                logger.warning(
+                    f"Front camera get_camera_frames() returned None (rgb={rgb_frame is not None}, depth={depth_frame is not None}); publishing observation without camera_rgb/camera_depth",
+                )
+            if rgb_frame is not None and depth_frame is not None:
+                expected_rgb_shape = (camera_height, camera_width, 3)
+                expected_depth_shape = (camera_height, camera_width)
+                if rgb_frame.shape != expected_rgb_shape:
+                    raise RuntimeError(
+                        f"ZED RGB frame shape {rgb_frame.shape} does not match configured resolution "
+                        f"{expected_rgb_shape}. Set camera_resolution to (width, height) matching the ZED output."
+                    )
+                if depth_frame.shape != expected_depth_shape:
+                    raise RuntimeError(
+                        f"ZED depth frame shape {depth_frame.shape} does not match configured resolution "
+                        f"{expected_depth_shape}. Set camera_resolution to (width, height) matching the ZED output."
+                    )
+                camera_rgb = np.asarray(rgb_frame, dtype=np.uint8)
+                camera_depth = depth_frame.astype(np.float32)
+            # Scan features from ZED (132-dim height-like features for policy; separate grab)
+            scan_features = self.front_camera.get_depth_features()
+            if scan_features is not None:
+                scan_features = np.asarray(scan_features, dtype=np.float32)
+
         hw_obs = HardwareObservations(
             joint_positions=joint_positions,
-            rgb_camera_1=rgb_camera_1,
-            rgb_camera_2=rgb_camera_2,
-            depth_map=depth_map,
-            confidence_map=confidence_map,
             camera_height=camera_height,
             camera_width=camera_width,
             timestamp_ns=time.time_ns(),
@@ -369,6 +351,9 @@ class JetsonHalServer(HalServerBase):
             joint_velocities=joint_velocities,
             contact_forces=contact_forces,
             previous_action=previous_action,
+            camera_rgb=camera_rgb,
+            camera_depth=camera_depth,
+            scan_features=scan_features,
         )
 
         # Publish hardware observation via base-class publisher
@@ -439,9 +424,9 @@ class JetsonHalServer(HalServerBase):
             self._mcusdk = None
         
         # Close camera
-        if self.zed_camera is not None:
-            self.zed_camera.close()
-            self.zed_camera = None
+        if self.front_camera is not None:
+            self.front_camera.close()
+            self.front_camera = None
 
         # Close server resources (sockets, context)
         super().close()
