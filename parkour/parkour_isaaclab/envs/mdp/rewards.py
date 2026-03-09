@@ -19,12 +19,12 @@ import numpy as np
 class reward_feet_edge(ManagerTermBase):
     def __init__(self, cfg: RewardTermCfg, env: ParkourManagerBasedRLEnv):
         super().__init__(cfg, env)
-        self.contact_sensor: ContactSensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        self.contact_sensor: ContactSensor | None = env.scene.sensors.get(cfg.params["sensor_cfg"].name)
         self.asset: Articulation = env.scene[cfg.params["asset_cfg"].name]
         self.sensor_cfg = cfg.params["sensor_cfg"]
         self.asset_cfg = cfg.params["asset_cfg"]
-        self.parkour_event: ParkourEvent =  env.parkour_manager.get_term(cfg.params["parkour_name"])
-        self.body_id = self.contact_sensor.find_bodies('base')[0]
+        self.parkour_event: ParkourEvent = env.parkour_manager.get_term(cfg.params["parkour_name"])
+        self.body_id = self.contact_sensor.find_bodies("base")[0] if self.contact_sensor else 0
         self.horizontal_scale = env.scene.terrain.cfg.terrain_generator.horizontal_scale
         size_x, size_y = env.scene.terrain.cfg.terrain_generator.size
         self.rows_offset = (size_x * env.scene.terrain.cfg.terrain_generator.num_rows/2)
@@ -41,6 +41,8 @@ class reward_feet_edge(ManagerTermBase):
         sensor_cfg: SceneEntityCfg,
         parkour_name: str,
         ) -> torch.Tensor:
+        if self.contact_sensor is None:
+            return torch.zeros(env.num_envs, device=self.device)
         feet_pos_x = ((self.asset.data.body_state_w[:, self.asset_cfg.body_ids ,0] + self.rows_offset)
                       /self.horizontal_scale).round().long() 
         feet_pos_y = ((self.asset.data.body_state_w[:, self.asset_cfg.body_ids ,1] + self.cols_offset)
@@ -95,8 +97,12 @@ def reward_ang_vel_xy(
 class reward_action_rate(ManagerTermBase):
     def __init__(self, cfg: RewardTermCfg, env: ParkourManagerBasedRLEnv):
         super().__init__(cfg, env)
-        asset: Articulation = env.scene[cfg.params["asset_cfg"].name]
-        self.previous_actions = torch.zeros(env.num_envs, 2,  asset.num_joints, dtype= torch.float ,device=self.device)
+        joint_pos_term = env.action_manager.get_term("joint_pos")
+        action_dim = getattr(joint_pos_term, "_num_joints", None)
+        if action_dim is None:
+            asset: Articulation = env.scene[cfg.params["asset_cfg"].name]
+            action_dim = asset.num_joints
+        self.previous_actions = torch.zeros(env.num_envs, 2, action_dim, dtype=torch.float, device=self.device)
         
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
         self.previous_actions[env_ids, 0,:] = 0.
@@ -159,11 +165,15 @@ def reward_orientation(
 def reward_feet_stumble(
     env: ParkourManagerBasedRLEnv,        
     sensor_cfg: SceneEntityCfg ,
-    ) -> torch.Tensor: 
-    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    net_contact_forces = contact_sensor.data.net_forces_w_history[:,0,sensor_cfg.body_ids]
-    rew = torch.any(torch.norm(net_contact_forces[:, :, :2], dim=2) >\
-            4 *torch.abs(net_contact_forces[:, :, 2]), dim=1)
+    ) -> torch.Tensor:
+    contact_sensor = env.scene.sensors.get(sensor_cfg.name)
+    if contact_sensor is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    net_contact_forces = contact_sensor.data.net_forces_w_history[:, 0, sensor_cfg.body_ids]
+    rew = torch.any(
+        torch.norm(net_contact_forces[:, :, :2], dim=2) > 4 * torch.abs(net_contact_forces[:, :, 2]),
+        dim=1,
+    )
     return rew.float()
 
 def reward_tracking_goal_vel(
@@ -216,6 +226,8 @@ def reward_collision(
     env: ParkourManagerBasedRLEnv, 
     sensor_cfg: SceneEntityCfg ,
 ) -> torch.Tensor:
-    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
-    net_contact_forces = contact_sensor.data.net_forces_w_history[:,0,sensor_cfg.body_ids]
-    return torch.sum(1.*(torch.norm(net_contact_forces, dim=-1) > 0.1), dim=1)
+    contact_sensor = env.scene.sensors.get(sensor_cfg.name)
+    if contact_sensor is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    net_contact_forces = contact_sensor.data.net_forces_w_history[:, 0, sensor_cfg.body_ids]
+    return torch.sum(1.0 * (torch.norm(net_contact_forces, dim=-1) > 0.1), dim=1)

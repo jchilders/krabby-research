@@ -40,11 +40,20 @@ The Isaac Sim HAL server must run in an environment that has Isaac Sim and Isaac
      -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
      krabby-isaacsim:latest --joystick --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0
    ```
+   For the hexapod (crab_hex.usd), mount assets and use `--usd`; then run the client with `--hex`:
+   ```bash
+   docker run --rm --gpus all -p 5555:5555 -p 5556:5556 \
+     -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
+     -v "$(pwd)/assets:/workspace/assets" \
+     krabby-isaacsim:latest --joystick --usd /workspace/assets/udf/crab_hex.usd
+   ```
+   Or use `./scripts/run_isaac_hal_server.sh --hexapod` (see runbook).
 
-2. Run the client:
+2. Run the client (use `--quad` for Go2, `--hex` for crab hex):
    ```bash
    krabby-uno-sim --quad
    ```
+   For hexapod server: `krabby-uno-sim --hex`
    Defaults: observation `tcp://127.0.0.1:5555`, command `tcp://127.0.0.1:5556`. Use `--InputController <id>` for a specific gamepad.
 
 ## Gamepad

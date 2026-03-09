@@ -6,7 +6,8 @@ the gamepad. Start the IsaacSim HAL server first; see controller/scripts/isaac/i
 
 Usage:
   krabby-uno-sim --quad   # 12-joint quad/Go2 sim
-  krabby-uno-sim          # 18-joint hex (default mapper)
+  krabby-uno-sim --hex    # 18-joint hexapod (crab hex)
+  krabby-uno-sim          # same as --hex (default)
   krabby-uno-sim --observation_endpoint tcp://127.0.0.1:5555 --command_endpoint tcp://127.0.0.1:5556
   krabby-uno-sim --InputController 0 --rate 50
   krabby-uno-sim --gamepad-wait 600   # wait up to 10 min for Pro Controller (default)
@@ -100,10 +101,16 @@ def main() -> int:
         action="store_true",
         help="Enable debug logging (gamepad mapper and HAL client)",
     )
-    parser.add_argument(
+    robot_group = parser.add_mutually_exclusive_group()
+    robot_group.add_argument(
         "--quad",
         action="store_true",
         help="Use 12-joint quad (for Isaac Sim demo with Go2/quad task)",
+    )
+    robot_group.add_argument(
+        "--hex",
+        action="store_true",
+        help="Use 18-joint hexapod (crab hex; default)",
     )
     parser.add_argument(
         "--connection-timeout",

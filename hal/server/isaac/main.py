@@ -78,8 +78,14 @@ def main():
     parser.add_argument(
         "--task",
         type=str,
-        required=True,
-        help="Task name (e.g., Isaac-Anymal-D-v0 or Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0)",
+        default=None,
+        help="Task name (e.g., Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0). Omit when using --usd.",
+    )
+    parser.add_argument(
+        "--usd",
+        type=str,
+        default=None,
+        help="Path to robot/scene USD (e.g. assets/udf/crab_hex.usd). Uses Isaac-CrabHex-Joystick-v0 and --robot hex.",
     )
     parser.add_argument(
         "--robot",
@@ -139,6 +145,15 @@ def main():
 
     if not args.joystick and not args.checkpoint:
         parser.error("--checkpoint required unless --joystick")
+    if args.usd:
+        if args.task is not None:
+            parser.error("Do not pass --task when using --usd")
+        os.environ["KRABBY_HEX_USD_PATH"] = args.usd
+        args.task = "Isaac-CrabHex-Joystick-v0"
+        args.robot = "hex"
+        logger.info("Using --usd: task=%s, robot=hex, KRABBY_HEX_USD_PATH=%s", args.task, args.usd)
+    elif args.task is None:
+        parser.error("--task required unless --usd is given")
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
         logger.setLevel(logging.DEBUG)
