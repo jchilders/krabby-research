@@ -24,3 +24,5 @@ coverage>=7.3.0
 # Reinforcement learning library
 rsl-rl-lib>=2.3.1
 
+# Telemetry websocket server
+websockets>=12.0

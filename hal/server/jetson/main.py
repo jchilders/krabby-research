@@ -12,6 +12,7 @@ and applies commands to control the robot actuators.
 
 import argparse
 import logging
+import os
 import signal
 import sys
 import time
@@ -19,6 +20,7 @@ import time
 from hal.client.config import HalClientConfig
 from hal.server import HalServerConfig
 from hal.server.jetson import JetsonHalServer
+from hal.server.jetson.telemetry_websocket import TelemetryWebSocketConfig
 from compute.parkour.inference_client import ParkourInferenceClient
 from compute.parkour.policy_interface import ModelWeights
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
@@ -36,7 +38,13 @@ def main():
     parser = argparse.ArgumentParser(description="Jetson production deployment with HAL server and inference")
 
     # Model arguments
-    parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        required=False,
+        default=None,
+        help="Path to model checkpoint (required unless --telemetry_only is set)",
+    )
     parser.add_argument("--control_rate", type=float, default=100.0, help="Control loop rate in Hz")
     parser.add_argument(
         "--inference_device",
@@ -44,6 +52,12 @@ def main():
         default="cuda",
         choices=["cuda", "cpu"],
         help="Device for inference",
+    )
+    parser.add_argument(
+        "--telemetry_only",
+        action="store_true",
+        default=False,
+        help="Run telemetry websocket only (skip inference client and control loop)",
     )
 
     # HAL endpoints (inproc for same-process communication)
@@ -58,6 +72,48 @@ def main():
         type=str,
         default="inproc://hal_commands",
         help="Command endpoint (inproc for same-process)",
+    )
+    parser.add_argument(
+        "--telemetry_ws_enabled",
+        action="store_true",
+        default=False,
+        help="Enable telemetry websocket server",
+    )
+    parser.add_argument(
+        "--telemetry_ws_host",
+        type=str,
+        default="0.0.0.0",
+        help="Telemetry websocket bind host",
+    )
+    parser.add_argument(
+        "--telemetry_ws_port",
+        type=int,
+        default=8787,
+        help="Telemetry websocket bind port",
+    )
+    parser.add_argument(
+        "--telemetry_ws_path",
+        type=str,
+        default="/krabby/telemetry",
+        help="Telemetry websocket path",
+    )
+    parser.add_argument(
+        "--telemetry_ws_publish_hz",
+        type=float,
+        default=10.0,
+        help="Telemetry websocket publish rate in Hz",
+    )
+    parser.add_argument(
+        "--telemetry_ws_fake_data",
+        action="store_true",
+        default=False,
+        help="Serve synthetic telemetry data instead of MCU telemetry",
+    )
+    parser.add_argument(
+        "--telemetry_ws_token",
+        type=str,
+        default=None,
+        help="Telemetry websocket auth token (fallback: KRABBY_TELEMETRY_TOKEN env var)",
     )
 
     args = parser.parse_args()
@@ -82,6 +138,26 @@ def main():
     parkour_client = None
 
     try:
+        telemetry_token = args.telemetry_ws_token or os.getenv("KRABBY_TELEMETRY_TOKEN", "")
+        if args.telemetry_ws_enabled and not telemetry_token:
+            raise ValueError(
+                "--telemetry_ws_enabled requires --telemetry_ws_token or KRABBY_TELEMETRY_TOKEN"
+            )
+        if args.telemetry_only and not args.telemetry_ws_enabled:
+            raise ValueError("--telemetry_only requires --telemetry_ws_enabled")
+        if not args.telemetry_only and not args.checkpoint:
+            raise ValueError("--checkpoint is required unless --telemetry_only is set")
+
+        telemetry_ws_config = TelemetryWebSocketConfig(
+            enabled=args.telemetry_ws_enabled,
+            host=args.telemetry_ws_host,
+            port=args.telemetry_ws_port,
+            path=args.telemetry_ws_path,
+            publish_hz=args.telemetry_ws_publish_hz,
+            token=telemetry_token,
+            fake_data=args.telemetry_ws_fake_data,
+        )
+
         # Create HAL server config (inproc for production)
         hal_server_config = HalServerConfig(
             observation_bind=args.observation_bind,
@@ -94,86 +170,95 @@ def main():
             observation_dimensions=observation_dimensions,
             action_dim=model_definition.action_dim,
             robot_definition=robot_definition,
+            telemetry_ws_config=telemetry_ws_config,
         )
         hal_server.initialize()
 
-        # Initialize hardware (camera, sensors, actuators)
-        # TODO: Re-enable camera initialization once ZED SDK/pyzed is properly configured
-        # hal_server.initialize_camera()
-        hal_server.initialize_sensors()
-        hal_server.initialize_actuators()
-
         logger.info("HAL server initialized")
 
-        # Get transport context for inproc connections
-        transport_context = hal_server.get_transport_context()
+        if args.telemetry_only:
+            logger.info("Starting telemetry-only loop")
+            try:
+                while running:
+                    time.sleep(0.1)
+            except KeyboardInterrupt:
+                logger.info("Interrupted by user")
+        else:
+            # Initialize hardware (camera, sensors, actuators)
+            # TODO: Re-enable camera initialization once ZED SDK/pyzed is properly configured
+            # hal_server.initialize_camera()
+            hal_server.initialize_sensors()
+            hal_server.initialize_actuators()
 
-        # Create HAL client config
-        hal_client_config = HalClientConfig(
-            observation_endpoint=args.observation_bind,
-            command_endpoint=args.command_bind,
-        )
+            # Get transport context for inproc connections
+            transport_context = hal_server.get_transport_context()
 
-        model_weights = ModelWeights(
-            checkpoint_path=args.checkpoint,
-            observation_dimensions=observation_dimensions,
-            action_dim=model_definition.action_dim,
-        )
+            # Create HAL client config
+            hal_client_config = HalClientConfig(
+                observation_endpoint=args.observation_bind,
+                command_endpoint=args.command_bind,
+            )
 
-        parkour_client = ParkourInferenceClient(
-            hal_client_config=hal_client_config,
-            model_weights=model_weights,
-            observation_dimensions=observation_dimensions,
-            robot_definition=robot_definition,
-            control_rate=args.control_rate,
-            device=args.inference_device,
-            transport_context=transport_context,
-        )
-        parkour_client.initialize()
-        logger.info("Parkour inference client initialized")
+            model_weights = ModelWeights(
+                checkpoint_path=args.checkpoint,
+                observation_dimensions=observation_dimensions,
+                action_dim=model_definition.action_dim,
+            )
 
-        # Start inference client in separate thread
-        parkour_client.start_thread(running_flag=lambda: running)
+            parkour_client = ParkourInferenceClient(
+                hal_client_config=hal_client_config,
+                model_weights=model_weights,
+                observation_dimensions=observation_dimensions,
+                robot_definition=robot_definition,
+                control_rate=args.control_rate,
+                device=args.inference_device,
+                transport_context=transport_context,
+            )
+            parkour_client.initialize()
+            logger.info("Parkour inference client initialized")
 
-        logger.info(f"Starting production loop at {args.control_rate} Hz")
-        period_s = 1.0 / args.control_rate
+            # Start inference client in separate thread
+            parkour_client.start_thread(running_flag=lambda: running)
 
-        # Main loop: HAL server operations
-        try:
-            while running:
-                loop_start_ns = time.time_ns()
+            logger.info(f"Starting production loop at {args.control_rate} Hz")
+            period_s = 1.0 / args.control_rate
 
-                # Publish observations from real sensors
-                hal_server.set_observation()
+            # Main loop: HAL server operations
+            try:
+                while running:
+                    loop_start_ns = time.time_ns()
 
-                # Try to get joint command from inference client (non-blocking)
-                # This command was generated from observations we published in a PREVIOUS iteration
-                # We'll apply it in THIS iteration
-                command = hal_server.get_joint_command(timeout_ms=1)  # 1ms timeout for non-blocking check
-                if command is not None:
-                    # Apply the command to actuators
-                    hal_server.apply_command(command)
-                # If no new command available, reuse the last command to maintain current pose
-                # This allows the robot to continue while inference processes observations
-                # The robot will continue moving based on the last applied command
+                    # Publish observations from real sensors
+                    hal_server.set_observation()
 
-                # Timing control
-                loop_end_ns = time.time_ns()
-                loop_duration_s = (loop_end_ns - loop_start_ns) / 1e9
-                sleep_time = max(0.0, period_s - loop_duration_s)
+                    # Try to get joint command from inference client (non-blocking)
+                    # This command was generated from observations we published in a PREVIOUS iteration
+                    # We'll apply it in THIS iteration
+                    command = hal_server.get_joint_command(timeout_ms=1)  # 1ms timeout for non-blocking check
+                    if command is not None:
+                        # Apply the command to actuators
+                        hal_server.apply_command(command)
+                    # If no new command available, reuse the last command to maintain current pose
+                    # This allows the robot to continue while inference processes observations
+                    # The robot will continue moving based on the last applied command
 
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-                else:
-                    if loop_duration_s > period_s * 1.1:
-                        logger.warning(
-                            f"Loop unable to keep up! "
-                            f"Frame time: {loop_duration_s*1000:.2f}ms "
-                            f"exceeds target: {period_s*1000:.2f}ms"
-                        )
+                    # Timing control
+                    loop_end_ns = time.time_ns()
+                    loop_duration_s = (loop_end_ns - loop_start_ns) / 1e9
+                    sleep_time = max(0.0, period_s - loop_duration_s)
 
-        except KeyboardInterrupt:
-            logger.info("Interrupted by user")
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+                    else:
+                        if loop_duration_s > period_s * 1.1:
+                            logger.warning(
+                                f"Loop unable to keep up! "
+                                f"Frame time: {loop_duration_s*1000:.2f}ms "
+                                f"exceeds target: {period_s*1000:.2f}ms"
+                            )
+
+            except KeyboardInterrupt:
+                logger.info("Interrupted by user")
 
     except Exception as e:
         logger.error(f"Failed to run Jetson HAL server: {e}", exc_info=True)

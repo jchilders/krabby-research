@@ -200,6 +200,87 @@ The HAL client sends joint commands via `put_joint_command()`, which accepts a `
 - Observation: Configured via `observation_bind` (e.g., `inproc://hal_observation`)
 - Commands: Configured via `command_bind` (e.g., `inproc://hal_commands`)
 
+## Jetson Telemetry WebSocket
+
+Jetson HAL can optionally expose parsed MCU joint telemetry over a read-only websocket stream.
+
+- Default endpoint: `ws://0.0.0.0:8787/krabby/telemetry`
+- Auth: shared token via `Authorization: Bearer <token>` or `?token=<token>`
+- Publish mode: latest-only snapshot at fixed rate (default `10 Hz`)
+- Optional fake-data mode: `--telemetry_ws_fake_data` streams synthetic `connected` telemetry without MCU hardware
+- `source` is `mcu` for real hardware telemetry and `fake` when fake-data mode is enabled
+- Status values:
+  - `connected`: MCU connected and telemetry is fresh (`<= 1.0s` old)
+  - `disconnected`: no MCU telemetry available/stale (sends empty `joints`)
+
+Enable it with:
+
+```bash
+python -m hal.server.jetson.main \
+  --telemetry_only \
+  --telemetry_ws_enabled \
+  --telemetry_ws_token your-shared-token
+```
+
+Run with fake telemetry (no robot/MCU required):
+
+```bash
+python -m hal.server.jetson.main \
+  --telemetry_only \
+  --telemetry_ws_enabled \
+  --telemetry_ws_fake_data \
+  --telemetry_ws_token your-shared-token
+```
+
+If you want full control-loop + inference + telemetry, include a model checkpoint and omit `--telemetry_only`:
+
+```bash
+python -m hal.server.jetson.main \
+  --checkpoint /path/to/checkpoint.pt \
+  --telemetry_ws_enabled \
+  --telemetry_ws_token your-shared-token
+```
+
+Example payload:
+
+```json
+{
+  "type": "joint_telemetry",
+  "timestamp_ns": 1741036800000000000,
+  "status": "connected",
+  "source": "mcu",
+  "joints": {
+    "FLHY": { "pos": 0.723, "pot": 740, "current": 694, "en": [1, 1], "pwm": [0, 0], "saf": 0 }
+  }
+}
+```
+
+Minimal browser client:
+
+```javascript
+const token = "your-shared-token";
+const ws = new WebSocket(`ws://robot-host:8787/krabby/telemetry?token=${encodeURIComponent(token)}`);
+ws.onmessage = (event) => {
+  const payload = JSON.parse(event.data);
+  console.log(payload.status, payload.joints.FLHY);
+};
+```
+
+Minimal Python client:
+
+```python
+import asyncio
+import websockets
+
+async def main():
+    uri = "ws://robot-host:8787/krabby/telemetry?token=your-shared-token"
+    async with websockets.connect(uri) as ws:
+        while True:
+            print(await ws.recv())
+
+asyncio.run(main())
+```
+
 ## HAL Server Workflow
 
 1. Create PUB socket for observation, PULL socket for commands

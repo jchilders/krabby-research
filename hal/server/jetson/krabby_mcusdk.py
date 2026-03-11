@@ -5,7 +5,7 @@ to the Krabby MCU (real hardware on Jetson).
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Any
 
 from hal.client.data_structures.hardware import JointCommand
 from firmware.krabby_mcu import KrabbyMCUSDK as FirmwareKrabbyMCUSDK
@@ -143,3 +143,27 @@ class KrabbyMCUSDK:
         self._mcu.close()
         self._connected = False
         logger.info("MCU connection closed")
+
+    def get_joint_telemetry_snapshot(self) -> dict[str, Any]:
+        """Return latest telemetry as primitive values safe for JSON serialization."""
+        snapshot = self._mcu.get_telemetry_snapshot()
+        joints = snapshot.get("joints", {})
+        out: dict[str, dict[str, Any]] = {}
+
+        for name, jt in joints.items():
+            if jt is None:
+                continue
+            out[name] = {
+                "pos": jt.pos,
+                "pot": jt.pot,
+                "current": jt.current,
+                "en": [jt.en[0], jt.en[1]],
+                "pwm": [jt.pwm[0], jt.pwm[1]],
+                "saf": jt.saf,
+            }
+
+        return {
+            "connected": bool(self.is_connected() and snapshot.get("connected")),
+            "last_feedback_ts": snapshot.get("last_feedback_ts"),
+            "joints": out,
+        }

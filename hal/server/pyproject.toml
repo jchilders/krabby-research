@@ -25,6 +25,7 @@ dependencies = [
     "dataclasses-json>=0.6.0",
     "typing-extensions>=4.8.0",
     "numpy>=1.24.0",
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]
@@ -36,4 +37,3 @@ dev = [
 [tool.setuptools]
 package-dir = {"hal" = ".."}
 packages = ["hal.server"]
-

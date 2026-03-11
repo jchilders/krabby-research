@@ -350,6 +350,61 @@ docker run --rm --runtime=nvidia \
 
 **Note**: Network mode is useful for debugging and multi-container setups, but has higher latency than in-process mode. Both containers require checkpoint volume mounts.
 
+### Telemetry WebSocket Server (local dev)
+
+Telemetry data can be streamed over a websocket.
+
+For local UI/client testing without robot hardware, start the websocket server with synthetic data:
+
+```bash
+export KRABBY_TELEMETRY_TOKEN=dev-token
+export KRABBY_TELEMETRY_FAKE_DATA=1
+./controller/scripts/jetson/helper/start_telemetry_websocket.sh
+```
+
+Optional dry-run to preview the underlying Docker command that will be executed:
+
+```bash
+./controller/scripts/jetson/helper/start_telemetry_websocket.sh --dry-run
+```
+
+### Telemetry WebSocket at Boot (systemd)
+
+If you want the telemetry websocket server to start automatically when the robot boots, install the telemetry systemd service from the repo helper scripts.
+
+Run from the repo root on the Jetson host:
+
+```bash
+./controller/scripts/jetson/helper/install_telemetry_service.sh --token <shared-token>
+```
+
+Useful options:
+
+```bash
+# Preview what will be created/started
+./controller/scripts/jetson/helper/install_telemetry_service.sh --token <shared-token> --dry-run
+
+# Enable on boot but do not start immediately
+./controller/scripts/jetson/helper/install_telemetry_service.sh --token <shared-token> --no-start
+```
+
+Verify:
+
+```bash
+systemctl status krabby-telemetry.service
+journalctl -u krabby-telemetry.service -f
+```
+
+Uninstall:
+
+```bash
+# Stop/disable service and remove unit + env file
+./controller/scripts/jetson/helper/uninstall_telemetry_service.sh
+
+# Keep env file (/etc/default/krabby-telemetry) for later reinstall
+./controller/scripts/jetson/helper/uninstall_telemetry_service.sh --keep-env
+```
+
 ## Environment Variables
 
 - `CUDA_VISIBLE_DEVICES`: Control which GPU to use (default: all)

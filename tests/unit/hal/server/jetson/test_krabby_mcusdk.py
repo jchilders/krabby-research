@@ -10,6 +10,7 @@ if str(_root) not in sys.path:
 
 import pytest
 from unittest.mock import Mock, patch
+from types import SimpleNamespace
 
 from hal.server.jetson.krabby_mcusdk import (
     JOINT_LIMIT_RAD,
@@ -81,3 +82,62 @@ class TestKrabbyMCUSDKInit:
         assert len(mcu_joints) == 18
         sdk = KrabbyMCUSDK(mcu_joints=mcu_joints, auto_connect=False)
         assert sdk._mcu_joints == mcu_joints
+
+
+class TestKrabbyMCUSDKTelemetrySnapshot:
+    def test_returns_primitive_joint_snapshot(self):
+        mock_fw = Mock()
+        mock_fw.running = True
+        mock_fw.get_telemetry_snapshot.return_value = {
+            "connected": True,
+            "last_feedback_ts": 100.5,
+            "joints": {
+                "FLHY": SimpleNamespace(
+                    pos=0.5,
+                    pot=123,
+                    current=456,
+                    en=(1, 0),
+                    pwm=(20, 0),
+                    saf=0,
+                )
+            },
+        }
+
+        with patch("hal.server.jetson.krabby_mcusdk.FirmwareKrabbyMCUSDK", return_value=mock_fw):
+            mcu_joints = KRABBY_HEX_DEFINITION.get_mcu_joints()
+            sdk = KrabbyMCUSDK(mcu_joints=mcu_joints, auto_connect=False)
+            sdk._connected = True
+
+            snapshot = sdk.get_joint_telemetry_snapshot()
+            assert snapshot["connected"] is True
+            assert snapshot["last_feedback_ts"] == 100.5
+            assert snapshot["joints"]["FLHY"] == {
+                "pos": 0.5,
+                "pot": 123,
+                "current": 456,
+                "en": [1, 0],
+                "pwm": [20, 0],
+                "saf": 0,
+            }
+
+            # Defensive copy: mutating returned data must not mutate source object.
+            snapshot["joints"]["FLHY"]["pos"] = 99.0
+            assert mock_fw.get_telemetry_snapshot.return_value["joints"]["FLHY"].pos == 0.5
+
+    def test_handles_disconnected_snapshot(self):
+        mock_fw = Mock()
+        mock_fw.running = False
+        mock_fw.get_telemetry_snapshot.return_value = {
+            "connected": False,
+            "last_feedback_ts": None,
+            "joints": {},
+        }
+
+        with patch("hal.server.jetson.krabby_mcusdk.FirmwareKrabbyMCUSDK", return_value=mock_fw):
+            mcu_joints = KRABBY_HEX_DEFINITION.get_mcu_joints()
+            sdk = KrabbyMCUSDK(mcu_joints=mcu_joints, auto_connect=False)
+
+            snapshot = sdk.get_joint_telemetry_snapshot()
+            assert snapshot["connected"] is False
+            assert snapshot["last_feedback_ts"] is None
+            assert snapshot["joints"] == {}

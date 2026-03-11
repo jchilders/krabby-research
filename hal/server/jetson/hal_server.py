@@ -3,8 +3,9 @@
 """
 
 import logging
+import math
 import time
-from typing import Optional
+from typing import Optional, Any
 
 import numpy as np
 
@@ -14,10 +15,17 @@ from hal.client.data_structures.hardware import HardwareObservations, JointComma
 from hal.server.jetson.rgb_depth_camera import RgbDepthCamera
 from hal.server.jetson.camera import ZedCamera, create_zed_camera
 from hal.server.jetson.krabby_mcusdk import KrabbyMCUSDK
+from hal.server.jetson.telemetry_websocket import TelemetryWebSocketConfig, TelemetryWebSocketServer
 
 from compute.parkour.model_definition import ObservationDimensions
 
 logger = logging.getLogger(__name__)
+TELEMETRY_STALE_TIMEOUT_S = 1.0
+FAKE_TELEMETRY_JOINTS = (
+    "FLHY", "FLHL", "FLKL", "FRHY", "FRHL", "FRKL",
+    "RLHY", "RLHL", "RLKL", "MLHY", "MLHL", "MLKL",
+    "RRHY", "RRHL", "RRKL", "MRHY", "MRHL", "MRKL",
+)
 
 
 class JetsonHalServer(HalServerBase):
@@ -38,6 +46,7 @@ class JetsonHalServer(HalServerBase):
         mcu_port: Optional[str] = None,
         mcu_baud: int = 115200,
         mcu_auto_connect: bool = True,
+        telemetry_ws_config: Optional[TelemetryWebSocketConfig] = None,
     ):
         """Initialize Jetson HAL server.
 
@@ -51,6 +60,7 @@ class JetsonHalServer(HalServerBase):
             mcu_port: Serial port for MCU connection. If None, uses default from MCU SDK.
             mcu_baud: Baud rate for MCU serial communication.
             mcu_auto_connect: If True, automatically connect to MCU on initialization.
+            telemetry_ws_config: Optional websocket telemetry configuration.
         """
         super().__init__(config)
         self.observation_dimensions = observation_dimensions
@@ -62,6 +72,9 @@ class JetsonHalServer(HalServerBase):
         self.state_source = None  # IMU/encoders (placeholder, real implementation in future)
         self.actuator_sink = None  # Motors (placeholder, real implementation in future)
         self._last_joint_positions: Optional[dict[str, float]] = None  # from command.to_positions_dict()
+        self._telemetry_ws_config = telemetry_ws_config
+        self._telemetry_ws_server: Optional[TelemetryWebSocketServer] = None
+        self._fake_telemetry_started_s = time.time()
         
         # Initialize Krabby MCU SDK when robot definition has MCU joints
         self._mcusdk: Optional[KrabbyMCUSDK] = None
@@ -86,6 +99,97 @@ class JetsonHalServer(HalServerBase):
                     "MCU commands will not be sent. Check MCU connection and configuration.",
                     exc_info=True,
                 )
+
+    def initialize(self) -> None:
+        """Initialize transport sockets and optional telemetry websocket server."""
+        super().initialize()
+        self.start_telemetry_ws()
+
+    def _build_telemetry_payload(self) -> dict[str, Any]:
+        if self._telemetry_ws_config is not None and self._telemetry_ws_config.fake_data:
+            return self._build_fake_telemetry_payload()
+
+        now_s = time.time()
+        now_ns = time.time_ns()
+        telemetry: dict[str, Any] = {
+            "type": "joint_telemetry",
+            "timestamp_ns": now_ns,
+            "status": "disconnected",
+            "source": "mcu",
+            "joints": {},
+        }
+
+        if self._mcusdk is None:
+            return telemetry
+
+        snapshot = self._mcusdk.get_joint_telemetry_snapshot()
+        last_feedback_ts = snapshot.get("last_feedback_ts")
+
+        is_fresh = (
+            isinstance(last_feedback_ts, (float, int))
+            and (now_s - float(last_feedback_ts)) <= TELEMETRY_STALE_TIMEOUT_S
+        )
+        is_connected = bool(snapshot.get("connected")) and is_fresh
+
+        if is_connected and isinstance(last_feedback_ts, (float, int)):
+            telemetry["timestamp_ns"] = int(float(last_feedback_ts) * 1e9)
+            joints = snapshot.get("joints", {})
+            telemetry["joints"] = {
+                name: joints[name] for name in sorted(joints.keys())
+            }
+            telemetry["status"] = "connected"
+
+        return telemetry
+
+    def _build_fake_telemetry_payload(self) -> dict[str, Any]:
+        now_s = time.time()
+        elapsed_s = now_s - self._fake_telemetry_started_s
+        joints: dict[str, dict[str, Any]] = {}
+
+        for idx, joint_name in enumerate(FAKE_TELEMETRY_JOINTS):
+            phase = elapsed_s * 1.1 + idx * 0.31
+            pos = 0.5 + 0.25 * math.sin(phase)
+            pot = int(round(512 + 240 * math.sin(phase + 0.7)))
+            current = int(round(580 + 120 * abs(math.sin(phase * 1.3 + 0.2))))
+            drive = int(round(42 * math.sin(phase + 0.4)))
+            pwm = [max(0, drive), max(0, -drive)]
+
+            joints[joint_name] = {
+                "pos": round(max(0.0, min(1.0, pos)), 3),
+                "pot": max(0, min(1023, pot)),
+                "current": max(0, current),
+                "en": [1, 1],
+                "pwm": pwm,
+                "saf": 0,
+            }
+
+        return {
+            "type": "joint_telemetry",
+            "timestamp_ns": time.time_ns(),
+            "status": "connected",
+            "source": "fake",
+            "joints": joints,
+        }
+
+    def start_telemetry_ws(self) -> None:
+        """Start telemetry websocket server when enabled."""
+        if self._telemetry_ws_config is None or not self._telemetry_ws_config.enabled:
+            return
+        if self._telemetry_ws_server is not None:
+            return
+
+        self._telemetry_ws_server = TelemetryWebSocketServer(
+            self._telemetry_ws_config,
+            snapshot_provider=self._build_telemetry_payload,
+        )
+        self._telemetry_ws_server.start()
+
+    def stop_telemetry_ws(self) -> None:
+        """Stop telemetry websocket server if running."""
+        if self._telemetry_ws_server is None:
+            return
+        self._telemetry_ws_server.stop()
+        self._telemetry_ws_server = None
 
     def initialize_camera(self) -> None:
         """Initialize front camera (RGB + depth + scan features).
@@ -418,6 +522,8 @@ class JetsonHalServer(HalServerBase):
 
     def close(self) -> None:
         """Close camera, MCU connection, and all server resources."""
+        self.stop_telemetry_ws()
+
         # Close MCU SDK first
         if self._mcusdk is not None:
             self._mcusdk.close()
@@ -430,4 +536,3 @@ class JetsonHalServer(HalServerBase):
 
         # Close server resources (sockets, context)
         super().close()
-
