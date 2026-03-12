@@ -12,7 +12,7 @@ From the krabby-research directory, run:
     python -m pytest tests/unit/controller/mappers/test_gamepad_to_isaacsim_hal_mapper.py::TestMapperInitialization -v
 
     # Run a specific test
-    python -m pytest tests/unit/controller/mappers/test_gamepad_to_isaacsim_hal_mapper.py::TestMapperInitialization::test_default_initialization -v
+    python -m pytest tests/unit/controller/mappers/test_gamepad_to_isaacsim_hal_mapper.py::TestMapperInitialization::test_initialization_with_scale_args -v
 
     # Run with coverage
     python -m pytest tests/unit/controller/mappers/test_gamepad_to_isaacsim_hal_mapper.py --cov=controller.mappers --cov-report=html
@@ -34,25 +34,35 @@ import pytest
 
 from controller.input.state import ControllerState, LegIdentifier
 from controller.mappers.gamepad_to_isaacsim_hal_mapper import (
-    DEFAULT_HIP_UP_DOWN_SCALE,
-    DEFAULT_HIP_YAW_SCALE,
-    DEFAULT_KNEE_OUT_IN_SCALE,
     GamepadToIsaacSimHALMapper,
     LEG_TO_JOINT_INDICES,
 )
 from hal.client.data_structures.hardware import JointCommand
 
+# Scale values used when constructing the mapper in tests (match CLI default / Jetson).
+HIP_SCALE = 0.3
+KNEE_SCALE = 0.3
+HIP_YAW_SCALE = 0.2
+
+
+def _make_mapper(hip=HIP_SCALE, knee=KNEE_SCALE, yaw=HIP_YAW_SCALE):
+    """Helper: mapper with standard or custom scaling."""
+    return GamepadToIsaacSimHALMapper(
+        hip_up_down_scale=hip,
+        knee_out_in_scale=knee,
+        hip_yaw_scale=yaw,
+    )
+
 
 class TestMapperInitialization:
     """Test mapper initialization."""
 
-    def test_default_initialization(self):
-        """Test mapper initialization with default scaling factors."""
-        mapper = GamepadToIsaacSimHALMapper()
-        
-        assert mapper.hip_up_down_scale == DEFAULT_HIP_UP_DOWN_SCALE
-        assert mapper.knee_out_in_scale == DEFAULT_KNEE_OUT_IN_SCALE
-        assert mapper.hip_yaw_scale == DEFAULT_HIP_YAW_SCALE
+    def test_initialization_with_scale_args(self):
+        """Test mapper stores scaling factors passed by caller (e.g. CLI via config)."""
+        mapper = _make_mapper()
+        assert mapper.hip_up_down_scale == HIP_SCALE
+        assert mapper.knee_out_in_scale == KNEE_SCALE
+        assert mapper.hip_yaw_scale == HIP_YAW_SCALE
 
     def test_custom_initialization(self):
         """Test mapper initialization with custom scaling factors."""
@@ -72,7 +82,7 @@ class TestMapperSingleLegMapping:
 
     def setup_method(self):
         """Create a fresh mapper for each test."""
-        self.mapper = GamepadToIsaacSimHALMapper()
+        self.mapper = _make_mapper()
 
     def test_map_front_left_leg(self):
         """Test mapping Front Left leg with axis values."""
@@ -89,9 +99,9 @@ class TestMapperSingleLegMapping:
         hip_yaw_idx, hip_pitch_idx, knee_idx = LEG_TO_JOINT_INDICES[LegIdentifier.FRONT_LEFT]
         
         # LY=-0.5 -> hip_up_down=0.5 (inverted), LX=-0.3 -> knee_out_in=-0.3, RY=0.2 -> hip_yaw=0.2
-        assert positions[joint_cmd.joint_names[hip_yaw_idx]] == pytest.approx(0.2 * DEFAULT_HIP_YAW_SCALE)
-        assert positions[joint_cmd.joint_names[hip_pitch_idx]] == pytest.approx(0.5 * DEFAULT_HIP_UP_DOWN_SCALE)
-        assert positions[joint_cmd.joint_names[knee_idx]] == pytest.approx(-0.3 * DEFAULT_KNEE_OUT_IN_SCALE)
+        assert positions[joint_cmd.joint_names[hip_yaw_idx]] == pytest.approx(0.2 * HIP_YAW_SCALE)
+        assert positions[joint_cmd.joint_names[hip_pitch_idx]] == pytest.approx(0.5 * HIP_SCALE)
+        assert positions[joint_cmd.joint_names[knee_idx]] == pytest.approx(-0.3 * KNEE_SCALE)
         
         # Other joints should remain at zero
         for i in range(18):
@@ -109,9 +119,9 @@ class TestMapperSingleLegMapping:
         hip_yaw_idx, hip_pitch_idx, knee_idx = LEG_TO_JOINT_INDICES[LegIdentifier.FRONT_RIGHT]
         positions = joint_cmd.to_positions_dict()
         # LY=-0.4 -> hip_up_down=0.4, LX=0.6 -> knee_out_in=0.6, RY=-0.1 -> hip_yaw=-0.1
-        assert positions[joint_cmd.joint_names[hip_yaw_idx]] == pytest.approx(-0.1 * DEFAULT_HIP_YAW_SCALE)
-        assert positions[joint_cmd.joint_names[hip_pitch_idx]] == pytest.approx(0.4 * DEFAULT_HIP_UP_DOWN_SCALE)
-        assert positions[joint_cmd.joint_names[knee_idx]] == pytest.approx(0.6 * DEFAULT_KNEE_OUT_IN_SCALE)
+        assert positions[joint_cmd.joint_names[hip_yaw_idx]] == pytest.approx(-0.1 * HIP_YAW_SCALE)
+        assert positions[joint_cmd.joint_names[hip_pitch_idx]] == pytest.approx(0.4 * HIP_SCALE)
+        assert positions[joint_cmd.joint_names[knee_idx]] == pytest.approx(0.6 * KNEE_SCALE)
 
     def test_map_all_single_legs(self):
         """Test mapping each leg individually."""
@@ -142,11 +152,11 @@ class TestMapperSingleLegMapping:
             hip_yaw_idx, hip_pitch_idx, knee_idx = LEG_TO_JOINT_INDICES[leg]
             
             # All should have the same scaled values
-            expected = 0.5 * DEFAULT_HIP_UP_DOWN_SCALE
+            expected = 0.5 * HIP_SCALE
             positions = joint_cmd.to_positions_dict()
             assert positions[joint_cmd.joint_names[hip_pitch_idx]] == pytest.approx(expected)
-            assert positions[joint_cmd.joint_names[knee_idx]] == pytest.approx(0.5 * DEFAULT_KNEE_OUT_IN_SCALE)
-            assert positions[joint_cmd.joint_names[hip_yaw_idx]] == pytest.approx(0.5 * DEFAULT_HIP_YAW_SCALE)
+            assert positions[joint_cmd.joint_names[knee_idx]] == pytest.approx(0.5 * KNEE_SCALE)
+            assert positions[joint_cmd.joint_names[hip_yaw_idx]] == pytest.approx(0.5 * HIP_YAW_SCALE)
 
 
 class TestMapperMultipleLegsMapping:
@@ -154,7 +164,7 @@ class TestMapperMultipleLegsMapping:
 
     def setup_method(self):
         """Create a fresh mapper for each test."""
-        self.mapper = GamepadToIsaacSimHALMapper()
+        self.mapper = _make_mapper()
 
     def test_map_two_legs(self):
         """Test mapping two legs at once."""
@@ -166,15 +176,15 @@ class TestMapperMultipleLegsMapping:
         # Check FL leg
         fl_hip_yaw, fl_hip_pitch, fl_knee = LEG_TO_JOINT_INDICES[LegIdentifier.FRONT_LEFT]
         positions = joint_cmd.to_positions_dict()
-        assert positions[joint_cmd.joint_names[fl_hip_yaw]] == pytest.approx(0.2 * DEFAULT_HIP_YAW_SCALE)
-        assert positions[joint_cmd.joint_names[fl_hip_pitch]] == pytest.approx(0.5 * DEFAULT_HIP_UP_DOWN_SCALE)
-        assert positions[joint_cmd.joint_names[fl_knee]] == pytest.approx(-0.3 * DEFAULT_KNEE_OUT_IN_SCALE)
+        assert positions[joint_cmd.joint_names[fl_hip_yaw]] == pytest.approx(0.2 * HIP_YAW_SCALE)
+        assert positions[joint_cmd.joint_names[fl_hip_pitch]] == pytest.approx(0.5 * HIP_SCALE)
+        assert positions[joint_cmd.joint_names[fl_knee]] == pytest.approx(-0.3 * KNEE_SCALE)
         
         # Check FR leg
         fr_hip_yaw, fr_hip_pitch, fr_knee = LEG_TO_JOINT_INDICES[LegIdentifier.FRONT_RIGHT]
-        assert positions[joint_cmd.joint_names[fr_hip_yaw]] == pytest.approx(0.2 * DEFAULT_HIP_YAW_SCALE)
-        assert positions[joint_cmd.joint_names[fr_hip_pitch]] == pytest.approx(0.5 * DEFAULT_HIP_UP_DOWN_SCALE)
-        assert positions[joint_cmd.joint_names[fr_knee]] == pytest.approx(-0.3 * DEFAULT_KNEE_OUT_IN_SCALE)
+        assert positions[joint_cmd.joint_names[fr_hip_yaw]] == pytest.approx(0.2 * HIP_YAW_SCALE)
+        assert positions[joint_cmd.joint_names[fr_hip_pitch]] == pytest.approx(0.5 * HIP_SCALE)
+        assert positions[joint_cmd.joint_names[fr_knee]] == pytest.approx(-0.3 * KNEE_SCALE)
 
     def test_map_tripod_left(self):
         """Test mapping left tripod (FL, RL, MR)."""
@@ -187,9 +197,9 @@ class TestMapperMultipleLegsMapping:
         for leg in [LegIdentifier.FRONT_LEFT, LegIdentifier.REAR_LEFT, LegIdentifier.MIDDLE_RIGHT]:
             hip_yaw_idx, hip_pitch_idx, knee_idx = LEG_TO_JOINT_INDICES[leg]
             positions = joint_cmd.to_positions_dict()
-            assert positions[joint_cmd.joint_names[hip_yaw_idx]] == pytest.approx(-0.2 * DEFAULT_HIP_YAW_SCALE)
-            assert positions[joint_cmd.joint_names[hip_pitch_idx]] == pytest.approx(0.3 * DEFAULT_HIP_UP_DOWN_SCALE)
-            assert positions[joint_cmd.joint_names[knee_idx]] == pytest.approx(0.4 * DEFAULT_KNEE_OUT_IN_SCALE)
+            assert positions[joint_cmd.joint_names[hip_yaw_idx]] == pytest.approx(-0.2 * HIP_YAW_SCALE)
+            assert positions[joint_cmd.joint_names[hip_pitch_idx]] == pytest.approx(0.3 * HIP_SCALE)
+            assert positions[joint_cmd.joint_names[knee_idx]] == pytest.approx(0.4 * KNEE_SCALE)
 
     def test_map_all_legs(self):
         """Test mapping all six legs simultaneously."""
@@ -205,9 +215,9 @@ class TestMapperMultipleLegsMapping:
         # All legs should have the same values
         for leg in LegIdentifier:
             hip_yaw_idx, hip_pitch_idx, knee_idx = LEG_TO_JOINT_INDICES[leg]
-            assert positions[joint_cmd.joint_names[hip_yaw_idx]] == pytest.approx(0.3 * DEFAULT_HIP_YAW_SCALE)
-            assert positions[joint_cmd.joint_names[hip_pitch_idx]] == pytest.approx(0.1 * DEFAULT_HIP_UP_DOWN_SCALE)
-            assert positions[joint_cmd.joint_names[knee_idx]] == pytest.approx(0.2 * DEFAULT_KNEE_OUT_IN_SCALE)
+            assert positions[joint_cmd.joint_names[hip_yaw_idx]] == pytest.approx(0.3 * HIP_YAW_SCALE)
+            assert positions[joint_cmd.joint_names[hip_pitch_idx]] == pytest.approx(0.1 * HIP_SCALE)
+            assert positions[joint_cmd.joint_names[knee_idx]] == pytest.approx(0.2 * KNEE_SCALE)
 
 
 class TestMapperNoLegsSelected:
@@ -215,7 +225,7 @@ class TestMapperNoLegsSelected:
 
     def setup_method(self):
         """Create a fresh mapper for each test."""
-        self.mapper = GamepadToIsaacSimHALMapper()
+        self.mapper = _make_mapper()
 
     def test_no_legs_selected(self):
         """Test that no legs selected results in all zeros."""
@@ -232,7 +242,7 @@ class TestMapperTimestamps:
 
     def setup_method(self):
         """Create a fresh mapper for each test."""
-        self.mapper = GamepadToIsaacSimHALMapper()
+        self.mapper = _make_mapper()
 
     def test_timestamp_generation(self):
         """Test that timestamps are generated correctly."""
@@ -275,7 +285,7 @@ class TestMapperErrorHandling:
 
     def setup_method(self):
         """Create a fresh mapper for each test."""
-        self.mapper = GamepadToIsaacSimHALMapper()
+        self.mapper = _make_mapper()
 
     def test_invalid_state_type(self):
         """Test that invalid state type raises ValueError."""
@@ -292,12 +302,8 @@ class TestMapperCustomScaling:
     """Test mapper with custom scaling factors."""
 
     def test_custom_scaling_factors(self):
-        """Test that custom scaling factors are applied correctly."""
-        mapper = GamepadToIsaacSimHALMapper(
-            hip_up_down_scale=0.5,
-            knee_out_in_scale=0.4,
-            hip_yaw_scale=0.3,
-        )
+        """Test that custom scaling factors (passed by caller) are applied correctly."""
+        mapper = _make_mapper(hip=0.5, knee=0.4, yaw=0.3)
         
         state = ControllerState(LT=True, LB=False, LY=-1.0, LX=1.0, RY=1.0)
         

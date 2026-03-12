@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 # Only expose these names for "from hal.server.isaac.isaacsim_mcusdk import *"
 __all__ = ["IsaacSimMCUSDK"]
 
+# Match the small-angle neutral threshold used by the Jetson KrabbyMCUSDK
+# (see hal/server/jetson/krabby_mcusdk.py::NEUTRAL_RAD_THRESHOLD).
+NEUTRAL_RAD_THRESHOLD = 0.01
+
 
 class IsaacSimMCUSDK:
     """Standardized SDK interface for applying joint commands to IsaacSim.
@@ -59,16 +63,24 @@ class IsaacSimMCUSDK:
         if not present:
             raise ValueError("command must contain at least one joint name from robot definition")
 
+        # Apply a small-angle neutral threshold, mirroring the Jetson KrabbyMCUSDK
+        # behaviour: |rad| <= NEUTRAL_RAD_THRESHOLD is treated as zero. This keeps
+        # very small stick deflections from producing motion in simulation.
+        thresholded_cmd: dict[str, float] = {}
+        for name in order:
+            if name in cmd_dict:
+                rad = cmd_dict[name]
+                thresholded_cmd[name] = 0.0 if abs(rad) <= NEUTRAL_RAD_THRESHOLD else rad
+
         # Joint control is applied by the env via env.step(action); the action term
-        # (e.g. DelayedJointPositionAction) converts normalized values to position
-        # targets. This module returns the normalized command dict for the caller
-        # to pass to env.step().
+        # (e.g. DelayedJointPositionAction) converts these values to position targets.
+        # We return the (thresholded) command dict for the caller to convert to an array/tensor.
 
         # Log command in Isaac's preferred joint format
         # Format: joint positions as comma-separated name=value pairs.
         # Order follows robot definition (e.g. hexapod: FL, FR, ML, MR, RL, RR, 3 DOF per leg).
         joint_values_str = ", ".join(
-            f"{name}={cmd_dict[name]:.4f}" for name in order if name in cmd_dict
+            f"{name}={thresholded_cmd[name]:.4f}" for name in order if name in thresholded_cmd
         )
         logger.debug(
             f"IsaacSimMCUSDK: Applying joint command "
@@ -77,7 +89,7 @@ class IsaacSimMCUSDK:
         )
 
         # Log summary statistics
-        vals = [cmd_dict[name] for name in order if name in cmd_dict]
+        vals = [thresholded_cmd[name] for name in order if name in thresholded_cmd]
         if vals:
             stdev = statistics.stdev(vals) if len(vals) > 1 else 0.0
             logger.debug(
@@ -85,4 +97,4 @@ class IsaacSimMCUSDK:
                 f"min={min(vals):.4f}, max={max(vals):.4f}, mean={statistics.mean(vals):.4f}, std={stdev:.4f}"
             )
 
-        return cmd_dict
+        return thresholded_cmd

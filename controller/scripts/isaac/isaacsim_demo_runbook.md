@@ -87,7 +87,7 @@ In joystick mode the viewport camera is set closer to the robot (eye 0, 1.2, 0.8
 
 ## Leg selection
 
-LT/LB/LS/RS/RT/RB and combos (LT+LB, RT+RB) follow OVERVIEW Appendix B. Use `krabby-uno-sim --quad` for 12 joints (FL, FR, RL, RR) or `krabby-uno-sim --hex` for 18 joints (FL, FR, ML, MR, RL, RR). Axis scaling: full stick (±1) → ±1.0 rad (hip up/down, knee, hip yaw) so motion is clearly visible; tune in mapper or control loop config if needed.
+LT/LB/LS/RS/RT/RB and combos (LT+LB, RT+RB) follow the mapping in **Appendix B** below. Use `krabby-uno-sim --quad` for 12 joints (FL, FR, RL, RR) or `krabby-uno-sim --hex` for 18 joints (FL, FR, ML, MR, RL, RR). Axis scaling matches Jetson by default: full stick (±1) → ±0.3 rad (hip/knee) and ±0.2 rad (hip yaw); override with `--mapper-hip-scale`, `--mapper-knee-scale`, `--mapper-hip-yaw-scale` if needed.
 
 ## Troubleshooting
 
@@ -97,3 +97,68 @@ LT/LB/LS/RS/RT/RB and combos (LT+LB, RT+RB) follow OVERVIEW Appendix B. Use `kra
 - **No server logs when moving the Pro Controller:** Start `krabby-uno-sim` in a second terminal. The server only logs when it **receives** commands from the client. Normal server messages: "Client connected (joint command received).", then every 5 s "Joystick: N steps in X.Xs (~XX Hz)". If you see none of these, ensure the server was started with `--joystick` and the client is running and connected.
 - **Robot doesn’t move when I move the Pro Controller:** The robot moves only when the **client** sends commands to the server. You must run **`krabby-uno-sim --quad`** (Go2) or **`krabby-uno-sim --hex`** (hexapod) in a **second terminal** (on the host, with the controller connected). The server terminal should show "Client connected (joint command received)." when the client connects, then "Joystick: N steps…" every 5 s while you move the sticks. If the server shows **"Joint command received: 12 joints"** (or **18 joints**) and **"all positions zero"**, the client is sending zeros—**select a leg** (e.g. hold **LT** for front-left, or **RT** for front-right) and move the **left stick** (Y/X = hip/knee); with `--debug` on the server you’ll then see "non-zero positions (joint=rad): …". If you don’t select a leg, all joints stay at 0 and the robot doesn’t move.
 - **Client sends commands but server shows no "Client connected" or joystick logs:** The server only logs when it **receives** a command. If the client logs "Sent joint command" but the server never shows "Client connected", the commands are not reaching the server. (1) Ensure the server is fully started—wait until you see **"Joystick: main loop ready, waiting for first command on tcp://*:5556"** in the server terminal before assuming connectivity. (2) From the host, verify the command port is reachable: `nc -zv 127.0.0.1 5556` (or `python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 5556)); print('5556 open'); s.close()"`). (3) If you changed HAL or server code, rebuild the Docker image (`make build-isaacsim-image`) so the container runs the latest code.
+
+---
+
+## Appendix B: Gamepad mapping (quad + hexapod)
+
+This appendix defines the Pro Controller → leg/joint mapping used by both the Jetson hexapod HAL path and the IsaacSim joystick path. The same rules are implemented in:
+
+- `controller/mappers/gamepad_to_krabby_hal_mapper.py` (Jetson hexapod, real hardware)
+- `controller/mappers/gamepad_to_isaacsim_hal_mapper.py` (IsaacSim quad and hexapod)
+
+and are referenced from the Jetson E2E doc `[controller/scripts/jetson/E2E_GAMEPAD_KRABBY.md](controller/scripts/jetson/E2E_GAMEPAD_KRABBY.md)`.
+
+### B.1 Leg selection (LT/LB/LS/RS/RT/RB)
+
+Legs are selected using the six shoulder/stick buttons:
+
+- **Single-leg selection (no combo pressed):**
+  - **LT** (without LB): Front Left (**FL**)
+  - **LB** (without LT): Rear Left (**RL**)
+  - **LS**: Middle Left (**ML**)
+  - **RS**: Middle Right (**MR**)
+  - **RT** (without RB): Front Right (**FR**)
+  - **RB** (without RT): Rear Right (**RR**)
+
+- **Tripod combos:**
+  - **LT + LB**: tripod **left** → {FL, RL, MR}
+  - **RT + RB**: tripod **right** → {FR, RR, ML}
+
+If a leg does not exist on the robot (e.g. ML/MR on the quad), it is ignored. For the hexapod, all six legs FL, FR, ML, MR, RL, RR are available.
+
+### B.2 Axes → joints
+
+Stick axes map to joint control axes as:
+
+- **Left stick Y (`LY`)**: hip up/down (hip pitch)
+  - Internally mapped as `hip_up_down = -LY` (up on the stick = positive angle).
+- **Left stick X (`LX`)**: knee out/in (knee)
+  - Internally mapped as `knee_out_in = LX`.
+- **Right stick Y (`RY`)**: hip yaw forward/back (hip yaw)
+  - Internally mapped as `hip_yaw = RY`.
+
+For every selected leg, the same axis values are applied:
+
+- `hip_pitch` joint ← `hip_up_down * hip_up_down_scale`
+- `knee` joint ← `knee_out_in * knee_out_in_scale`
+- `hip_yaw` joint ← `hip_yaw * hip_yaw_scale`
+
+The **joint ordering** for the hexapod is:
+
+- Legs: **FL, FR, ML, MR, RL, RR**
+- Per leg: `(hip_yaw, hip_pitch, knee)`
+
+This gives 18 joints total, in the order used by `KRABBY_HEX_DEFINITION`:
+
+`FL_hip_yaw, FL_hip_pitch, FL_knee, FR_hip_yaw, FR_hip_pitch, FR_knee, ML_hip_yaw, ML_hip_pitch, ML_knee, MR_hip_yaw, MR_hip_pitch, MR_knee, RL_hip_yaw, RL_hip_pitch, RL_knee, RR_hip_yaw, RR_hip_pitch, RR_knee`.
+
+### B.3 Scaling
+
+Scaling is the same for both Jetson and IsaacSim by default (same feel on hardware and in sim):
+
+- **Hip up/down:** 0.3 rad per unit stick (full stick ±1 → ±0.3 rad)
+- **Knee out/in:** 0.3 rad per unit stick
+- **Hip yaw:** 0.2 rad per unit stick
+
+Jetson: defined in `controller/mappers/gamepad_to_krabby_hal_mapper.py`. IsaacSim: the mapper receives scale values from the control loop; the client **`krabby-uno-sim`** sets these defaults (0.3, 0.3, 0.2) and passes them via `ControlLoopConfig`. Override with `--mapper-hip-scale`, `--mapper-knee-scale`, `--mapper-hip-yaw-scale` if needed.

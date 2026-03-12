@@ -113,6 +113,27 @@ def main() -> int:
         help="Use 18-joint hexapod (crab hex; default)",
     )
     parser.add_argument(
+        "--mapper-hip-scale",
+        type=float,
+        default=None,
+        metavar="RAD_PER_UNIT",
+        help="Override hip up/down scale (radians per unit LY) for gamepad mapper",
+    )
+    parser.add_argument(
+        "--mapper-knee-scale",
+        type=float,
+        default=None,
+        metavar="RAD_PER_UNIT",
+        help="Override knee out/in scale (radians per unit LX) for gamepad mapper",
+    )
+    parser.add_argument(
+        "--mapper-hip-yaw-scale",
+        type=float,
+        default=None,
+        metavar="RAD_PER_UNIT",
+        help="Override hip yaw scale (radians per unit RY) for gamepad mapper",
+    )
+    parser.add_argument(
         "--connection-timeout",
         type=float,
         default=15.0,
@@ -135,6 +156,17 @@ def main() -> int:
         logger.debug("Debug logging enabled for gamepad and mapper")
 
     device_id = args.device_id if args.device_id is not None else args.input_controller_id
+
+    # Mapper scaling: same defaults as Jetson (0.3, 0.3, 0.2) for parity; overrides via --mapper-*.
+    hip_scale = 0.3
+    knee_scale = 0.3
+    hip_yaw_scale = 0.2
+    if args.mapper_hip_scale is not None:
+        hip_scale = args.mapper_hip_scale
+    if args.mapper_knee_scale is not None:
+        knee_scale = args.mapper_knee_scale
+    if args.mapper_hip_yaw_scale is not None:
+        hip_yaw_scale = args.mapper_hip_yaw_scale
 
     _initialize_pygame()
 
@@ -184,6 +216,9 @@ def main() -> int:
         hal_client_config=hal_client_config,
         input_controller_device_id=device_id,
         input_controller_update_rate_hz=args.rate,
+         mapper_hip_up_down_scale=hip_scale,
+         mapper_knee_out_in_scale=knee_scale,
+         mapper_hip_yaw_scale=hip_yaw_scale,
         isaacsim_robot_definition=KRABBY_QUAD_DEFINITION if args.quad else None,
     )
 

@@ -12,6 +12,10 @@ that exist on the robot; middle legs (ML/MR) are ignored for quad.
 
 The mapper handles leg selection, axis mapping, and joint position calculation,
 outputting absolute joint positions in JointCommand format.
+
+Scaling (radians per unit stick) is supplied by the caller. The mapper is only
+used via the control loop currently, which gets scale values from ControlLoopConfig (set
+by the CLI, e.g. krabby-uno-sim). 
 """
 
 import logging
@@ -38,12 +42,6 @@ LEG_TO_JOINT_INDICES = {
     LegIdentifier.REAR_RIGHT: (15, 16, 17),
 }
 
-# Radians per unit normalized stick: full stick (±1) = ±scale rad (so joint moves through noticeable range)
-# Set to ~1.0 so full deflection gives ±1 rad; Go2 hip ±~1.05 rad, knee ~1 rad range.
-DEFAULT_HIP_UP_DOWN_SCALE = 1.0
-DEFAULT_KNEE_OUT_IN_SCALE = 1.0
-DEFAULT_HIP_YAW_SCALE = 1.0
-
 
 class GamepadToIsaacSimHALMapper:
     """Maps gamepad controller state to IsaacSim HAL joint commands.
@@ -67,9 +65,9 @@ class GamepadToIsaacSimHALMapper:
     
     def __init__(
         self,
-        hip_up_down_scale: float = DEFAULT_HIP_UP_DOWN_SCALE,
-        knee_out_in_scale: float = DEFAULT_KNEE_OUT_IN_SCALE,
-        hip_yaw_scale: float = DEFAULT_HIP_YAW_SCALE,
+        hip_up_down_scale: float,
+        knee_out_in_scale: float,
+        hip_yaw_scale: float,
         robot_definition: Optional[RobotDefinition] = None,
     ):
         self.hip_up_down_scale = hip_up_down_scale
