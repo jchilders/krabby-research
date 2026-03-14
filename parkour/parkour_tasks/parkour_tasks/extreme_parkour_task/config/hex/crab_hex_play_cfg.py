@@ -27,7 +27,7 @@ def _crab_hex_robot_cfg():
     """Build robot ArticulationCfg from KRABBY_HEX_USD_PATH (18 joints)."""
     usd_path = os.environ.get(
         "KRABBY_HEX_USD_PATH",
-        "/workspace/assets/udf/crab_hex.usd",
+        "/workspace/assets/crab_hex.usd",
     )
     base_legs_cfg = ParkourDCMotorCfg(
         joint_names_expr=[".*"],

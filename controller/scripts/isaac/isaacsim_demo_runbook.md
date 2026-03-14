@@ -16,7 +16,7 @@ The Isaac Sim HAL server must run in an environment where **Isaac Sim** and **Is
 
 ## Launch
 
-1. Start Isaac Sim HAL server in joystick mode (minimal 640×360 window, no Isaac Lab UI). Supported: **quad (12-joint Go2)** with the parkour task, or **hexapod (18-joint)** using the crab hex USD (`assets/udf/crab_hex.usd`).
+1. Start Isaac Sim HAL server in joystick mode (minimal 640×360 window, no Isaac Lab UI). Supported: **quad (12-joint Go2)** with the parkour task, or **hexapod (18-joint)** using the crab hex USD (`assets/crab_hex.usd`).
 
    **Option A – Docker** (from **krabby-research**, after `make build-isaacsim-image`; publish 5555/5556):
 
@@ -43,16 +43,16 @@ The Isaac Sim HAL server must run in an environment where **Isaac Sim** and **Is
    docker run --rm --gpus all -p 5555:5555 -p 5556:5556 \
      -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
      -v "$(pwd)/assets:/workspace/assets" \
-     krabby-isaacsim:latest --joystick --usd /workspace/assets/udf/crab_hex.usd
+     krabby-isaacsim:latest --joystick --usd /workspace/assets/crab_hex.usd
    ```
 
    **Option B – Native** (Isaac Lab env, `PYTHONPATH` includes krabby-research root):
    ```bash
    ./isaaclab.sh -p python -m hal.server.isaac.main --joystick --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0
    ```
-   Hexapod (from repo root, so `assets/udf/crab_hex.usd` is available):
+   Hexapod (from repo root, so `assets/crab_hex.usd` is available):
    ```bash
-   ./isaaclab.sh -p python -m hal.server.isaac.main --joystick --usd assets/udf/crab_hex.usd
+   ./isaaclab.sh -p python -m hal.server.isaac.main --joystick --usd assets/crab_hex.usd
    ```
 
    Server binds TCP 5555/5556 by default.

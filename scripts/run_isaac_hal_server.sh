@@ -5,7 +5,7 @@
 #
 # Usage:
 #   ./scripts/run_isaac_hal_server.sh              # Go2 parkour task
-#   ./scripts/run_isaac_hal_server.sh --hexapod   # Crab hex from assets/udf/crab_hex.usd
+#   ./scripts/run_isaac_hal_server.sh --hexapod   # Crab hex from assets/crab_hex.usd
 
 set -e
 
@@ -21,7 +21,7 @@ if [ "${1:-}" = "--hexapod" ]; then
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v "${REPO_ROOT}/assets:/workspace/assets" \
     "$IMAGE" \
-    --joystick --usd /workspace/assets/udf/crab_hex.usd \
+    --joystick --usd /workspace/assets/crab_hex.usd \
     "$@"
 else
   exec docker run --rm --gpus all -p 5555:5555 -p 5556:5556 \

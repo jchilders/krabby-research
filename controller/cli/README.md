@@ -45,7 +45,7 @@ The Isaac Sim HAL server must run in an environment that has Isaac Sim and Isaac
    docker run --rm --gpus all -p 5555:5555 -p 5556:5556 \
      -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
      -v "$(pwd)/assets:/workspace/assets" \
-     krabby-isaacsim:latest --joystick --usd /workspace/assets/udf/crab_hex.usd
+     krabby-isaacsim:latest --joystick --usd /workspace/assets/crab_hex.usd
    ```
    Or use `./scripts/run_isaac_hal_server.sh --hexapod` (see runbook).
 
