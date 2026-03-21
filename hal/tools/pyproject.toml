@@ -34,9 +34,14 @@ dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
 ]
+# For multi_stream_display live OpenCV window: pip install krabby-hal-tools[display]
+display = [
+    "opencv-python>=4.8.0",
+]
 
 [project.scripts]
 hal-dump = "hal.tools.hal_dump:main"
+multi-stream-display = "hal.tools.multi_stream_display:main"
 
 [tool.setuptools]
 package-dir = {"hal" = ".."}

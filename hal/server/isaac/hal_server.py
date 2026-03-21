@@ -13,6 +13,8 @@ from scipy.ndimage import zoom
 from hal.server import HalServerBase, HalServerConfig
 from hal.client.data_structures.hardware import HardwareObservations, JointCommand
 from hal.server.isaac.isaacsim_mcusdk import IsaacSimMCUSDK
+from hal.server.isaac.sensor_backend_isaac import IsaacSensorInterface
+from hal.server.sensor_interface import SensorInterface
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,8 @@ class IsaacSimHalServer(HalServerBase):
         # Initialize IsaacSim MCU SDK for standardized command application
         # Device will be set when environment is available
         self._mcusdk: Optional[IsaacSimMCUSDK] = None
+        # GStreamer multi-sensor interface (synthetic sensors, same API as Jetson)
+        self._sensor_interface: Optional[SensorInterface] = None
 
         self._command_timeout_s = command_timeout_s
         self._first_command_received = False
@@ -78,6 +82,14 @@ class IsaacSimHalServer(HalServerBase):
         if env is not None:
             self._cache_references()
             self._initialize_mcusdk()
+
+    def get_sensor_interface(self) -> SensorInterface:
+        """Return the GStreamer multi-sensor interface (list_sensors, get_gstreamer_handle, build_pipeline)."""
+        if self._sensor_interface is None:
+            self._sensor_interface = IsaacSensorInterface(
+                scene_sensors=getattr(self, "camera_sensors", None) or {},
+            )
+        return self._sensor_interface
 
     def _cache_references(self) -> None:
         """Cache references to environment components for efficient access.

@@ -72,10 +72,10 @@ RUN echo "export PYTHONPATH=\"\$PYTHONPATH:/isaac-sim/python_packages\"" >> /wor
 COPY hal/client/dist/*.whl /tmp/wheels/
 COPY hal/server/dist/*.whl /tmp/wheels/
 COPY hal/server/isaac/dist/*.whl /tmp/wheels/
+COPY hal/tools/dist/*.whl /tmp/wheels/
 COPY compute/parkour/dist/*.whl /tmp/wheels/
 COPY parkour/dist/*.whl /tmp/wheels/
 # Note: hal/server/jetson is not needed for Isaac Sim container
-# Note: hal/tools is excluded by default (only install when needed for debugging)
 # Install wheels into venv since that's where production code runs
 RUN . /workspace/testenv/bin/activate && \
     bash -c "pip install --no-cache-dir /tmp/wheels/*.whl"

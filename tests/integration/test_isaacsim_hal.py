@@ -217,9 +217,11 @@ def test_isaacsim_hal_server_joint_command_application(mock_isaac_env, hal_serve
     hal_server.env.device = "cpu"
 
     # Mock command reception to return JointCommand instance (bypass ZMQ)
-    # apply_command() calls get_joint_command(timeout_ms=poll_delay_ms) internally
-    # Server defaults to 12 joints (quad) when robot_definition is None
+    # apply_command() calls get_joint_command(timeout_ms=poll_delay_ms), then drains with
+    # get_joint_command(timeout_ms=0) until None — mocks must return None for timeout_ms==0.
     def mock_get_joint_command(timeout_ms=10):
+        if timeout_ms == 0:
+            return None
         command_array = np.array([0.1, 0.2, 0.3] + [0.0] * 9, dtype=np.float32)  # 12 DOF (quad)
         return JointCommand(
             _joint_positions=command_array,
@@ -431,9 +433,10 @@ def test_isaacsim_hal_server_behavior_matches_baseline(mock_isaac_env, hal_serve
     # Mock env.device
     hal_server.env.device = "cpu"
 
-    # Mock command reception to return JointCommand instance
-    # apply_command() calls get_joint_command(timeout_ms=poll_delay_ms) internally
+    # apply_command() drains with get_joint_command(timeout_ms=0) until None.
     def mock_get_joint_command(timeout_ms=10):
+        if timeout_ms == 0:
+            return None
         command_array = np.array([0.0] * 18, dtype=np.float32)  # 18 joints for hexapod
         return JointCommand(
             _joint_positions=command_array,

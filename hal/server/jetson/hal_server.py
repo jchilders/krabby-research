@@ -12,8 +12,13 @@ from hal.server import HalServerBase, HalServerConfig
 from hal.server.robot_definition import RobotDefinition
 from hal.client.data_structures.hardware import HardwareObservations, JointCommand
 from hal.server.jetson.rgb_depth_camera import RgbDepthCamera
-from hal.server.jetson.camera import ZedCamera, create_zed_camera
+from hal.server.jetson.front_camera_factory import create_front_rgb_depth_camera
 from hal.server.jetson.krabby_mcusdk import KrabbyMCUSDK
+from hal.server.jetson.sensor_backend_jetson import (
+    JetsonSensorInterface,
+    front_observation_camera_catalog_entry,
+)
+from hal.server.sensor_interface import SensorInterface
 
 from compute.parkour.model_definition import ObservationDimensions
 
@@ -23,7 +28,7 @@ logger = logging.getLogger(__name__)
 class JetsonHalServer(HalServerBase):
     """HAL server for Jetson robot deployment.
 
-    Integrates with a front camera (e.g. ZED) and real sensors to publish observations.
+    Integrates with a front RGB-D observation camera and real sensors to publish observations.
     Applies joint commands to real actuators.
     """
 
@@ -33,8 +38,10 @@ class JetsonHalServer(HalServerBase):
         observation_dimensions: ObservationDimensions,
         action_dim: int,
         robot_definition: RobotDefinition,
-        camera_resolution: tuple[int, int] = (640, 480),
-        camera_fps: int = 30,
+        camera_resolution: tuple[int, int] | None = None,
+        camera_fps: int | None = None,
+        camera_driver: str | None = None,
+        depth_mode: str = "PERFORMANCE",
         mcu_port: Optional[str] = None,
         mcu_baud: int = 115200,
         mcu_auto_connect: bool = True,
@@ -46,8 +53,10 @@ class JetsonHalServer(HalServerBase):
             observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
             action_dim: Action dimension (model output joint count)
             robot_definition: Robot definition for joint names and order (adapter uses get_joint_names()).
-            camera_resolution: Front camera resolution (width, height)
-            camera_fps: Front camera FPS
+            camera_resolution: Front observation camera (width, height); default from the catalog ``is_primary`` row.
+            camera_fps: Front observation camera FPS; default from the catalog ``is_primary`` row.
+            camera_driver: Registered RGB-D driver id (see ``FRONT_RGB_DEPTH_CAMERA_FACTORIES``); default from the catalog ``is_primary`` row's ``camera_driver`` (also exposed on ``SensorInfo`` from ``list_sensors()``).
+            depth_mode: Passed to the camera driver when supported (e.g. ZED depth mode).
             mcu_port: Serial port for MCU connection. If None, uses default from MCU SDK.
             mcu_baud: Baud rate for MCU serial communication.
             mcu_auto_connect: If True, automatically connect to MCU on initialization.
@@ -56,13 +65,27 @@ class JetsonHalServer(HalServerBase):
         self.observation_dimensions = observation_dimensions
         self.action_dim = action_dim
         self.robot_definition = robot_definition
-        self.camera_resolution = camera_resolution
-        self.camera_fps = camera_fps
+        _obs_cam = front_observation_camera_catalog_entry()
+        self.camera_resolution = (
+            camera_resolution if camera_resolution is not None else _obs_cam.resolution
+        )
+        self.camera_fps = camera_fps if camera_fps is not None else _obs_cam.fps
+        _driver = camera_driver if camera_driver is not None else _obs_cam.camera_driver
+        if not _driver:
+            raise RuntimeError(
+                "camera_driver is unset; set it on the JETSON_SENSOR_CATALOG is_primary row "
+                "or pass camera_driver= to JetsonHalServer"
+            )
+        self._camera_driver = _driver
+        self._depth_mode = depth_mode
         self.front_camera: Optional[RgbDepthCamera] = None
         self.state_source = None  # IMU/encoders (placeholder, real implementation in future)
         self.actuator_sink = None  # Motors (placeholder, real implementation in future)
         self._last_joint_positions: Optional[dict[str, float]] = None  # from command.to_positions_dict()
         
+        # GStreamer multi-sensor interface (optional)
+        self._sensor_interface: Optional[SensorInterface] = None
+
         # Initialize Krabby MCU SDK when robot definition has MCU joints
         self._mcusdk: Optional[KrabbyMCUSDK] = None
         mcu_joints = self.robot_definition.get_mcu_joints()
@@ -87,17 +110,23 @@ class JetsonHalServer(HalServerBase):
                     exc_info=True,
                 )
 
-    def initialize_camera(self) -> None:
-        """Initialize front camera (RGB + depth + scan features).
+    def get_sensor_interface(self) -> SensorInterface:
+        """Return the GStreamer multi-sensor interface (list_sensors, get_gstreamer_handle, build_pipeline)."""
+        if self._sensor_interface is None:
+            self._sensor_interface = JetsonSensorInterface()
+        return self._sensor_interface
 
-        Uses the default camera implementation (e.g. ZED). Other cameras can be
-        supported by providing a compatible interface and factory.
+    def initialize_camera(self) -> None:
+        """Initialize front RGB-D observation camera (``RgbDepthCamera`` protocol).
+
+        Driver comes from ``camera_driver`` (constructor or catalog ``is_primary`` row).
         """
-        logger.info("Initializing front camera...")
-        self.front_camera = create_zed_camera(
+        logger.info("Initializing front camera (driver=%s)...", self._camera_driver)
+        self.front_camera = create_front_rgb_depth_camera(
+            self._camera_driver,
             resolution=self.camera_resolution,
             fps=self.camera_fps,
-            depth_mode="PERFORMANCE",
+            depth_mode=self._depth_mode,
             depth_feature_dim=self.observation_dimensions.num_scan,
         )
 
@@ -308,7 +337,7 @@ class JetsonHalServer(HalServerBase):
             for i in range(num_prev):
                 previous_action[i] = self._last_joint_positions.get(names[i], 0.0)
 
-        # Get camera data and scan features from ZED when available
+        # Get camera data and scan features from front RGB-D camera when available
         camera_height, camera_width = self.camera_resolution[1], self.camera_resolution[0]
         camera_rgb: Optional[np.ndarray] = None
         camera_depth: Optional[np.ndarray] = None
@@ -325,17 +354,17 @@ class JetsonHalServer(HalServerBase):
                 expected_depth_shape = (camera_height, camera_width)
                 if rgb_frame.shape != expected_rgb_shape:
                     raise RuntimeError(
-                        f"ZED RGB frame shape {rgb_frame.shape} does not match configured resolution "
-                        f"{expected_rgb_shape}. Set camera_resolution to (width, height) matching the ZED output."
+                        f"RGB frame shape {rgb_frame.shape} does not match configured resolution "
+                        f"{expected_rgb_shape}. Set camera_resolution to (width, height) matching the camera output."
                     )
                 if depth_frame.shape != expected_depth_shape:
                     raise RuntimeError(
-                        f"ZED depth frame shape {depth_frame.shape} does not match configured resolution "
-                        f"{expected_depth_shape}. Set camera_resolution to (width, height) matching the ZED output."
+                        f"Depth frame shape {depth_frame.shape} does not match configured resolution "
+                        f"{expected_depth_shape}. Set camera_resolution to (width, height) matching the camera output."
                     )
                 camera_rgb = np.asarray(rgb_frame, dtype=np.uint8)
                 camera_depth = depth_frame.astype(np.float32)
-            # Scan features from ZED (132-dim height-like features for policy; separate grab)
+            # Scan features (policy depth-derived vector; separate grab)
             scan_features = self.front_camera.get_depth_features()
             if scan_features is not None:
                 scan_features = np.asarray(scan_features, dtype=np.float32)
