@@ -48,6 +48,13 @@ $(error Docker CLI not found on PATH. Install Docker Desktop and restart your sh
 endif
 endif
 
+# BuildKit enables RUN --mount (pip cache, etc.). Docker Desktop enables it by default; set explicitly on Linux CI.
+ifeq ($(OS),Windows_NT)
+DOCKER_BUILD := docker build
+else
+DOCKER_BUILD := DOCKER_BUILDKIT=1 docker build
+endif
+
 # Arduino flashing defaults (override with FQBN/PORT in env or CLI)
 FQBN ?=
 PORT ?=
@@ -169,14 +176,14 @@ isaaclab-cache:
 .PHONY: build-test-image
 build-test-image: build-wheels isaaclab-cache
 	@echo "Building x86 test Docker image..."
-	docker build -f images/testing/x86/Dockerfile -t krabby-testing-x86:latest .
+	$(DOCKER_BUILD) -f images/testing/x86/Dockerfile -t krabby-testing-x86:latest .
 	@echo "Test image built: krabby-testing-x86:latest"
 
 .PHONY: build-isaacsim-image
 build-isaacsim-image: build-wheels isaaclab-cache
 	@echo "Building Isaac Sim Docker image..."
 	@echo "Note: Requires NVIDIA NGC authentication for base image"
-	docker build -f images/isaacsim/Dockerfile -t krabby-isaacsim:latest .
+	$(DOCKER_BUILD) -f images/isaacsim/Dockerfile -t krabby-isaacsim:latest .
 	@echo "Isaac Sim image built: krabby-isaacsim:latest"
 
 .PHONY: build-locomotion-image
@@ -184,7 +191,7 @@ build-locomotion-image: build-wheels
 	@echo "Building locomotion Docker image (for Jetson/ARM64)..."
 	@echo "Note: This target is for building on Jetson hardware (native ARM64)"
 	@echo "      For cross-platform builds from x86_64, use buildx manually"
-	docker build -f images/locomotion/Dockerfile -t krabby-locomotion:latest .
+	$(DOCKER_BUILD) -f images/locomotion/Dockerfile -t krabby-locomotion:latest .
 	@echo "Locomotion image built: krabby-locomotion:latest"
 
 .PHONY: build-test-image-arm
@@ -192,7 +199,7 @@ build-test-image-arm: build-wheels
 	@echo "Building ARM test Docker image..."
 	@echo "Note: This target is for building on ARM testing environment (native ARM64)"
 	@echo "      For cross-platform builds from x86_64, use buildx manually"
-	docker build -f images/testing/arm/Dockerfile -t krabby-testing-arm:latest .
+	$(DOCKER_BUILD) -f images/testing/arm/Dockerfile -t krabby-testing-arm:latest .
 	@echo "ARM test image built: krabby-testing-arm:latest"
 
 .PHONY: test

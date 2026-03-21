@@ -46,15 +46,18 @@ RUN /isaac-sim/python.sh -m venv --system-site-packages /workspace/testenv
 # Upgrade pip and install requirements into venv
 # Install typing-extensions and matplotlib before Isaac Lab to avoid compatibility issues
 # Note: Do NOT install scipy in venv - Isaac Sim has its own bundled scipy that must be used
-RUN . /workspace/testenv/bin/activate && \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    . /workspace/testenv/bin/activate && \
     pip install --upgrade pip && \
     pip install -r /tmp/requirements.txt && \
     pip uninstall -y scipy || true  # Remove scipy if installed to avoid conflicts with Isaac Sim's bundled scipy
 
 # Install Isaac Lab packages using the installation script
+# BuildKit cache mount for pip (requires DOCKER_BUILDKIT=1 — see Makefile DOCKER_BUILD)
 # With --system-site-packages, the venv can import isaacsim from base image,
 # allowing the VSCode setup script to find ISAAC_PATH automatically
-RUN . /workspace/testenv/bin/activate && \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    . /workspace/testenv/bin/activate && \
     cd /workspace/isaaclab && \
     TERM=xterm-256color DEBIAN_FRONTEND=noninteractive ./isaaclab.sh --install || \
     echo "Warning: isaaclab.sh --install exited with error"
