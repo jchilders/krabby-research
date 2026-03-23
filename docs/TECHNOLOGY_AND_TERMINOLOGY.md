@@ -181,14 +181,14 @@ Key files:
   - Visual and collision geometries
   - Actuator specifications
 - **Where it fits**: 
-  - Robot model: `assets/crab_hex.urdf`
+  - Robot model: `assets/crab_hex_ref.urdf`
 - **Why**: URDF is the standard format for robot descriptions in ROS and many simulation platforms, allowing robots to be easily imported into simulators
 
 #### **Xacro (XML Macros)**
 - **What it is**: An XML macro language that extends URDF, allowing parameterized and reusable robot descriptions
 - **Usage**: Used in the URDF file to define reusable leg macros, making it easier to define multiple identical legs
 - **Where it fits**: 
-  - Robot model: `assets/crab_hex.urdf` (uses `xacro:macro` for leg definitions)
+  - Robot model: `assets/crab_hex_ref.urdf` (uses `xacro:macro` for leg definitions)
 - **Why**: Xacro reduces code duplication and makes robot descriptions more maintainable
 
 ### Terrain Generation

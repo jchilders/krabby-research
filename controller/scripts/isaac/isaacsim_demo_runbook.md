@@ -16,7 +16,7 @@ The Isaac Sim HAL server must run in an environment where **Isaac Sim** and **Is
 
 ## Launch
 
-1. Start Isaac Sim HAL server in joystick mode (minimal 640×360 window, no Isaac Lab UI). Supported: **quad (12-joint Go2)** with the parkour task, or **hexapod (18-joint)** using the crab hex USD (`assets/crab_hex.usd`).
+1. Start Isaac Sim HAL server in joystick mode (minimal 640×360 window, no Isaac Lab UI). Supported: **quad (12-joint Go2)** with the parkour task, or **hexapod (18-joint)** using the crab hex USD (`assets/crab_hex_ref.usd`).
 
    **Option A – Docker** (from **krabby-research**, after `make build-isaacsim-image`; publish 5555/5556):
 
@@ -26,7 +26,7 @@ The Isaac Sim HAL server must run in an environment where **Isaac Sim** and **Is
    ```bash
    ./scripts/run_isaac_hal_server.sh
    ```
-   **Hexapod (crab_hex.usd):** The script mounts `assets` and uses `--usd` (task Isaac-CrabHex-Joystick-v0, 18 joints). Start the client with **`krabby-uno-sim --hex`**.
+   **Hexapod (crab_hex_ref.usd):** The script mounts `assets` and uses `--usd` (task Isaac-CrabHex-Joystick-v0, 18 joints). Start the client with **`krabby-uno-sim --hex`**.
    ```bash
    ./scripts/run_isaac_hal_server.sh --hexapod
    ```
@@ -43,16 +43,16 @@ The Isaac Sim HAL server must run in an environment where **Isaac Sim** and **Is
    docker run --rm --gpus all -p 5555:5555 -p 5556:5556 \
      -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix \
      -v "$(pwd)/assets:/workspace/assets" \
-     krabby-isaacsim:latest --joystick --usd /workspace/assets/crab_hex.usd
+     krabby-isaacsim:latest --joystick --usd /workspace/assets/crab_hex_ref.usd
    ```
 
    **Option B – Native** (Isaac Lab env, `PYTHONPATH` includes krabby-research root):
    ```bash
    ./isaaclab.sh -p python -m hal.server.isaac.main --joystick --task Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0
    ```
-   Hexapod (from repo root, so `assets/crab_hex.usd` is available):
+   Hexapod (from repo root, so `assets/crab_hex_ref.usd` is available):
    ```bash
-   ./isaaclab.sh -p python -m hal.server.isaac.main --joystick --usd assets/crab_hex.usd
+   ./isaaclab.sh -p python -m hal.server.isaac.main --joystick --usd assets/crab_hex_ref.usd
    ```
 
    Server binds TCP 5555/5556 by default.
@@ -93,7 +93,7 @@ LT/LB/LS/RS/RT/RB and combos (LT+LB, RT+RB) follow the mapping in **Appendix B**
 
 - **No Isaac Sim window (Docker):** Use `./scripts/run_isaac_hal_server.sh` (it sets up the display), or a manual `docker run` with `-e DISPLAY=$DISPLAY -v /tmp/.X11-unix` and `xhost +local:docker`. Without the display, the app runs headless.
 - **`unrecognized arguments: -e DISPLAY -v /tmp/.X11-unix`:** You passed Docker flags to the script; those are for `docker run` only. Run `./scripts/run_isaac_hal_server.sh` with no args (or only app args like `--seed 0`).
-- **`Robot joint count (18 for --robot hex) does not match the task's action dimension (12)`:** You started the server with a Go2 task but the client is in hex mode (or vice versa). For the hexapod (crab_hex.usd), use `./scripts/run_isaac_hal_server.sh --hexapod` and client `krabby-uno-sim --hex`. For Go2, use the script without `--hexapod` and client `krabby-uno-sim --quad`.
+- **`Robot joint count (18 for --robot hex) does not match the task's action dimension (12)`:** You started the server with a Go2 task but the client is in hex mode (or vice versa). For the hexapod (crab_hex_ref.usd), use `./scripts/run_isaac_hal_server.sh --hexapod` and client `krabby-uno-sim --hex`. For Go2, use the script without `--hexapod` and client `krabby-uno-sim --quad`.
 - **No server logs when moving the Pro Controller:** Start `krabby-uno-sim` in a second terminal. The server only logs when it **receives** commands from the client. Normal server messages: "Client connected (joint command received).", then every 5 s "Joystick: N steps in X.Xs (~XX Hz)". If you see none of these, ensure the server was started with `--joystick` and the client is running and connected.
 - **Robot doesn’t move when I move the Pro Controller:** The robot moves only when the **client** sends commands to the server. You must run **`krabby-uno-sim --quad`** (Go2) or **`krabby-uno-sim --hex`** (hexapod) in a **second terminal** (on the host, with the controller connected). The server terminal should show "Client connected (joint command received)." when the client connects, then "Joystick: N steps…" every 5 s while you move the sticks. If the server shows **"Joint command received: 12 joints"** (or **18 joints**) and **"all positions zero"**, the client is sending zeros—**select a leg** (e.g. hold **LT** for front-left, or **RT** for front-right) and move the **left stick** (Y/X = hip/knee); with `--debug` on the server you’ll then see "non-zero positions (joint=rad): …". If you don’t select a leg, all joints stay at 0 and the robot doesn’t move.
 - **Client sends commands but server shows no "Client connected" or joystick logs:** The server only logs when it **receives** a command. If the client logs "Sent joint command" but the server never shows "Client connected", the commands are not reaching the server. (1) Ensure the server is fully started—wait until you see **"Joystick: main loop ready, waiting for first command on tcp://*:5556"** in the server terminal before assuming connectivity. (2) From the host, verify the command port is reachable: `nc -zv 127.0.0.1 5556` (or `python -c "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 5556)); print('5556 open'); s.close()"`). (3) If you changed HAL or server code, rebuild the Docker image (`make build-isaacsim-image`) so the container runs the latest code.

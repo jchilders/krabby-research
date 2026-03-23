@@ -85,7 +85,7 @@ def main():
         "--usd",
         type=str,
         default=None,
-        help="Path to robot/scene USD (e.g. assets/crab_hex.usd). Uses Isaac-CrabHex-Joystick-v0 and --robot hex.",
+        help="Path to robot/scene USD (e.g. assets/crab_hex_ref.usd). Uses Isaac-CrabHex-Joystick-v0 and --robot hex.",
     )
     parser.add_argument(
         "--robot",

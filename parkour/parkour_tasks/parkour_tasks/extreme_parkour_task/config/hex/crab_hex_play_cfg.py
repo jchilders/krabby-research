@@ -27,7 +27,7 @@ def _crab_hex_robot_cfg():
     """Build robot ArticulationCfg from KRABBY_HEX_USD_PATH (18 joints)."""
     usd_path = os.environ.get(
         "KRABBY_HEX_USD_PATH",
-        "/workspace/assets/crab_hex.usd",
+        "/workspace/assets/crab_hex_ref.usd",
     )
     base_legs_cfg = ParkourDCMotorCfg(
         joint_names_expr=[".*"],
@@ -139,7 +139,7 @@ class CrabHexActionsCfg(ActionsCfg):
 
 @configclass
 class CrabHexJoystickEnvCfg(UnitreeGo2TeacherParkourEnvCfg_PLAY):
-    """Crab Hex joystick env: single env, same MDP as Play but scene uses crab_hex.usd."""
+    """Crab Hex joystick env: single env, same MDP as Play but scene uses crab_hex_ref.usd."""
 
     scene: CrabHexSceneCfg = CrabHexSceneCfg(num_envs=1, env_spacing=1.0)
     observations: CrabHexObservationsCfg = CrabHexObservationsCfg()
