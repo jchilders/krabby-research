@@ -6,6 +6,7 @@ from hal.server.isaac.sensor_backend_isaac import (
     ISAAC_PIPELINE_EXAMPLE_SENSORS,
     IsaacSensorInterface,
 )
+from hal.server.jetson.front_camera_factory import FRONT_RGB_DEPTH_CAMERA_FACTORIES
 from hal.server.jetson.sensor_backend_jetson import (
     JETSON_SENSOR_CATALOG,
     JetsonSensorInterface,
@@ -14,18 +15,20 @@ from hal.server.jetson.sensor_backend_jetson import (
 from hal.server.sensor_interface import GStreamerHandle, SensorInfo, SensorPose
 
 
-def test_jetson_catalog_single_front_rgbd():
-    assert len(JETSON_SENSOR_CATALOG) == 1
-    entry = JETSON_SENSOR_CATALOG[0]
+def test_jetson_catalog_single_primary_front_rgbd():
+    primaries = [e for e in JETSON_SENSOR_CATALOG if e.is_primary]
+    assert len(primaries) == 1
+    entry = primaries[0]
     assert entry.id == "front_rgbd"
-    assert entry.is_primary is True
     assert entry.camera_driver == "zed"
+    assert entry.camera_driver in FRONT_RGB_DEPTH_CAMERA_FACTORIES
 
 
 def test_front_observation_camera_catalog_entry():
     e = front_observation_camera_catalog_entry()
     assert e.id == "front_rgbd"
     assert e.camera_driver == "zed"
+    assert e.camera_driver in FRONT_RGB_DEPTH_CAMERA_FACTORIES
 
 
 def test_jetson_list_sensors_matches_catalog():

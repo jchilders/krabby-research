@@ -55,7 +55,9 @@ Both implement the same abstract `SensorInterface`: `list_sensors()`, `get_gstre
 
 The stack still treats the **Stereolabs ZED 2i** as the **reference** front RGB-D camera on Jetson. Other devices are supported only if they implement the same **`RgbDepthCamera`** contract and register a driver (see [Other front RGB-D drivers](#other-front-rgb-drivers) below).
 
-**Catalog → front camera:** exactly one row in **`JETSON_SENSOR_CATALOG`** has **`is_primary=True`**. `JetsonHalServer` uses that row’s **`camera_driver`** with **`create_front_rgb_depth_camera`** (`hal/server/jetson/sensor_backend_jetson.py`, `front_camera_factory.py`). A **ZED** deployment registers a **`zed`** driver that maps to **`create_zed_camera`** in `hal/server/jetson/camera.py` (`ZedCamera` wraps the ZED SDK); other drivers use the same hook pattern.
+**Catalog → front camera:** exactly one row in **`JETSON_SENSOR_CATALOG`** has **`is_primary=True`**. `JetsonHalServer` uses that row’s **`camera_driver`** with **`create_front_rgb_depth_camera`** (`hal/server/jetson/sensor_backend_jetson.py`, `front_camera_factory.py`). A **ZED** deployment registers a **`zed`** driver that maps to **`create_zed_camera`** in `hal/server/jetson/zed_camera.py` (`ZedCamera` wraps the ZED SDK); other drivers use the same hook pattern.
+
+**Additional HAL RGB-D rows:** any other **`rgbd`** catalog row can set **`hal_open_rgbd=True`** to open a second (or further) **`RgbDepthCamera`**. Use **`policy_scan_slot="side"`** on at most one non-primary row only if the checkpoint uses a **second policy scan** (`num_side_scan`); that fills legacy **`HardwareObservations.side_*`**. **`side_camera_rgb` / `side_camera_depth`** use that row’s catalog **resolution** (they need not match the primary **`camera_height` / `camera_width`**). **Collision / proximity** (and any use separate from the locomotion scan) should read **`HardwareObservations.rgbd_by_catalog_id[catalog_id].depth`** for each opened stream—**full metric depth is always there**, independent of `policy_scan_slot`. Non-primary **ZED** row: set catalog **`zed_usb_serial_env`** (repo default **`KRABBY_SIDE_ZED_USB_SERIAL`** on **`side_rgbd`**). **MaixSense** row: set **`maixsense_host_env`** / optional **`maixsense_port_env`** to env var *names* for that module’s HTTP host and port, and pass matching **`-e`** (or **`Environment=`**) for each—**one host (and optional port) variable per MaixSense** ([JETSON_DEPLOYMENT.md](JETSON_DEPLOYMENT.md#with-maixsense-a075v-http-in-container)).
 
 ### Installing the ZED SDK (Jetson host)
 
@@ -89,7 +91,7 @@ On **first use**, the SDK may **download and optimize** NEURAL depth models (sev
 
 - **`JetsonHalServer`**: default **resolution** and **FPS** come from the **`is_primary`** catalog row unless you pass **`camera_resolution=`** and **`camera_fps=`**. **`depth_mode`** defaults to **`PERFORMANCE`**; pass **`QUALITY`** or **`ULTRA`** if you need a different ZED depth profile (constructor argument on `JetsonHalServer`).
 - **`camera_driver=`** defaults from the same **`is_primary`** row; override when using another registered driver. The **`SensorInfo`** for that row in **`list_sensors()`** carries the same **`camera_driver`**.
-- After **`initialize_camera()`**, observations fill **`HardwareObservations.camera_rgb`**, **`camera_depth`**, and depth-derived **scan features** from the ZED (left RGB + depth, same feature path as training). Verify shapes against **`camera_height` / `camera_width`** and your HAL client (see **HAL_GUIDE.md** and `hal/client/data_structures/hardware.py`).
+- After **`initialize_camera()`**, observations fill **`HardwareObservations.camera_rgb`**, **`camera_depth`**, and policy **scan features** derived in **`JetsonHalServer`** from the same depth map (see `hal/server/jetson/depth_scan_features.py`). Verify shapes against **`camera_height` / `camera_width`** and your HAL client (see **HAL_GUIDE.md** and `hal/client/data_structures/hardware.py`).
 
 ### GStreamer example (primary RGB-D)
 
@@ -105,14 +107,15 @@ To use a **non-ZED** camera that still matches the **`RgbDepthCamera`** protocol
 
 | Sensor ID         | Type  | Modality | `camera_driver` (typical) | Typical use |
 |-------------------|-------|----------|---------------------------|-------------|
-| `front_rgbd`      | rgbd  | rgbd     | Jetson: `zed`; Isaac: `isaac_scene` | Front RGB-D (policy + streaming) |
+| `front_rgbd`      | rgbd  | rgbd     | Jetson: `zed` or `maixsense_a075v`; Isaac: `isaac_scene` | Front RGB-D (policy + streaming) |
+| `side_rgbd`       | rgbd  | rgbd     | Jetson: per-row `camera_driver` (repo default `zed` + `KRABBY_SIDE_ZED_USB_SERIAL`) | Second HAL RGB-D row; optional `policy_scan_slot="side"` + `rgbd_by_catalog_id` |
 | `side_left_rgb`   | rgb   | rgb      | —                         | Left side RGB |
 | `side_right_rgb`  | rgb   | rgb      | —                         | Right side RGB |
 | `side_left_rgbd`  | rgbd  | rgbd     | —                         | Left side RGB-D |
 | `side_right_rgbd` | rgbd  | rgbd     | —                         | Right side RGB-D |
 | `radar_front`     | radar | radar    | —                         | Low-power radar viz |
 
-`camera_driver` is `None` where marked as — (no HAL in-process driver for that logical role). On Jetson, each **`SensorInfo`** from **`list_sensors()`** matches a catalog entry; on Isaac, driver ids follow scene wiring or explicit config (see backend sources above).
+`camera_driver` is `None` where marked as — (no HAL in-process driver for that logical role). On Jetson, each **`SensorInfo`** from **`list_sensors()`** matches a catalog entry; on Isaac, driver ids follow scene wiring or explicit config (see backend sources above). Add more **`rgbd`** rows with **`hal_open_rgbd=True`** for extra depth (collision, logging); for a second MaixSense HTTP target use catalog **`maixsense_host_env`** / **`maixsense_port_env`** ([**JETSON_DEPLOYMENT.md** — MaixSense-A075V](JETSON_DEPLOYMENT.md#maixsense-a075v-optional-host-bring-up)).
 
 Poses are in the robot base frame (meters, quaternion x,y,z,w). Isaac sensor poses match the real hardware layout (see `zed_like_scene_cfg.py`).
 

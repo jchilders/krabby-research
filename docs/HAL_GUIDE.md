@@ -8,7 +8,7 @@ The HAL uses ZMQ (ZeroMQ) for communication with two distinct channels:
 
 1. **Observation** (PUB/SUB) - Topic: `"observation"` - HAL Server → Policy Wrapper (100+ Hz)
    - Hardware observation format containing raw sensor data
-   - `HardwareObservations` object with joint positions, optional front camera (camera_rgb, camera_depth), etc.
+   - `HardwareObservations` object with joint positions, optional front RGB-D (`camera_rgb`, `camera_depth`), optional side/legacy fields, optional per-catalog RGB-D (`rgbd_by_catalog_id`), etc.
 2. **Joint Commands** (PUSH/PULL) - No topic - Policy Wrapper → HAL Server (100+ Hz)
 
 All channels support both `inproc://` (same process) and `tcp://` (network) transports.
@@ -21,12 +21,14 @@ All channels support both `inproc://` (same process) and `tcp://` (network) tran
 
 - **Topic**: `"observation"`
 - **Message**: Hardware observation data as `HardwareObservations`
-- **Format**: Single ZMQ frame = topic prefix `b"observation"` + one payload blob. The blob is: 4-byte metadata length (uint32 LE), then metadata JSON, then array bytes in a fixed order (sizes from metadata). Required arrays: joint_positions, base_ang_vel_b, base_lin_vel_b, base_quat_w, joint_velocities, contact_forces, previous_action. Optional (when present): scan_features, privileged_latent, camera_rgb, camera_depth. See `hal/client/data_structures/hardware.py` for the exact layout.
+- **Format**: Single ZMQ frame = topic prefix `b"observation"` + one payload blob. The blob is: 4-byte metadata length (uint32 LE), then metadata JSON, then array bytes in fixed order (sizes from metadata). Required: joint_positions, base_ang_vel_b, base_lin_vel_b, base_quat_w, joint_velocities, contact_forces, previous_action. Then optional segments, **only when non-null**, in this order: scan_features, privileged_latent, camera_rgb+camera_depth (both); then side_scan_features; then side_camera_rgb+side_camera_depth (both); then `rgbd_by_catalog_id` in **sorted catalog id** order, each chunk rgb, depth, and optional scan_features for that stream. See `hal/client/data_structures/hardware.py` (`HardwareObservations.to_bytes` / `from_bytes`).
 - **Semantics**: Latest-only (HWM=1, CONFLATE on subscriber)
 - **Content**: Raw hardware sensor data:
   - Joint positions (robot-dependent DOF)
   - Base pose/velocities, joint velocities, contact forces, previous action
-  - Optional: front camera (camera_rgb, camera_depth), scan_features, privileged_latent
+  - Optional: front camera (camera_rgb, camera_depth), scan_features (depth-derived policy slice from primary stream when HAL computes it), privileged_latent
+  - Optional: side policy slot (`side_scan_features`, `side_camera_rgb`, `side_camera_depth`) when configured
+  - Optional: `rgbd_by_catalog_id`: every Jetson HAL-opened RGB-D catalog stream (rgb + depth per id; use for collision/extra cameras—see **SENSOR_INTERFACE.md**)
   - Timestamp (in metadata)
 
 ### Joint Commands (PUSH/PULL)
@@ -41,8 +43,10 @@ All channels support both `inproc://` (same process) and `tcp://` (network) tran
 Raw hardware sensor data (see `hal/client/data_structures/hardware.py`):
 - **joint_positions**, **base_ang_vel_b**, **base_lin_vel_b**, **base_quat_w**, **joint_velocities**, **contact_forces**, **previous_action**: required arrays (float32)
 - **camera_height**, **camera_width**, **timestamp_ns**: required scalars
-- **scan_features**, **privileged_latent**: optional (simulation or when available)
-- **camera_rgb**, **camera_depth**: optional front camera (single camera; both or neither)
+- **scan_features**, **privileged_latent**: optional (simulation or when HAL/policy path provides them)
+- **camera_rgb**, **camera_depth**: optional **primary** front RGB-D (policy observation camera; both or neither)
+- **side_scan_features**, **side_camera_rgb**, **side_camera_depth**: optional; filled when a second catalog RGB-D row uses `policy_scan_slot="side"` and the checkpoint expects `num_side_scan` (legacy side slice)
+- **rgbd_by_catalog_id**: optional `dict[str, RgbdCatalogObservation]` — full **rgb** and **depth** per catalog **`id`** for each HAL-opened RGB-D row (primary and extras). Per-entry **scan_features** appears only when that stream contributes a policy scan slice. Prefer this dict for collision geometry or any consumer that needs side/extra depth without overloading `camera_depth`.
 
 This is the format sent by the HAL server and received by the HAL client via `poll()`.
 
@@ -114,7 +118,7 @@ All coordinate frames follow the **ROS (REP-103) convention**:
 - **Base orientation**: World frame quaternion (x, y, z, w)
 - **Base linear velocity**: Robot base frame (x, y, z) in m/s
 - **Base angular velocity**: Robot base frame (x, y, z) in rad/s
-- **Depth features**: Camera frame depth measurements, converted to features matching training format
+- **Depth features (`scan_features`)**: 1D float32 slice derived on the HAL from the **primary** depth map for the locomotion policy (see `hal/server/jetson/depth_scan_features.py`). **Side** scan uses `side_scan_features` when configured. Full metric depth for extra cameras lives under **`rgbd_by_catalog_id`**, not necessarily in `scan_features`.
 
 ### Important Notes
 - All transformations between frames must be consistent with ROS conventions
@@ -131,10 +135,12 @@ The HAL implementation includes runtime type validation for all message payloads
 - **joint_positions**: Shape `(18,)`, dtype `float32`
 - **camera_rgb** (optional): Shape `(H, W, 3)`, dtype `uint8`
 - **camera_depth** (optional): Shape `(H, W)`, dtype `float32`
+- **side_scan_features** (optional): 1D `float32`; **side_camera_rgb** `(Hs, Ws, 3)` / **side_camera_depth** `(Hs, Ws)` when present (side resolution may differ from front `camera_height` × `camera_width`)
+- **rgbd_by_catalog_id** (optional): each entry’s **rgb** `(H, W, 3)` uint8, **depth** `(H, W)` float32, shapes consistent per entry
 - **timestamp_ns**: Non-negative integer
 
 ### Command Validation
-- **Type**: Must be `KrabbyDesiredJointPositions`
+- **Type**: Must be `JointCommand`
 - **joint_positions**: Shape `(18,)`, dtype `float32`
 - **timestamp_ns**: Non-negative integer
 
@@ -148,9 +154,9 @@ The HAL implementation includes runtime type validation for all message payloads
 The HAL client interface supports:
 
 - **Poll for Observation** - `poll()` returns `HardwareObservations` if new data is available, `None` otherwise (100+ Hz)
-- **Send Joint Command** - `put_joint_command()` sends `KrabbyDesiredJointPositions` to actuators
+- **Send Joint Command** - `put_joint_command()` sends `JointCommand` to actuators
 
-**Observation Format**: The observation is a `HardwareObservations` object containing raw hardware sensor data (joint positions, base state, optional front camera rgb/depth, etc.).
+**Observation Format**: The observation is a `HardwareObservations` object containing raw hardware sensor data (joint positions, base state, optional front rgb/depth, optional side slot fields, optional `rgbd_by_catalog_id` for all opened RGB-D streams).
 
 **Mapping to Model Format**: The policy inference code uses mappers (`compute.parkour.mappers.hardware_to_model`) to convert `HardwareObservations` to model-specific observation formats (e.g., `ParkourObservation`).
 
@@ -166,7 +172,7 @@ The HAL client interface supports:
 
 ## Command Interface
 
-The HAL client sends joint commands via `put_joint_command()`, which accepts a `KrabbyDesiredJointPositions` object containing 18-DOF joint positions.
+The HAL client sends joint commands via `put_joint_command()`, which accepts a `JointCommand` object containing 18-DOF joint positions (for the Krabby hex configuration).
 
 **PUSH/PULL Pattern**: Commands use PUSH/PULL to ensure FIFO ordering with backpressure (HWM=5).
 
@@ -188,7 +194,7 @@ The HAL client sends joint commands via `put_joint_command()`, which accepts a `
 - Joint positions within limits
 - Velocity limits (change from previous command)
 
-**Note**: Model-specific types like `InferenceResponse` are in `compute.parkour.parkour_types`. The policy inference code uses mappers (`compute.parkour.mappers.model_to_hardware`) to convert model outputs to `KrabbyDesiredJointPositions` before sending via HAL.
+**Note**: Model-specific types like `InferenceResponse` are in `compute.parkour.parkour_types`. The policy inference code uses mappers (`compute.parkour.mappers.model_to_hardware`) to convert model outputs to `JointCommand` before sending via HAL.
 
 ## Endpoints
 
@@ -220,14 +226,14 @@ The HAL client sends joint commands via `put_joint_command()`, which accepts a `
    - Poll for observation messages (non-blocking with timeout)
    - `poll()` returns `HardwareObservations` if new data is available, `None` otherwise
    - If observation received, map it to model format and use for inference
-   - Map inference output to `KrabbyDesiredJointPositions`
+   - Map inference output to `JointCommand`
    - Send joint command via `put_joint_command()`
    - Send command (blocking send for backpressure)
 
 **Example:**
 ```python
 from hal.client import HalClient, HalClientConfig
-from hal.client.data_structures.hardware import KrabbyDesiredJointPositions
+from hal.client.data_structures.hardware import JointCommand
 from hal.client.observation.types import NavigationCommand
 from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
 from compute.parkour.mappers.model_to_hardware import ParkourLocomotionToHWMapper
@@ -290,7 +296,7 @@ The observation PUB/SUB channel uses HWM=1 (high-watermark=1):
 - **Topic filtering**: Subscribers subscribe to the `"observation"` topic
 - **Message ordering**: PUB/SUB has no guaranteed ordering; PUSH/PULL guarantees FIFO ordering
 - **Timestamp synchronization**: Observation messages include timestamps in `HardwareObservations` metadata
-- **Navigation command**: Managed by application code (e.g., `InferenceRunner`), not by HAL client
+- **Navigation command**: Managed by application code (e.g. `ParkourInferenceClient` or your runner), not by HAL client
 
 ## Error Handling
 

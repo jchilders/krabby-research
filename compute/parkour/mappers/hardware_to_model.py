@@ -195,7 +195,7 @@ class HWObservationsToParkourMapper:
         Matches training format: 132 height measurements from ray scanner.
         Scan features must be provided by the HAL server:
         - Isaac: from observation manager measured_heights.
-        - Jetson: from ZED via get_depth_features() when the camera is initialized.
+        - Jetson: from front depth map via HAL policy scan mapping when the camera is initialized.
 
         If scan_features is None (e.g. Jetson without ZED), returns zeros. Policy
         behavior will be degraded without real scan/terrain data.
@@ -204,20 +204,51 @@ class HWObservationsToParkourMapper:
             hw_obs: Hardware observations
 
         Returns:
-            Scan features array of shape (num_scan,)
+            Scan features array of shape (num_scan,) (front then optional side).
         """
-        num_scan = self._dims.num_scan
-        if hw_obs.scan_features is not None:
-            scan_features = hw_obs.scan_features
-            if len(scan_features) == num_scan:
-                return scan_features.astype(np.float32)
-            elif len(scan_features) > num_scan:
-                return scan_features[:num_scan].astype(np.float32)
-            features = np.zeros(num_scan, dtype=np.float32)
-            features[: len(scan_features)] = scan_features.astype(np.float32)
-            return features
+        d = self._dims
+        nf = d.num_scan_front
+        ns = d.num_side_scan
+        total = d.num_scan
 
-        return np.zeros(num_scan, dtype=np.float32)
+        def front_block() -> np.ndarray:
+            if hw_obs.scan_features is not None:
+                scan_features = hw_obs.scan_features
+                if len(scan_features) == nf:
+                    return scan_features.astype(np.float32)
+                if len(scan_features) > nf:
+                    return scan_features[:nf].astype(np.float32)
+                features = np.zeros(nf, dtype=np.float32)
+                features[: len(scan_features)] = scan_features.astype(np.float32)
+                return features
+            return np.zeros(nf, dtype=np.float32)
+
+        if ns == 0:
+            out = front_block()
+            if len(out) != total:
+                raise ValueError(
+                    f"internal: num_scan_front {nf} != num_scan total {total} with num_side_scan=0"
+                )
+            return out
+
+        front = front_block()
+        if hw_obs.side_scan_features is not None:
+            side = hw_obs.side_scan_features
+            if len(side) == ns:
+                side_arr = side.astype(np.float32)
+            elif len(side) > ns:
+                side_arr = side[:ns].astype(np.float32)
+            else:
+                side_arr = np.zeros(ns, dtype=np.float32)
+                side_arr[: len(side)] = side.astype(np.float32)
+        else:
+            side_arr = np.zeros(ns, dtype=np.float32)
+        out = np.concatenate([front, side_arr])
+        if len(out) != total:
+            raise ValueError(
+                f"scan concat length {len(out)} != num_scan {total} (front {nf} + side {ns})"
+            )
+        return out
 
     def _extract_priv_explicit(self, hw_obs: HardwareObservations) -> np.ndarray:
         """Extract privileged explicit features from hardware observations.

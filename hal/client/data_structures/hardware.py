@@ -11,14 +11,30 @@ Wire format (single-blob, no multipart):
   - One atomic recv: no risk of EAGAIN partway through a multipart message.
   - Simpler HWM behavior and fewer syscalls.
   Blob layout: 4-byte metadata length (uint32 LE) + metadata JSON + array bytes
-  in a fixed order (sizes derived from metadata).
+  in a fixed order (sizes derived from metadata). Optional fields use JSON ``null`` and omit
+  the corresponding payload segment.
 """
 import json
 import struct
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
+
+
+@dataclass
+class RgbdCatalogObservation:
+    """One RGB-D capture keyed by ``JETSON_SENSOR_CATALOG`` row ``id`` (Jetson HAL).
+
+    ``depth`` is always the metric depth map for that sensor (meters). Use it for collision /
+    proximity and other perception that is **not** the primary locomotion policy scan.
+    ``scan_features`` is only filled when HAL maps this row into the policy scan slots (primary
+    or ``policy_scan_slot="side"``); do not assume every row has scan features.
+    """
+
+    rgb: np.ndarray  # (H, W, 3) uint8
+    depth: np.ndarray  # (H, W) float32, meters
+    scan_features: Optional[np.ndarray] = None  # 1D float32 when HAL computed a policy scan slice
 
 
 @dataclass
@@ -28,7 +44,15 @@ class HardwareObservations:
     Contains all raw sensor data from the hardware:
     - Joint positions (robot-dependent DOF)
     - Camera resolution metadata (camera_height, camera_width)
-    - Front camera (single): camera_rgb and camera_depth (ZED 2i or synthetic equivalent), optional
+    - **Policy / locomotion (primary):** ``camera_rgb``, ``camera_depth``, ``scan_features`` —
+      tied to the catalog primary rgbd row; depth here feeds the trained scan slice, not collision.
+    - **Policy second scan (optional):** legacy ``side_*`` when one catalog row has
+      ``policy_scan_slot="side"``. ``side_camera_rgb`` / ``side_camera_depth`` use that
+      stream's own H×W (may differ from ``camera_height`` × ``camera_width``).
+    - **All HAL rgbd streams (including side / extra cameras):** ``rgbd_by_catalog_id`` carries
+      full-resolution **RGB + depth** per catalog ``id``. Prefer ``rgbd_by_catalog_id[id].depth``
+      for **collision detection** and other geometry; resolutions may differ from
+      ``camera_height`` × ``camera_width``.
     
     Front camera format (camera_rgb / camera_depth):
     - Resolution: same as camera_height x camera_width (self-describing).
@@ -63,6 +87,10 @@ class HardwareObservations:
     # Front camera (single): ZED 2i RGB + depth or Isaac synthetic equivalent
     camera_rgb: Optional[np.ndarray] = None   # Shape: (camera_height, camera_width, 3), dtype: uint8
     camera_depth: Optional[np.ndarray] = None  # Shape: (camera_height, camera_width), dtype: float32, meters
+    side_scan_features: Optional[np.ndarray] = None  # Depth-derived features for side camera (1D float32)
+    side_camera_rgb: Optional[np.ndarray] = None  # (Hs, Ws, 3) uint8; Hs/Ws independent of front
+    side_camera_depth: Optional[np.ndarray] = None  # (Hs, Ws) float32 meters; matches side rgb H×W
+    rgbd_by_catalog_id: Optional[dict[str, RgbdCatalogObservation]] = None
 
     def __post_init__(self) -> None:
         """Validate hardware observations."""
@@ -117,7 +145,63 @@ class HardwareObservations:
                 )
             if self.camera_depth.dtype != np.float32:
                 self.camera_depth = self.camera_depth.astype(np.float32)
-        
+
+        if self.side_camera_rgb is not None or self.side_camera_depth is not None:
+            if self.side_camera_rgb is None or self.side_camera_depth is None:
+                raise ValueError("side_camera_rgb and side_camera_depth must be both set or both None")
+            if self.side_camera_rgb.ndim != 3 or self.side_camera_rgb.shape[2] != 3:
+                raise ValueError(
+                    f"side_camera_rgb must be (H, W, 3), got {self.side_camera_rgb.shape}"
+                )
+            if self.side_camera_rgb.dtype != np.uint8:
+                self.side_camera_rgb = self.side_camera_rgb.astype(np.uint8)
+            if self.side_camera_depth.ndim != 2:
+                raise ValueError(
+                    f"side_camera_depth must be 2D, got {self.side_camera_depth.shape}"
+                )
+            if self.side_camera_depth.dtype != np.float32:
+                self.side_camera_depth = self.side_camera_depth.astype(np.float32)
+            if self.side_camera_rgb.shape[:2] != self.side_camera_depth.shape:
+                raise ValueError(
+                    f"side_camera_rgb H×W {self.side_camera_rgb.shape[:2]} != "
+                    f"side_camera_depth {self.side_camera_depth.shape}"
+                )
+
+        if self.side_scan_features is not None:
+            if self.side_scan_features.ndim != 1:
+                raise ValueError(f"side_scan_features must be 1D, got shape {self.side_scan_features.shape}")
+            self.side_scan_features = (
+                self.side_scan_features.astype(np.float32)
+                if self.side_scan_features.dtype != np.float32
+                else self.side_scan_features
+            )
+
+        if self.rgbd_by_catalog_id is not None:
+            for cid, obs in self.rgbd_by_catalog_id.items():
+                if obs.rgb.ndim != 3 or obs.rgb.shape[2] != 3:
+                    raise ValueError(
+                        f"rgbd_by_catalog_id[{cid!r}].rgb must be (H,W,3), got {obs.rgb.shape}"
+                    )
+                if obs.rgb.dtype != np.uint8:
+                    obs.rgb = obs.rgb.astype(np.uint8)
+                if obs.depth.ndim != 2:
+                    raise ValueError(
+                        f"rgbd_by_catalog_id[{cid!r}].depth must be 2D, got {obs.depth.shape}"
+                    )
+                if obs.depth.dtype != np.float32:
+                    obs.depth = obs.depth.astype(np.float32)
+                if obs.rgb.shape[:2] != obs.depth.shape:
+                    raise ValueError(
+                        f"rgbd_by_catalog_id[{cid!r}]: rgb H,W {obs.rgb.shape[:2]} != depth {obs.depth.shape}"
+                    )
+                if obs.scan_features is not None:
+                    if obs.scan_features.ndim != 1:
+                        raise ValueError(
+                            f"rgbd_by_catalog_id[{cid!r}].scan_features must be 1D"
+                        )
+                    if obs.scan_features.dtype != np.float32:
+                        obs.scan_features = obs.scan_features.astype(np.float32)
+
         # Ensure all are float32
         if self.base_ang_vel_b.dtype != np.float32:
             self.base_ang_vel_b = self.base_ang_vel_b.astype(np.float32)
@@ -137,8 +221,16 @@ class HardwareObservations:
         
         Layout: 4B metadata_len (uint32 LE) + metadata JSON + array bytes in fixed order.
         Order: joint_positions, base_ang_vel_b, base_lin_vel_b, base_quat_w,
-        joint_velocities, contact_forces, previous_action; then optional:
-        scan_features, privileged_latent, camera_rgb, camera_depth.
+        joint_velocities, contact_forces, previous_action; then payload segments for
+        scan_features, privileged_latent, camera_rgb, camera_depth, then optional
+        ``side_scan_features``, ``side_camera_rgb``, ``side_camera_depth`` — only when non-null;
+        then optional ``rgbd_by_catalog_id`` (ordered catalog rgbd chunks).
+
+        Metadata always includes ``scan_features``, ``privileged_latent``, ``camera_rgb``,
+        ``camera_depth``, ``side_scan_features``, ``side_camera_rgb``, ``side_camera_depth``,
+        ``rgbd_by_catalog_id``
+        (each ``null`` or a shape/dtype object). Older blobs may omit side / rgbd keys; decoders treat
+        missing keys as null.
         Single-blob allows ZMQ CONFLATE to work (latest-only) and one atomic recv.
         """
         joint_pos = np.ascontiguousarray(self.joint_positions, dtype=np.float32)
@@ -168,14 +260,55 @@ class HardwareObservations:
         if self.scan_features is not None:
             scan_features = np.ascontiguousarray(self.scan_features, dtype=np.float32)
             metadata["scan_features"] = {"shape": list(scan_features.shape), "dtype": str(scan_features.dtype)}
+        else:
+            metadata["scan_features"] = None
         if self.privileged_latent is not None:
             priv_latent = np.ascontiguousarray(self.privileged_latent, dtype=np.float32)
             metadata["privileged_latent"] = {"shape": list(priv_latent.shape), "dtype": str(priv_latent.dtype)}
+        else:
+            metadata["privileged_latent"] = None
         if self.camera_rgb is not None and self.camera_depth is not None:
             camera_rgb = np.ascontiguousarray(self.camera_rgb, dtype=np.uint8)
             camera_depth = np.ascontiguousarray(self.camera_depth, dtype=np.float32)
             metadata["camera_rgb"] = {"shape": list(camera_rgb.shape), "dtype": str(camera_rgb.dtype)}
             metadata["camera_depth"] = {"shape": list(camera_depth.shape), "dtype": str(camera_depth.dtype)}
+        else:
+            metadata["camera_rgb"] = None
+            metadata["camera_depth"] = None
+        if self.side_scan_features is not None:
+            ssf = np.ascontiguousarray(self.side_scan_features, dtype=np.float32)
+            metadata["side_scan_features"] = {"shape": list(ssf.shape), "dtype": str(ssf.dtype)}
+        else:
+            metadata["side_scan_features"] = None
+        if self.side_camera_rgb is not None and self.side_camera_depth is not None:
+            srgb = np.ascontiguousarray(self.side_camera_rgb, dtype=np.uint8)
+            sdep = np.ascontiguousarray(self.side_camera_depth, dtype=np.float32)
+            metadata["side_camera_rgb"] = {"shape": list(srgb.shape), "dtype": str(srgb.dtype)}
+            metadata["side_camera_depth"] = {"shape": list(sdep.shape), "dtype": str(sdep.dtype)}
+        else:
+            metadata["side_camera_rgb"] = None
+            metadata["side_camera_depth"] = None
+
+        if self.rgbd_by_catalog_id:
+            order = sorted(self.rgbd_by_catalog_id.keys())
+            entries: dict = {}
+            for cid in order:
+                o = self.rgbd_by_catalog_id[cid]
+                entries[cid] = {
+                    "rgb": {"shape": list(o.rgb.shape), "dtype": str(o.rgb.dtype)},
+                    "depth": {"shape": list(o.depth.shape), "dtype": str(o.depth.dtype)},
+                    "scan_features": (
+                        {
+                            "shape": list(o.scan_features.shape),
+                            "dtype": str(o.scan_features.dtype),
+                        }
+                        if o.scan_features is not None
+                        else None
+                    ),
+                }
+            metadata["rgbd_by_catalog_id"] = {"order": order, "entries": entries}
+        else:
+            metadata["rgbd_by_catalog_id"] = None
 
         metadata_json = json.dumps(metadata).encode("utf-8")
         metadata_len = len(metadata_json)
@@ -196,6 +329,18 @@ class HardwareObservations:
         if self.camera_rgb is not None and self.camera_depth is not None:
             buf += np.ascontiguousarray(self.camera_rgb, dtype=np.uint8).tobytes()
             buf += np.ascontiguousarray(self.camera_depth, dtype=np.float32).tobytes()
+        if self.side_scan_features is not None:
+            buf += np.ascontiguousarray(self.side_scan_features, dtype=np.float32).tobytes()
+        if self.side_camera_rgb is not None and self.side_camera_depth is not None:
+            buf += np.ascontiguousarray(self.side_camera_rgb, dtype=np.uint8).tobytes()
+            buf += np.ascontiguousarray(self.side_camera_depth, dtype=np.float32).tobytes()
+        if self.rgbd_by_catalog_id:
+            for cid in sorted(self.rgbd_by_catalog_id.keys()):
+                o = self.rgbd_by_catalog_id[cid]
+                buf += np.ascontiguousarray(o.rgb, dtype=np.uint8).tobytes()
+                buf += np.ascontiguousarray(o.depth, dtype=np.float32).tobytes()
+                if o.scan_features is not None:
+                    buf += np.ascontiguousarray(o.scan_features, dtype=np.float32).tobytes()
         return bytes(buf)
 
     @classmethod
@@ -231,10 +376,8 @@ class HardwareObservations:
 
         required_base = ("joint_positions", "base_ang_vel_b", "base_lin_vel_b", "base_quat_w", "joint_velocities", "contact_forces", "previous_action")
         for k in required_base:
-            if k not in metadata or not isinstance(metadata[k], dict):
-                raise ValueError(f"from_bytes: metadata must have dict for {k!r} with shape/dtype")
-            if "shape" not in metadata[k] or "dtype" not in metadata[k]:
-                raise ValueError(f"from_bytes: metadata[{k!r}] must have 'shape' and 'dtype'")
+            if k not in metadata:
+                raise ValueError(f"from_bytes: metadata must include {k!r}")
 
         def read_array(name: str, current_offset: int) -> tuple[np.ndarray, int]:
             entry = metadata[name]
@@ -294,28 +437,35 @@ class HardwareObservations:
         if camera_height <= 0 or camera_width <= 0:
             raise ValueError(f"from_bytes: camera_height/width must be positive, got {camera_height}x{camera_width}")
 
-        has_scan_features = "scan_features" in metadata
-        has_privileged_latent = "privileged_latent" in metadata
-        has_camera_rgb = "camera_rgb" in metadata
-        has_camera_depth = "camera_depth" in metadata
-        if has_camera_rgb != has_camera_depth:
-            raise ValueError(
-                "from_bytes: camera_rgb and camera_depth must be both present or both absent in metadata"
-            )
-        has_camera_rgb_depth = has_camera_rgb and has_camera_depth
+        for req in (
+            "scan_features",
+            "privileged_latent",
+            "camera_rgb",
+            "camera_depth",
+        ):
+            if req not in metadata:
+                raise ValueError(f"from_bytes: metadata must include key {req!r}")
 
+        sf_meta = metadata["scan_features"]
         scan_features = None
-        if has_scan_features:
+        if sf_meta is not None:
             scan_features, n = read_array("scan_features", offset)
             offset += n
             scan_features = scan_features.astype(np.float32)
+
+        pl_meta = metadata["privileged_latent"]
         privileged_latent = None
-        if has_privileged_latent:
+        if pl_meta is not None:
             privileged_latent, n = read_array("privileged_latent", offset)
             offset += n
             privileged_latent = privileged_latent.astype(np.float32)
+
+        cr_meta = metadata["camera_rgb"]
+        cd_meta = metadata["camera_depth"]
         camera_rgb, camera_depth = None, None
-        if has_camera_rgb_depth:
+        if cr_meta is None and cd_meta is None:
+            pass
+        elif cr_meta is not None and cd_meta is not None:
             camera_rgb, n = read_array("camera_rgb", offset)
             offset += n
             camera_depth, n = read_array("camera_depth", offset)
@@ -325,6 +475,90 @@ class HardwareObservations:
                 raise ValueError(f"from_bytes: camera_rgb shape {camera_rgb.shape} != ({camera_height},{camera_width},3)")
             if camera_depth.shape != (camera_height, camera_width):
                 raise ValueError(f"from_bytes: camera_depth shape {camera_depth.shape} != ({camera_height},{camera_width})")
+        else:
+            raise ValueError(
+                "from_bytes: camera_rgb and camera_depth must both be null or both non-null in metadata"
+            )
+
+        side_scan_features = None
+        ssf_meta = metadata.get("side_scan_features")
+        if ssf_meta is not None:
+            side_scan_features, n = read_array("side_scan_features", offset)
+            offset += n
+            side_scan_features = side_scan_features.astype(np.float32)
+
+        scr_meta = metadata.get("side_camera_rgb")
+        scd_meta = metadata.get("side_camera_depth")
+        side_camera_rgb, side_camera_depth = None, None
+        if scr_meta is None and scd_meta is None:
+            pass
+        elif scr_meta is not None and scd_meta is not None:
+            side_camera_rgb, n = read_array("side_camera_rgb", offset)
+            offset += n
+            side_camera_depth, n = read_array("side_camera_depth", offset)
+            offset += n
+            side_camera_depth = side_camera_depth.astype(np.float32)
+            if side_camera_rgb.ndim != 3 or side_camera_rgb.shape[2] != 3:
+                raise ValueError(
+                    f"from_bytes: side_camera_rgb must be (H,W,3), got {side_camera_rgb.shape}"
+                )
+            if side_camera_depth.ndim != 2:
+                raise ValueError(
+                    f"from_bytes: side_camera_depth must be 2D, got {side_camera_depth.shape}"
+                )
+            if side_camera_rgb.shape[:2] != side_camera_depth.shape:
+                raise ValueError(
+                    f"from_bytes: side rgb H×W {side_camera_rgb.shape[:2]} != depth {side_camera_depth.shape}"
+                )
+        else:
+            raise ValueError(
+                "from_bytes: side_camera_rgb and side_camera_depth must both be null or both non-null in metadata"
+            )
+
+        rgbd_by_catalog_id = None
+        rpack = metadata.get("rgbd_by_catalog_id")
+        if rpack is not None:
+            order = rpack["order"]
+            entries = rpack["entries"]
+            out_rgbd: dict[str, RgbdCatalogObservation] = {}
+            for cid in order:
+                em = entries[cid]
+
+                def _read_blob(entry: dict, cur: int) -> tuple[np.ndarray, int]:
+                    shape_t = tuple(entry["shape"])
+                    dt = np.dtype(entry["dtype"])
+                    nb = int(np.prod(shape_t)) * dt.itemsize
+                    if cur + nb > len(data):
+                        raise ValueError(
+                            f"from_bytes: rgbd {cid!r} needs {nb} bytes at {cur}, len {len(data)}"
+                        )
+                    arr = (
+                        np.frombuffer(
+                            data,
+                            dtype=dt,
+                            count=int(np.prod(shape_t)),
+                            offset=cur,
+                        )
+                        .copy()
+                        .reshape(shape_t)
+                    )
+                    return arr, nb
+
+                rgb_a, n = _read_blob(em["rgb"], offset)
+                offset += n
+                dep_a, n = _read_blob(em["depth"], offset)
+                offset += n
+                dep_a = dep_a.astype(np.float32)
+                rgb_a = rgb_a.astype(np.uint8)
+                scan_part: Optional[np.ndarray] = None
+                if em["scan_features"] is not None:
+                    scan_part, n = _read_blob(em["scan_features"], offset)
+                    offset += n
+                    scan_part = scan_part.astype(np.float32).reshape(-1)
+                out_rgbd[cid] = RgbdCatalogObservation(
+                    rgb=rgb_a, depth=dep_a, scan_features=scan_part
+                )
+            rgbd_by_catalog_id = out_rgbd
 
         timestamp_ns = int(metadata.get("timestamp_ns", 0))
         if timestamp_ns < 0:
@@ -349,6 +583,10 @@ class HardwareObservations:
             privileged_latent=privileged_latent,
             camera_rgb=camera_rgb,
             camera_depth=camera_depth,
+            side_scan_features=side_scan_features,
+            side_camera_rgb=side_camera_rgb,
+            side_camera_depth=side_camera_depth,
+            rgbd_by_catalog_id=rgbd_by_catalog_id,
         )
 
 

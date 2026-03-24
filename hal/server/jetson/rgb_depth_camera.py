@@ -1,9 +1,8 @@
-"""Protocol for cameras that provide RGB, depth, and depth-derived scan features.
+"""Protocol for RGB-D cameras (RGB + depth in meters).
 
-Use this interface for any camera (front, left, or otherwise) that supplies
-RGB frames, depth frames, and policy-style depth features. Implementations
-include ZedCamera (ZED SDK); other depth cameras can implement this protocol
-without depending on ZED.
+Policy scan vectors are derived from depth in :class:`~hal.server.jetson.hal_server.JetsonHalServer`
+via :mod:`hal.server.jetson.depth_scan_features`. Implementations:
+:class:`~hal.server.jetson.zed_camera.ZedCamera`, :class:`~hal.server.jetson.maixsense_rgb_depth_camera.MaixSenseA075VRgbDepthCamera`.
 """
 
 from __future__ import annotations
@@ -14,11 +13,10 @@ import numpy as np
 
 
 class RgbDepthCamera(Protocol):
-    """Protocol for cameras that provide RGB, depth, and depth-derived features.
+    """Protocol for cameras that provide RGB and depth (meters).
 
     Implementations must provide:
     - get_camera_frames(): one capture returning (rgb, depth) in standard formats
-    - get_depth_features(): scan-like feature vector for the policy
     - is_ready(): whether the camera is initialized and can capture
     - close(): release resources
     """
@@ -29,14 +27,6 @@ class RgbDepthCamera(Protocol):
         Returns:
             (rgb, depth): rgb (H, W, 3) uint8, depth (H, W) float32 in meters;
             either may be None on capture failure.
-        """
-        ...
-
-    def get_depth_features(self) -> Optional[np.ndarray]:
-        """Return depth-derived scan features (e.g. 132-dim for policy).
-
-        Returns:
-            float32 array of shape (depth_feature_dim,) or None on failure.
         """
         ...
 

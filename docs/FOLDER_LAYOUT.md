@@ -12,15 +12,15 @@ Currently, the project includes:
   - **`hal/server/jetson/`**: Jetson server implementation (package: `krabby-hal-server-jetson`, installed via wheel)
   - **`hal/tools/`**: Debugging tools (package: `krabby-hal-tools`, installed via wheel)
 - **`compute/`**: Production inference and computation logic:
-  - **`compute/parkour/`**: Production-ready inference implementation (used in production container)
-- **`locomotion/`**: Production runtime that combines inference logic and HAL server for robot deployment
+  - **`compute/parkour/`**: Production-ready inference implementation (used in production container), including **`ParkourInferenceClient`** and mappers
+- **`controller/`**: On-robot scripts (e.g. gamepad / bring-up) that may use the HAL client; Jetson HAL **server** entrypoint lives under **`hal/server/jetson/`**
 
 **Key distinction**: 
-- **Game loop** = The core inference logic (poll HAL → build observation → run inference → send command)
-  - Production: `locomotion/jetson/inference_runner.py::InferenceRunner.run()`
+- **Game loop** = The core control logic (poll HAL → build observation → run inference → send `JointCommand`)
+  - Typical stack: **`compute.parkour.inference_client.ParkourInferenceClient`** + **`hal.client.HalClient`** against a running Jetson HAL (`python -m hal.server.jetson.main` in the locomotion image)
 
 All containers use inproc ZMQ for communication within the same process:
-- **Production container** (`images/locomotion/`): Combines inference (`compute/parkour/`) and HAL server (`locomotion/jetson/`) to run on the actual robot (Jetson/ARM). Uses wheels: `krabby-hal-client`, `krabby-hal-server`, `krabby-hal-server-jetson`
+- **Production container** (`images/locomotion/`): Bundles **`compute/parkour/`** and **`hal/server/jetson/`** (Jetson HAL server) for the robot (Jetson/ARM). Uses wheels: `krabby-hal-client`, `krabby-hal-server`, `krabby-hal-server-jetson`
 - **IsaacSim container** (`images/isaacsim/`): Combines inference (`compute/parkour/`) and HAL server (`krabby-hal-server-isaac`) for simulation (x86). Uses wheels: `krabby-hal-client`, `krabby-hal-server`, `krabby-hal-server-isaac`
 - **Testing containers** (`images/testing/x86/` and `images/testing/arm/`): Containers for running tests and development. Uses wheels: `krabby-hal-client`, `krabby-hal-server`, `krabby-hal-server-isaac`
 
@@ -50,7 +50,7 @@ krabby-research/
 │   │   │   └── types.py
 │   │   ├── data_structures/           # Hardware data structures
 │   │   │   ├── __init__.py
-│   │   │   └── hardware.py           # KrabbyHardwareObservations, KrabbyDesiredJointPositions
+│   │   │   └── hardware.py           # HardwareObservations, JointCommand
 │   │   └── pyproject.toml
 │   │
 │   ├── server/                       # HAL server base package (package: krabby-hal-server)
@@ -82,17 +82,8 @@ krabby-research/
 │       ├── types.py                   # Parkour-specific types (ParkourObservation, ParkourModelIO, InferenceResponse)
 │       └── mappers/                   # Data mappers (hardware ↔ model)
 │           ├── __init__.py
-│           ├── hardware_to_model.py  # KrabbyHardwareObservations → ParkourObservation
-│           └── model_to_hardware.py   # InferenceResponse → KrabbyDesiredJointPositions
-│
-├── locomotion/                       # Production runtime
-│   ├── jetson/                       # Jetson-specific runtime
-│   │   ├── inference_runner.py       # Production inference orchestration
-│   │   └── main.py                   # Production entry point (runs inference + HAL server on Jetson)
-│   │                                 # Note: JetsonHalServer is in hal/server/jetson/hal_server.py
-│   │                                 # Note: ZED camera integration is in hal/server/jetson/camera.py
-│   └── isaacsim/                     # IsaacSim runtime
-│       └── main.py                   # IsaacSim entry point
+│           ├── hardware_to_model.py  # HardwareObservations → ParkourObservation
+│           └── model_to_hardware.py   # InferenceResponse → JointCommand
 │
 ├── tests/                            # Test suite
 │   ├── __init__.py
@@ -133,7 +124,7 @@ The HAL packages are organized with a clean directory structure that matches the
   - `hal/client/__init__.py`: Re-exports `HalClient`, `HalClientConfig` for cleaner imports
   - `hal/client/observation/`: Observation types (NavigationCommand only - generic HAL type)
   - `hal/client/commands/`: Command types (empty, kept for future generic types)
-  - `hal/client/data_structures/`: Hardware data structures (KrabbyHardwareObservations, KrabbyDesiredJointPositions)
+  - `hal/client/data_structures/`: Hardware data structures (`HardwareObservations`, `JointCommand`)
   
 **Model-specific types** (ParkourObservation, ParkourModelIO, InferenceResponse, etc.) are in `compute/parkour/types.py`.
 
@@ -151,7 +142,9 @@ The HAL packages are organized with a clean directory structure that matches the
   
 - **`hal/server/jetson/`**: Jetson HAL server package (package name: `krabby-hal-server-jetson`, installed via wheel)
   - `hal/server/jetson/hal_server.py`: JetsonHalServer (extends HalServerBase)
-  - `hal/server/jetson/camera.py`: ZED camera integration for depth sensing
+  - `hal/server/jetson/zed_camera.py`: ZED camera integration for depth sensing
+  - `hal/server/jetson/sensor_backend_jetson.py`: `JETSON_SENSOR_CATALOG`, `JetsonSensorInterface`
+  - `hal/server/jetson/main.py`: Console entry (`python -m hal.server.jetson.main`)
   - `hal/server/jetson/__init__.py`: Re-exports `JetsonHalServer` for cleaner imports
   
 - **`hal/tools/`**: HAL debugging tools package (package name: `krabby-hal-tools`, installed via wheel)
@@ -168,8 +161,8 @@ from hal.server.jetson import JetsonHalServer
 # Generic HAL types
 from hal.client.observation.types import NavigationCommand
 from hal.client.data_structures.hardware import (
-    KrabbyHardwareObservations,
-    KrabbyDesiredJointPositions,
+    HardwareObservations,
+    JointCommand,
 )
 
 # Model-specific types (Parkour)
@@ -220,7 +213,7 @@ cd ../server && python -m build
 
 ### Other Components
 - **`compute/parkour/`**: Production inference logic (used in production container)
-- **`locomotion/jetson/`**: Production runtime combining inference and HAL server for robot deployment
+- **`hal/server/jetson/`**: Jetson HAL server (sensors, observations, `python -m hal.server.jetson.main`)
 - **`images/locomotion/`**: Production container that runs on the robot (uses wheels)
 - **`images/isaacsim/`**: IsaacSim container for simulation (uses wheels)
 - **`images/testing/`**: Testing containers for x86 and ARM platforms (uses wheels)

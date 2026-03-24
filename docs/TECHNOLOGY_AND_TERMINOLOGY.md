@@ -244,10 +244,9 @@ Key files:
   - Is friendlier to automated agents modifying the codebase
   - Provides low-latency, high-throughput messaging suitable for real-time control loops (100+ Hz)
   - Supports both local (inproc) and distributed (tcp) communication patterns
-- **ZMQ Architecture**: The HAL uses three main ZMQ channels:
-  - **Camera observation** (PUB/SUB): Publishes depth/RGBD frames or pre-encoded depth features
-  - **State observation** (PUB/SUB): Publishes robot/base pose and joint state
-  - **Joint command service** (PUSH/PULL): Receives desired joint positions from the game loop with FIFO ordering and backpressure (HWM=5)
+- **ZMQ Architecture**: The HAL client/server pair uses two main ZMQ patterns:
+  - **Observation** (server PUB / client SUB): One topic; payload is a serialized **`HardwareObservations`** blob (joint/base state, optional primary RGB-D, optional scan features, optional side slot fields, optional **`rgbd_by_catalog_id`** for every HAL-opened RGB-D stream—see **HAL_GUIDE.md**)
+  - **Joint commands** (client PUSH / server PULL): Desired joint positions with FIFO ordering and backpressure (HWM=5)
 - **Message Format**: Messages use topic-prefixed multipart format with flat float32 numpy arrays for efficient serialization and minimal overhead
 
 ### Embedded Hardware
@@ -259,7 +258,7 @@ Key files:
   - Includes CUDA, cuDNN, TensorRT, and other NVIDIA libraries pre-installed
   - Enables GPU-accelerated inference on embedded hardware
 - **Where it fits**: 
-  - Jetson HAL server deployment (`locomotion/backends/jetson/`)
+  - Jetson HAL server deployment (`hal/server/jetson/`, container entrypoint `hal.server.jetson.main`)
   - Container images for Jetson (`images/locomotion/`)
 - **Why**: JetPack provides a complete, optimized software stack for Jetson devices, enabling efficient deployment of AI/ML workloads on embedded hardware without manual library installation and configuration
 
@@ -316,8 +315,8 @@ The project implements a Hardware Abstraction Layer (HAL) using ZMQ for communic
      - Builds observation tensors matching the training format
      - Runs policy inference to generate joint commands
      - Sends joint commands back via ZMQ
-   - Production: `locomotion/jetson/inference_runner.py::InferenceRunner.run()`
-   - Testing: `compute/testing/inference_test_runner.py::InferenceTestRunner` (simulates game loop)
+   - Production Jetson HAL process: `python -m hal.server.jetson.main` (see **JETSON_DEPLOYMENT.md**); policy/control loops use **`compute.parkour.inference_client.ParkourInferenceClient`** or project-specific runners that talk to the same HAL ZMQ endpoints
+   - Testing: `compute/testing/inference_test_runner.py` (development harness around **`ParkourInferenceClient`**)
 
 2. **HAL Client**:
    - ZMQ-based client that subscribes to observation (camera, state) and sends commands
@@ -336,7 +335,7 @@ The project implements a Hardware Abstraction Layer (HAL) using ZMQ for communic
 
 5. **Jetson HAL Server**:
    - Runs on Jetson Orin hardware (JetPack/L4T - see Embedded Hardware section for details)
-   - Publishes real camera frames (ZED 2i) and robot state
+   - Publishes **`HardwareObservations`**: robot state plus front RGB-D from the catalog primary row (commonly **ZED 2i** or **MaixSense-A075V**), and optional extra RGB-D under **`rgbd_by_catalog_id`** when configured (`hal/server/jetson/sensor_backend_jetson.py`)
    - Receives joint commands for real actuators
    - Mirrors the IsaacSim server interface for seamless switching
 

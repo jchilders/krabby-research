@@ -1,12 +1,9 @@
 """Unit tests for HardwareObservations serialization/deserialization."""
 
-import importlib.util
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-from hal.client.data_structures.hardware import HardwareObservations
+from hal.client.data_structures.hardware import HardwareObservations, RgbdCatalogObservation
 
 
 def test_serialize_deserialize_with_privileged_latent():
@@ -248,6 +245,128 @@ def test_camera_rgb_depth_both_or_none():
             camera_rgb=camera_rgb,
             camera_depth=None,
         )
+
+
+def test_side_scan_and_rgb_depth_roundtrip():
+    """Optional legacy side_* fields serialize after front camera (depth features + RGB-D)."""
+    camera_height, camera_width = 480, 640
+    camera_rgb = np.random.randint(0, 255, (camera_height, camera_width, 3), dtype=np.uint8)
+    camera_depth = np.random.rand(camera_height, camera_width).astype(np.float32) * 5.0
+    side_rgb = np.random.randint(0, 255, (camera_height, camera_width, 3), dtype=np.uint8)
+    side_depth = np.random.rand(camera_height, camera_width).astype(np.float32) * 5.0
+    scan_f = np.linspace(-0.5, 0.5, 132, dtype=np.float32)
+    side_scan = np.linspace(0.1, 0.9, 132, dtype=np.float32)
+
+    hw = HardwareObservations(
+        joint_positions=np.zeros(12, dtype=np.float32),
+        camera_height=camera_height,
+        camera_width=camera_width,
+        timestamp_ns=1,
+        base_ang_vel_b=np.zeros(3, dtype=np.float32),
+        base_lin_vel_b=np.zeros(3, dtype=np.float32),
+        base_quat_w=np.array([0, 0, 0, 1], dtype=np.float32),
+        joint_velocities=np.zeros(12, dtype=np.float32),
+        contact_forces=np.zeros(5, dtype=np.float32),
+        previous_action=np.zeros(12, dtype=np.float32),
+        camera_rgb=camera_rgb,
+        camera_depth=camera_depth,
+        scan_features=scan_f,
+        side_scan_features=side_scan,
+        side_camera_rgb=side_rgb,
+        side_camera_depth=side_depth,
+    )
+    out = HardwareObservations.from_bytes(hw.to_bytes())
+    assert np.allclose(out.scan_features, scan_f)
+    assert np.allclose(out.side_scan_features, side_scan)
+    assert np.array_equal(out.side_camera_rgb, side_rgb)
+    assert np.allclose(out.side_camera_depth, side_depth)
+    assert out.rgbd_by_catalog_id is None
+
+
+def test_side_camera_different_resolution_than_front_roundtrip():
+    """Legacy side_camera_* may use Hs×Ws different from front camera_height×camera_width."""
+    camera_height, camera_width = 480, 640
+    sh, sw = 240, 320
+    camera_rgb = np.random.randint(0, 255, (camera_height, camera_width, 3), dtype=np.uint8)
+    camera_depth = np.random.rand(camera_height, camera_width).astype(np.float32) * 5.0
+    side_rgb = np.random.randint(0, 255, (sh, sw, 3), dtype=np.uint8)
+    side_depth = np.random.rand(sh, sw).astype(np.float32) * 5.0
+    scan_f = np.linspace(-0.5, 0.5, 132, dtype=np.float32)
+    side_scan = np.linspace(0.1, 0.9, 132, dtype=np.float32)
+
+    hw = HardwareObservations(
+        joint_positions=np.zeros(12, dtype=np.float32),
+        camera_height=camera_height,
+        camera_width=camera_width,
+        timestamp_ns=1,
+        base_ang_vel_b=np.zeros(3, dtype=np.float32),
+        base_lin_vel_b=np.zeros(3, dtype=np.float32),
+        base_quat_w=np.array([0, 0, 0, 1], dtype=np.float32),
+        joint_velocities=np.zeros(12, dtype=np.float32),
+        contact_forces=np.zeros(5, dtype=np.float32),
+        previous_action=np.zeros(12, dtype=np.float32),
+        camera_rgb=camera_rgb,
+        camera_depth=camera_depth,
+        scan_features=scan_f,
+        side_scan_features=side_scan,
+        side_camera_rgb=side_rgb,
+        side_camera_depth=side_depth,
+    )
+    out = HardwareObservations.from_bytes(hw.to_bytes())
+    assert out.camera_height == camera_height and out.camera_width == camera_width
+    assert np.array_equal(out.side_camera_rgb, side_rgb)
+    assert out.side_camera_rgb.shape == (sh, sw, 3)
+    assert np.allclose(out.side_camera_depth, side_depth)
+
+
+def test_rgbd_by_catalog_id_roundtrip():
+    """Per-catalog-id RGB-D chunks serialize after legacy side camera blobs."""
+    camera_height, camera_width = 480, 640
+    camera_rgb = np.random.randint(0, 255, (camera_height, camera_width, 3), dtype=np.uint8)
+    camera_depth = np.random.rand(camera_height, camera_width).astype(np.float32) * 5.0
+    scan_f = np.linspace(-0.5, 0.5, 132, dtype=np.float32)
+
+    rgbd_by_catalog_id = {
+        "front_rgbd": RgbdCatalogObservation(
+            rgb=camera_rgb.copy(),
+            depth=camera_depth.copy(),
+            scan_features=scan_f.copy(),
+        ),
+        "side_rgbd": RgbdCatalogObservation(
+            rgb=np.random.randint(0, 255, (camera_height, camera_width, 3), dtype=np.uint8),
+            depth=np.random.rand(camera_height, camera_width).astype(np.float32),
+            scan_features=np.linspace(0.0, 1.0, 64, dtype=np.float32),
+        ),
+    }
+
+    hw = HardwareObservations(
+        joint_positions=np.zeros(12, dtype=np.float32),
+        camera_height=camera_height,
+        camera_width=camera_width,
+        timestamp_ns=2,
+        base_ang_vel_b=np.zeros(3, dtype=np.float32),
+        base_lin_vel_b=np.zeros(3, dtype=np.float32),
+        base_quat_w=np.array([0, 0, 0, 1], dtype=np.float32),
+        joint_velocities=np.zeros(12, dtype=np.float32),
+        contact_forces=np.zeros(5, dtype=np.float32),
+        previous_action=np.zeros(12, dtype=np.float32),
+        camera_rgb=camera_rgb,
+        camera_depth=camera_depth,
+        scan_features=scan_f,
+        rgbd_by_catalog_id=rgbd_by_catalog_id,
+    )
+    out = HardwareObservations.from_bytes(hw.to_bytes())
+    assert out.rgbd_by_catalog_id is not None
+    assert set(out.rgbd_by_catalog_id) == {"front_rgbd", "side_rgbd"}
+    for cid in out.rgbd_by_catalog_id:
+        a = rgbd_by_catalog_id[cid]
+        b = out.rgbd_by_catalog_id[cid]
+        assert np.array_equal(b.rgb, a.rgb)
+        assert np.allclose(b.depth, a.depth)
+        if a.scan_features is None:
+            assert b.scan_features is None
+        else:
+            assert np.allclose(b.scan_features, a.scan_features)
 
 
 if __name__ == "__main__":

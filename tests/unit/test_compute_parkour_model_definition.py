@@ -4,6 +4,7 @@ import pytest
 
 from compute.parkour.model_definition import (
     PARKOUR_MODEL_OBSERVATION_DEFINITION,
+    PARKOUR_MODEL_OBSERVATION_DEFINITION_DUAL_SCAN,
     ModelObservationDefinition,
 )
 from hal.server.robot_definition import (
@@ -33,12 +34,25 @@ def test_model_definition_get_observation_dimensions():
     expected_obs_dim = (
         num_prop
         + model.num_scan
+        + model.num_side_scan
         + model.num_priv_explicit
         + model.num_priv_latent
         + history_dim
     )
     assert dims.obs_dim == expected_obs_dim
     assert dims.observation_joint_count == 12
+    assert dims.num_scan_front == model.num_scan
+    assert dims.num_side_scan == model.num_side_scan
+    assert dims.num_scan == model.num_scan + model.num_side_scan
+
+
+def test_dual_scan_obs_dim():
+    """Dual-scan definition doubles the scan slice (132+132)."""
+    m = PARKOUR_MODEL_OBSERVATION_DEFINITION_DUAL_SCAN
+    dims = m.get_observation_dimensions(_TEST_ROBOT)
+    assert dims.num_scan == 264
+    assert dims.num_scan_front == 132
+    assert dims.num_side_scan == 132
 
 
 def test_model_observation_definition_validate_success():

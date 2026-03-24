@@ -1,6 +1,6 @@
 """Multi-sensor live view: list HAL sensors, print pipelines, show real camera/sim frames.
 
-**Jetson** (default display): requires a **ZED** camera (same stack as `hal.server.jetson.camera`).
+**Jetson** (default display): requires a **ZED** camera (same stack as `hal.server.jetson.zed_camera`).
 Shows front RGB + depth in a grid. Other sensors listed by `JetsonSensorInterface` are not
 captured here—only the ZED front pair.
 
@@ -219,7 +219,8 @@ def run_jetson_zed_display() -> int:
         resolution=obs.resolution,
         fps=obs.fps,
         depth_mode="PERFORMANCE",
-        depth_feature_dim=132,
+        maixsense_host_env=obs.maixsense_host_env,
+        maixsense_port_env=obs.maixsense_port_env,
     )
     if cam is None:
         logger.error("Front RGB-D camera not available (init failed or no device).")

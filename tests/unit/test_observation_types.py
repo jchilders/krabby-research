@@ -9,7 +9,12 @@ import numpy as np
 import pytest
 
 from hal.client.observation.types import NavigationCommand
-from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
+from compute.parkour.model_definition import (
+    PARKOUR_MODEL_OBSERVATION_DEFINITION,
+    PARKOUR_MODEL_OBSERVATION_DEFINITION_DUAL_SCAN,
+)
+from hal.client.data_structures.hardware import HardwareObservations
+from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
 from compute.parkour.parkour_types import ParkourObservation, ParkourModelIO
 from hal.server.robot_definition import (
     ObservationScalingDefinition,
@@ -35,6 +40,32 @@ def observation_dimensions():
 
 class TestObservationDimensions:
     """Test observation dimensions from definitions."""
+
+    def test_mapper_concatenates_dual_scan_slices(self):
+        """Dual-scan dims: HWObservationsToParkourMapper stacks front then side scan (264)."""
+        dims = PARKOUR_MODEL_OBSERVATION_DEFINITION_DUAL_SCAN.get_observation_dimensions(_TEST_ROBOT)
+        mapper = HWObservationsToParkourMapper(dims)
+        front = np.linspace(0.0, 1.0, 132, dtype=np.float32)
+        side = np.linspace(2.0, 3.0, 132, dtype=np.float32)
+        hw = HardwareObservations(
+            joint_positions=np.zeros(12, dtype=np.float32),
+            camera_height=480,
+            camera_width=640,
+            timestamp_ns=1,
+            base_ang_vel_b=np.zeros(3, dtype=np.float32),
+            base_lin_vel_b=np.zeros(3, dtype=np.float32),
+            base_quat_w=np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+            joint_velocities=np.zeros(12, dtype=np.float32),
+            contact_forces=np.zeros(5, dtype=np.float32),
+            previous_action=np.zeros(12, dtype=np.float32),
+            scan_features=front,
+            side_scan_features=side,
+        )
+        nav = NavigationCommand.create_now()
+        po = mapper.map(hw, nav_cmd=nav)
+        assert po.scan.shape == (264,)
+        assert np.allclose(po.scan[:132], front)
+        assert np.allclose(po.scan[132:], side)
 
     def test_dimension_sum_matches_total(self, observation_dimensions):
         """Sum of component dimensions equals obs_dim."""

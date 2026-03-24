@@ -1,7 +1,11 @@
-"""Pluggable factories for the HAL front RGB-D camera (``RgbDepthCamera`` protocol).
+"""Pluggable factories for HAL RGB-D cameras (``RgbDepthCamera`` protocol).
 
-Register drivers in ``FRONT_RGB_DEPTH_CAMERA_FACTORIES``. The Jetson catalog row
-marked ``is_primary`` sets ``camera_driver`` (also on ``SensorInfo`` from ``list_sensors()``).
+Register drivers in ``FRONT_RGB_DEPTH_CAMERA_FACTORIES``. ``JetsonHalServer`` opens one
+instance per ``JETSON_SENSOR_CATALOG`` rgbd row (primary always; others when ``hal_open_rgbd``).
+
+``camera_driver`` values: ``"zed"`` (USB + pyzed; optional ``zed_serial_number``), ``"maixsense_a075v"``
+(HTTP; requires ``maixsense_host_env`` / optional ``maixsense_port_env`` on the catalog row—env var
+*names*, one host per module).
 """
 
 from __future__ import annotations
@@ -21,20 +25,42 @@ def _factory_zed(
     resolution: tuple[int, int],
     fps: int,
     depth_mode: str,
-    depth_feature_dim: int,
+    zed_serial_number: Optional[int] = None,
 ) -> Optional[RgbDepthCamera]:
-    from hal.server.jetson.camera import create_zed_camera
+    from hal.server.jetson.zed_camera import create_zed_camera
 
     return create_zed_camera(
         resolution=resolution,
         fps=fps,
         depth_mode=depth_mode,
-        depth_feature_dim=depth_feature_dim,
+        serial_number=zed_serial_number,
+    )
+
+
+def _factory_maixsense_a075v(
+    *,
+    resolution: tuple[int, int],
+    fps: int,
+    depth_mode: str,
+    maixsense_host_env: str,
+    maixsense_port_env: Optional[str] = None,
+) -> Optional[RgbDepthCamera]:
+    from hal.server.jetson.maixsense_rgb_depth_camera import (
+        create_maixsense_a075v_rgb_depth_camera,
+    )
+
+    return create_maixsense_a075v_rgb_depth_camera(
+        resolution=resolution,
+        fps=fps,
+        depth_mode=depth_mode,
+        maixsense_host_env=maixsense_host_env,
+        maixsense_port_env=maixsense_port_env,
     )
 
 
 FRONT_RGB_DEPTH_CAMERA_FACTORIES: dict[str, FrontRgbDepthCameraFactory] = {
     "zed": _factory_zed,
+    "maixsense_a075v": _factory_maixsense_a075v,
 }
 
 
@@ -44,9 +70,11 @@ def create_front_rgb_depth_camera(
     resolution: tuple[int, int],
     fps: int,
     depth_mode: str = "PERFORMANCE",
-    depth_feature_dim: int,
+    zed_serial_number: Optional[int] = None,
+    maixsense_host_env: Optional[str] = None,
+    maixsense_port_env: Optional[str] = None,
 ) -> Optional[RgbDepthCamera]:
-    """Build the front observation camera using a registered ``driver`` name."""
+    """Build an RGB-D camera using a registered ``driver`` name (any catalog rgbd row)."""
     try:
         factory = FRONT_RGB_DEPTH_CAMERA_FACTORIES[driver]
     except KeyError as e:
@@ -54,9 +82,28 @@ def create_front_rgb_depth_camera(
         raise ValueError(
             f"Unknown front RGB-D camera driver {driver!r}. Registered: {known}"
         ) from e
+    if driver == "zed":
+        return factory(
+            resolution=resolution,
+            fps=fps,
+            depth_mode=depth_mode,
+            zed_serial_number=zed_serial_number,
+        )
+    if driver == "maixsense_a075v":
+        if not (maixsense_host_env and str(maixsense_host_env).strip()):
+            raise ValueError(
+                "maixsense_a075v requires maixsense_host_env (non-empty env var name); "
+                "set JetsonSensorCatalogEntry.maixsense_host_env"
+            )
+        return factory(
+            resolution=resolution,
+            fps=fps,
+            depth_mode=depth_mode,
+            maixsense_host_env=maixsense_host_env.strip(),
+            maixsense_port_env=maixsense_port_env,
+        )
     return factory(
         resolution=resolution,
         fps=fps,
         depth_mode=depth_mode,
-        depth_feature_dim=depth_feature_dim,
     )
