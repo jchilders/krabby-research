@@ -7,7 +7,7 @@ This document records the **implemented** path used to produce the authoritative
 | Role | Path |
 |------|------|
 | **Blender source** | `assets/Krabby-Uno.blend` (saved with **Blender 5.1**) |
-| **Authoritative USD** | `assets/crab_hex.usd` — use this going forward for training and evaluation workflows that expect the full Krabby-Uno asset from Blender |
+| **Authoritative USD** | `assets/crab_hex.usd` — **checked-in canonical** (binary / crate layer); use this for training and evaluation workflows that expect the full Krabby-Uno asset |
 | **Reference USD (testing)** | `assets/crab_hex_ref.usd` — produced from `assets/crab_hex_ref.urdf`; not authoritative; for tests and experiments only |
 
 ## Why this pipeline
@@ -28,15 +28,27 @@ The Alpha build used here is based on **Blender 4.2**, while the robot is modele
 
 After loading the exported USD in **Isaac Sim**, the following was applied so the robot simulates as an articulation with the intended topology:
 
-1. Set **`/World/KrabbyUno`** as the **articulation root**.
+1. Set **`/World/KrabbyUno`** as the **articulation root** (with `xformOp:translate` / `xformOp:orient` / `xformOp:scale` as in the file).
 2. Add **Collider** and **Rigid Body** for the relevant **leg** parts (as needed for stable contact and dynamics).
-3. **Fixed joint:** attach **top plate** and **bottom plate**.
+3. **Fixed joint:** attach **top plate** and **bottom plate** (including **`Plate_Weld_FixedJoint`**-style joints with aligned local frames — identity offset/rotation where needed so the stack does not pitch incorrectly).
 4. **Fixed joint:** attach each **HipMount** to the **bottom plate**.
-5. **Revolute joint:** **Hip mount** ↔ **Hip**.
-6. **Prismatic joint:** **Hip** ↔ **Femur**.
-7. **Prismatic joint:** **Femur** ↔ **Tibia**.
-8. Assign **mass** to all leg parts and to the **top** and **bottom** plates.
-9. Set **joint limits** and **prismatic constraints** as required for stable motion and hardware-consistent ranges.
+5. **Revolute joint:** **HipMount** ↔ **Hip** (yaw).
+6. **Hip–Femur chain (per leg):** same “slider body + prismatic + revolute” pattern as the knee. The implemented graph uses:
+   - **`FemurPrismatic`** rigid under each leg root (e.g. `Root_MR/MR_FemurPrismatic`).
+   - **Prismatic joint:** **Hip** ↔ **`FemurPrismatic`** (extension along the joint axis; **`Hip_FemurPrismatic_PrismaticJoint`** in the file).
+   - **Revolute joint:** **`FemurPrismatic`** ↔ **Femur** (with **`physics:excludeFromArticulation`** on the helper rigid where required).
+   - **Revolute joint:** **Hip** ↔ **Femur** (**`Hip_Femur_RevoluteJoint`**).
+7. **Knee chain (per leg):** not a single Femur–Tibia prismatic alone. The implemented graph uses:
+   - **`TibiaPrismatic`** rigid under each leg root (e.g. `Root_MR/MR_TibiaPrismatic`) as a **slider body** between Femur and Tibia.
+   - **Prismatic joint:** **Femur** ↔ **`TibiaPrismatic`** (knee extension along the joint axis, with linear drives and limits).
+   - **Revolute joint:** **`TibiaPrismatic`** ↔ **Tibia** (with **`physics:excludeFromArticulation`** on the helper rigid bodies where required so the articulation stays well-formed).
+   - **Revolute joint:** **Femur** ↔ **Tibia** (**`Femur_Tibia_RevoluteJoint`**) with **angular** limits and **angular drives** for knee swing (front/rear and middle legs: **FR / FL / RR / RL / MR / ML** all wired consistently).
+8. Assign **mass** to all leg parts and to the **top** and **bottom** plates (avoid **duplicate** mass on decorative or child meshes that share the same physical body).
+9. Set **joint limits** and **drive** parameters (stiffness, damping, targets) for stable motion and hardware-consistent ranges — hip and knee prismatic drives were **softened** in-repo relative to early stiff values; knee **linear** drives use **target position 0** where appropriate.
+
+### In-repo USD edits (after Isaac Sim)
+
+The checked-in **`crab_hex.usd`** includes **hand-tuned physics** not implied by “export once from Blender”: joint drive gains, plate-weld frame cleanup, knee **angular** drives on **`Femur_Tibia`**, mirrored **MR/ML** leg graphs to match the other four legs, and mass fixes. When regenerating from Blender/Isaac, re-apply or merge these layers rather than expecting a fresh export to match bit-for-bit.
 
 
 ## References
