@@ -4,13 +4,10 @@ This document records the **implemented** path used to produce the authoritative
 
 ## Purpose and authority
 
-All workflow and script documentation below assumes **`assets/crab_hex.usd`** as the scene you open in Isaac Sim. Do not rely on a checked-in ASCII layer for day-to-day use.
-
 | Role | Path |
 |------|------|
 | **Blender source** | `assets/Krabby-Uno.blend` (saved with **Blender 5.1**) |
 | **Canonical robot USD (checked in)** | **`assets/crab_hex.usd`** — the asset to load for sim, scripts, and anything that references the Krabby-Uno hexapod stage (`/World/KrabbyUno`). |
-| **Local troubleshooting only (not checked in)** | A **`crab_hex.usda`** next to it (or elsewhere on disk) is fine for ASCII edits and experiments; it is **not** part of the documented workflow. When physics and joints behave as intended, **save/replace `assets/crab_hex.usd`** in Isaac Sim (or your usual exporter) and commit **only** that binary USD. |
 | **Reference USD (testing)** | `assets/crab_hex_ref.usd` — produced from `assets/crab_hex_ref.urdf`; not authoritative; for tests and experiments only |
 
 ## Why this pipeline
@@ -47,7 +44,7 @@ After loading the exported USD in **Isaac Sim**, the following was applied so th
    - **Revolute joint:** **`TibiaPrismatic`** ↔ **Tibia** (with **`physics:excludeFromArticulation`** on the helper rigid bodies where required so the articulation stays well-formed). In-repo: **tight angular limits ±0.001°**, no angular drive.
    - **Revolute joint:** **Femur** ↔ **Tibia** (**`Femur_Tibia_RevoluteJoint`**) with **tight angular limits ±0.001°** and **no angular drive**; knee extension is commanded on the **Femur–Tibia prismatic** linear drive only (**FR / FL / RR / RL / MR / ML**).
 8. Assign **mass** to all leg parts and to the **top** and **bottom** plates (avoid **duplicate** mass on decorative or child meshes that share the same physical body).
-9. Set **joint limits** and **drive** parameters (stiffness, damping, targets) for stable motion and hardware-consistent ranges — hip and knee prismatic drives were **softened** in-repo relative to early stiff values; knee **linear** drives use **target position 0** where appropriate.
+9. Set **joint limits** and **drive** parameters (stiffness, damping, targets) for stable motion and hardware-consistent ranges — hip **angular** and hip/knee **prismatic** drives use **moderate stiffness with higher damping** in-repo to avoid idle oscillation under gravity/contacts; knee **linear** drives use **target position 0** where appropriate.
 
 **Actuation model (3 motors per leg, in-repo):** only **`HipRevoluteJoint`** has an **angular** drive; **hip–femur** and **femur–tibia** **prismatic** joints have **linear** drives. All other leg revolutes are **passive** with **±0.001°** angular limits (no `PhysicsDriveAPI:angular`). See `assets/scripts/README.md` for the **Flat18** command layout. These details apply to the checked-in **`assets/crab_hex.usd`**.
 
