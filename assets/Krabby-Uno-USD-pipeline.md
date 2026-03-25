@@ -4,10 +4,13 @@ This document records the **implemented** path used to produce the authoritative
 
 ## Purpose and authority
 
+All workflow and script documentation below assumes **`assets/crab_hex.usd`** as the scene you open in Isaac Sim. Do not rely on a checked-in ASCII layer for day-to-day use.
+
 | Role | Path |
 |------|------|
 | **Blender source** | `assets/Krabby-Uno.blend` (saved with **Blender 5.1**) |
-| **Authoritative USD** | `assets/crab_hex.usd` — **checked-in canonical** (binary / crate layer); use this for training and evaluation workflows that expect the full Krabby-Uno asset |
+| **Canonical robot USD (checked in)** | **`assets/crab_hex.usd`** — the asset to load for sim, scripts, and anything that references the Krabby-Uno hexapod stage (`/World/KrabbyUno`). |
+| **Local troubleshooting only (not checked in)** | A **`crab_hex.usda`** next to it (or elsewhere on disk) is fine for ASCII edits and experiments; it is **not** part of the documented workflow. When physics and joints behave as intended, **save/replace `assets/crab_hex.usd`** in Isaac Sim (or your usual exporter) and commit **only** that binary USD. |
 | **Reference USD (testing)** | `assets/crab_hex_ref.usd` — produced from `assets/crab_hex_ref.urdf`; not authoritative; for tests and experiments only |
 
 ## Why this pipeline
@@ -36,19 +39,21 @@ After loading the exported USD in **Isaac Sim**, the following was applied so th
 6. **Hip–Femur chain (per leg):** same “slider body + prismatic + revolute” pattern as the knee. The implemented graph uses:
    - **`FemurPrismatic`** rigid under each leg root (e.g. `Root_MR/MR_FemurPrismatic`).
    - **Prismatic joint:** **Hip** ↔ **`FemurPrismatic`** (extension along the joint axis; **`Hip_FemurPrismatic_PrismaticJoint`** in the file).
-   - **Revolute joint:** **`FemurPrismatic`** ↔ **Femur** (with **`physics:excludeFromArticulation`** on the helper rigid where required).
-   - **Revolute joint:** **Hip** ↔ **Femur** (**`Hip_Femur_RevoluteJoint`**).
+   - **Revolute joint:** **`FemurPrismatic`** ↔ **Femur** (with **`physics:excludeFromArticulation`** on the helper rigid where required). In-repo: **tight angular limits ±0.001°**, no angular drive (non-actuated DOF).
+   - **Revolute joint:** **Hip** ↔ **Femur** (**`Hip_Femur_RevoluteJoint`**). In-repo: **tight angular limits ±0.001°**, no angular drive.
 7. **Knee chain (per leg):** not a single Femur–Tibia prismatic alone. The implemented graph uses:
    - **`TibiaPrismatic`** rigid under each leg root (e.g. `Root_MR/MR_TibiaPrismatic`) as a **slider body** between Femur and Tibia.
    - **Prismatic joint:** **Femur** ↔ **`TibiaPrismatic`** (knee extension along the joint axis, with linear drives and limits).
-   - **Revolute joint:** **`TibiaPrismatic`** ↔ **Tibia** (with **`physics:excludeFromArticulation`** on the helper rigid bodies where required so the articulation stays well-formed).
-   - **Revolute joint:** **Femur** ↔ **Tibia** (**`Femur_Tibia_RevoluteJoint`**) with **angular** limits and **angular drives** for knee swing (front/rear and middle legs: **FR / FL / RR / RL / MR / ML** all wired consistently).
+   - **Revolute joint:** **`TibiaPrismatic`** ↔ **Tibia** (with **`physics:excludeFromArticulation`** on the helper rigid bodies where required so the articulation stays well-formed). In-repo: **tight angular limits ±0.001°**, no angular drive.
+   - **Revolute joint:** **Femur** ↔ **Tibia** (**`Femur_Tibia_RevoluteJoint`**) with **tight angular limits ±0.001°** and **no angular drive**; knee extension is commanded on the **Femur–Tibia prismatic** linear drive only (**FR / FL / RR / RL / MR / ML**).
 8. Assign **mass** to all leg parts and to the **top** and **bottom** plates (avoid **duplicate** mass on decorative or child meshes that share the same physical body).
 9. Set **joint limits** and **drive** parameters (stiffness, damping, targets) for stable motion and hardware-consistent ranges — hip and knee prismatic drives were **softened** in-repo relative to early stiff values; knee **linear** drives use **target position 0** where appropriate.
 
+**Actuation model (3 motors per leg, in-repo):** only **`HipRevoluteJoint`** has an **angular** drive; **hip–femur** and **femur–tibia** **prismatic** joints have **linear** drives. All other leg revolutes are **passive** with **±0.001°** angular limits (no `PhysicsDriveAPI:angular`). See `assets/scripts/README.md` for the **Flat18** command layout. These details apply to the checked-in **`assets/crab_hex.usd`**.
+
 ### In-repo USD edits (after Isaac Sim)
 
-The checked-in **`crab_hex.usd`** includes **hand-tuned physics** not implied by “export once from Blender”: joint drive gains, plate-weld frame cleanup, knee **angular** drives on **`Femur_Tibia`**, mirrored **MR/ML** leg graphs to match the other four legs, and mass fixes. When regenerating from Blender/Isaac, re-apply or merge these layers rather than expecting a fresh export to match bit-for-bit.
+The checked-in **`crab_hex.usd`** includes **hand-tuned physics** not implied by “export once from Blender”: joint drive gains, plate-weld frame cleanup, **passive** (limit-only) revolutes on the parallel leg chain, mirrored **MR/ML** leg graphs to match the other four legs, and mass fixes. When regenerating from Blender/Isaac, re-apply or merge these layers rather than expecting a fresh export to match bit-for-bit.
 
 
 ## References
