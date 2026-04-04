@@ -51,9 +51,10 @@ class HalClient:
             self.context = zmq.Context()
             self._context_owned = True
 
-        # Create SUB socket for observation (complete observation in training format)
+        # Create SUB socket for observation (single-part messages: topic prefix + blob)
         self.observation_socket = self.context.socket(zmq.SUB)
-        self.observation_socket.setsockopt(zmq.RCVHWM, 1)  # Latest-only
+        self.observation_socket.setsockopt(zmq.RCVHWM, 1)  # Keep only one message
+        self.observation_socket.setsockopt(zmq.CONFLATE, 1)  # When multiple arrive before recv, keep only the latest
         self.observation_socket.setsockopt(zmq.SUBSCRIBE, TOPIC_OBSERVATION)
         if not self.config.observation_endpoint:
             raise ValueError("observation_endpoint must be set in config")
@@ -69,7 +70,7 @@ class HalClient:
                    f"command={self.config.command_endpoint}")
 
     def close(self) -> None:
-        """Close all sockets and context."""
+        """Close all sockets and context. Blocks until sockets finish."""
         if not self._initialized:
             return
 
@@ -140,38 +141,42 @@ class HalClient:
         if not self._initialized:
             raise RuntimeError("Client not initialized. Call initialize() first.")
 
-        # Poll observation socket for hardware observations
-        if self.observation_socket.poll(timeout_ms, zmq.POLLIN):
-            try:
-                parts = self.observation_socket.recv_multipart(zmq.NOBLOCK)
-                if len(parts) >= 2:
-                    topic = parts[0]
-                    hw_obs_parts = parts[1:]
-                    if self._debug_enabled:
-                        logger.debug(
-                            f"[ZMQ RECV] observation: topic={topic.decode('utf-8')}, "
-                            f"num_parts={len(parts)}"
-                        )
-                    if len(hw_obs_parts) not in (12, 13, 14):
-                        error_msg = f"Invalid number of hw_obs parts: {len(hw_obs_parts)}, expected 12 (standard), 13 (extended), or 14 (full). Total message parts: {len(parts)}"
-                        logger.error(f"[ZMQ RECV] observation: {error_msg}")
-                        raise ValueError(error_msg)
+        # Poll observation socket (single-part frame: topic prefix + blob; CONFLATE keeps latest)
+        has_message = self.observation_socket.poll(timeout_ms, zmq.POLLIN)
+        if self._debug_enabled:
+            wall_ns = time.time_ns()
+            if has_message:
+                logger.debug(
+                    f"[HAL client] poll: message available, recv (single frame)... wall_ns={wall_ns}",
+                )
+            else:
+                try:
+                    events = self.observation_socket.getsockopt(zmq.EVENTS)
+                    logger.debug(
+                        f"[HAL client] poll: no message (timeout={timeout_ms} ms); EVENTS={events}, wall_ns={wall_ns}",
+                    )
+                except Exception as e:
+                    logger.debug(f"[HAL client] poll: no message; could not get socket state: {e}")
+        if has_message:
+            frame = self.observation_socket.recv()
+            if not frame.startswith(TOPIC_OBSERVATION):
+                raise ValueError(
+                    f"Observation frame must start with topic {TOPIC_OBSERVATION!r}, got {len(frame)} bytes"
+                )
+            payload = frame[len(TOPIC_OBSERVATION) :]
+            if len(payload) < 4:
+                raise ValueError(
+                    f"Observation payload too short (need at least 4 bytes for metadata length), got {len(payload)}"
+                )
+            hw_obs = HardwareObservations.from_bytes(payload)
+            self._latest_hw_obs = hw_obs
+            if self._debug_enabled:
+                logger.debug(
+                    f"[HAL client] observation stored and returned, timestamp_ns={hw_obs.timestamp_ns}, wall_ns={time.time_ns()}",
+                )
+            return hw_obs
 
-                    # Deserialize hardware observation - let errors propagate
-                    # Timestamp is already in the hw_obs metadata
-                    hw_obs = HardwareObservations.from_bytes(hw_obs_parts)
-
-                    # Update latest buffer
-                    self._latest_hw_obs = hw_obs
-                    if self._debug_enabled:
-                        logger.debug(f"[ZMQ RECV] observation: HardwareObservations created successfully")
-                    
-                    return hw_obs
-            except zmq.ZMQError:
-                pass  # No message available (expected for NOBLOCK)
-            # Let all other exceptions propagate (fail fast)
-        
-        # No new data received (timeout or no message available)
+        # No new data received (timeout)
         return None
 
     def put_joint_command(self, cmd: "JointCommand") -> None:
@@ -196,23 +201,15 @@ class HalClient:
         if not cmd_dict:
             raise ValueError("Cannot send empty joint positions")
 
-        # Serialize and send as multipart message (metadata + array)
-        # Use blocking send for backpressure - will block if PULL socket buffer is full
-        command_parts = cmd.to_bytes()
-
-        # Debug logging (conditional to avoid overhead when disabled)
+        # Single-part message (blob)
+        command_blob = cmd.to_bytes()
         if self._debug_enabled:
             vals = list(cmd_dict.values())
             logger.debug(
-                f"[ZMQ SEND] command: payload_size={sum(len(p) for p in command_parts)} bytes, "
-                f"joint_positions_len={len(vals)}, "
-                f"min={min(vals):.3f}, max={max(vals):.3f}, "
-                f"timestamp_ns={cmd.timestamp_ns}"
+                f"[ZMQ SEND] command: payload_size={len(command_blob)} bytes, joint_positions_len={len(vals)}, "
+                f"min={min(vals):.3f}, max={max(vals):.3f}, timestamp_ns={cmd.timestamp_ns}",
             )
-
-        # Blocking send - will block if PULL socket buffer is full (backpressure)
-        # Let ZMQ errors propagate
-        self.command_socket.send_multipart(command_parts)
+        self.command_socket.send(command_blob)
 
         if self._debug_enabled:
             logger.debug("[ZMQ SEND] command: message sent successfully")

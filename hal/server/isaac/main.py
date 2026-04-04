@@ -8,7 +8,7 @@ For standalone server mode (client runs separately), use TCP endpoints instead.
 
 Simulates a robot environment (default: single robot), gathers observations,
 runs inference, and applies commands to control the robot. Supports visual display
-and video recording.
+and video recording. 
 """
 
 import argparse
@@ -26,18 +26,39 @@ from isaaclab.app import AppLauncher
 logger = logging.getLogger(__name__)
 
 
+def _ensure_server_log_visible(debug: bool = False) -> None:
+    """Attach stderr handler to HAL server loggers so messages appear when Isaac Sim overrides root logging."""
+    level = logging.DEBUG if debug else logging.INFO
+    for name in ("hal.server.isaac.main", "hal.server.isaac.hal_server", "hal.server.server"):
+        log = logging.getLogger(name)
+        has_stderr = any(getattr(h, "stream", None) is sys.stderr for h in log.handlers)
+        if not has_stderr:
+            h = logging.StreamHandler(sys.stderr)
+            h.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
+            log.addHandler(h)
+        log.setLevel(level)
+
+
 def main():
     """Main entry point for IsaacSim HAL server with integrated inference."""
     parser = argparse.ArgumentParser(
         description="IsaacSim HAL server with integrated inference client"
     )
-
-    # Model arguments
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (HAL and controller)",
+    )
+    parser.add_argument(
+        "--joystick",
+        action="store_true",
+        help="Joystick: no checkpoint, TCP bind; use krabby-uno-sim as client",
+    )
     parser.add_argument(
         "--checkpoint",
         type=str,
-        required=True,
-        help="Path to model checkpoint",
+        default=None,
+        help="Path to model checkpoint (required unless --joystick)",
     )
     parser.add_argument(
         "--control_rate",
@@ -57,8 +78,21 @@ def main():
     parser.add_argument(
         "--task",
         type=str,
-        required=True,
-        help="Task name (e.g., Isaac-Anymal-D-v0 or Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0)",
+        default=None,
+        help="Task name (e.g., Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0). Omit when using --usd.",
+    )
+    parser.add_argument(
+        "--usd",
+        type=str,
+        default=None,
+        help="Path to robot/scene USD (e.g. assets/crab_hex_ref.usd). Uses Isaac-CrabHex-Joystick-v0 and --robot hex.",
+    )
+    parser.add_argument(
+        "--robot",
+        type=str,
+        default="auto",
+        choices=["auto", "quad", "go2", "hex"],
+        help="Robot definition: auto (from task name), quad, go2, or hex (18 joints)",
     )
 
     # Environment arguments
@@ -93,49 +127,70 @@ def main():
         help="Run in real-time, if possible",
     )
 
-    # HAL endpoints (inproc for same-process communication)
     parser.add_argument(
         "--observation_bind",
         type=str,
-        default="inproc://hal_observation",
-        help="Observation endpoint (inproc for same-process)",
+        default=None,
+        help="Observation endpoint (default: inproc or tcp://*:5555 if --joystick)",
     )
     parser.add_argument(
         "--command_bind",
         type=str,
-        default="inproc://hal_commands",
-        help="Command endpoint (inproc for same-process)",
+        default=None,
+        help="Command endpoint (default: inproc or tcp://*:5556 if --joystick)",
     )
 
-    # Add AppLauncher arguments
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
-    
-    # Always enable cameras - required for camera sensors (CameraCfg) to work
-    # Camera sensors will fail to initialize without --enable_cameras flag
+
+    if not args.joystick and not args.checkpoint:
+        parser.error("--checkpoint required unless --joystick")
+    if args.usd:
+        if args.task is not None:
+            parser.error("Do not pass --task when using --usd")
+        os.environ["KRABBY_HEX_USD_PATH"] = args.usd
+        args.task = "Isaac-CrabHex-Joystick-v0"
+        args.robot = "hex"
+        logger.info("Using --usd: task=%s, robot=hex, KRABBY_HEX_USD_PATH=%s", args.task, args.usd)
+    elif args.task is None:
+        parser.error("--task required unless --usd is given")
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled")
+
+    # Ensure our server logs appear even when Isaac Sim overrides root logging (e.g. in Docker)
+    _ensure_server_log_visible(debug=args.debug)
+    if args.joystick and args.checkpoint:
+        args.checkpoint = None
+    if args.observation_bind is None:
+        args.observation_bind = "tcp://*:5555" if args.joystick else "inproc://hal_observation"
+    if args.command_bind is None:
+        args.command_bind = "tcp://*:5556" if args.joystick else "inproc://hal_commands"
+
     args.enable_cameras = True
-    logger.info(f"Setting enable_cameras=True (required for camera sensors)")
+    logger.info("Setting enable_cameras=True (required for camera sensors)")
 
     # Launch IsaacLab
     app_launcher = AppLauncher(args)
     simulation_app = app_launcher.app
 
-    # Wait for app window to be created (needed for camera controller)
-    # The window may not exist immediately after AppLauncher starts
-    import omni.appwindow
-    import time
-    max_wait_time = 5.0
-    wait_interval = 0.1
-    elapsed = 0.0
-    while elapsed < max_wait_time:
-        app_window = omni.appwindow.get_default_app_window()
-        if app_window is not None:
-            break
-        time.sleep(wait_interval)
-        elapsed += wait_interval
-    
-    if omni.appwindow.get_default_app_window() is None:
-        logger.warning("App window not available after waiting. Camera controller may fail.")
+    # Wait for app window when not headless (needed for camera controller).
+    # In joystick mode use a short wait so startup is not blocked.
+    if not getattr(args, "headless", False):
+        import omni.appwindow
+        # The window may not exist immediately after AppLauncher starts.
+        max_wait_time = 0.5 if args.joystick else 5.0
+        wait_interval = 0.1
+        elapsed = 0.0
+        while elapsed < max_wait_time:
+            app_window = omni.appwindow.get_default_app_window()
+            if app_window is not None:
+                break
+            time.sleep(wait_interval)
+            elapsed += wait_interval
+        if omni.appwindow.get_default_app_window() is None:
+            logger.warning("App window not available after waiting. Camera controller may fail.")
 
     # Import after AppLauncher to avoid conflicts
     import sys
@@ -156,6 +211,7 @@ def main():
     from hal.client.config import HalClientConfig
     from hal.server import HalServerConfig
     from hal.server.isaac import IsaacSimHalServer
+    from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
     from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
     from hal.server.isaac.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
     from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
@@ -189,6 +245,9 @@ def main():
     
     # Set seed for environment randomization
     env_cfg.seed = args.seed
+    if args.joystick:
+        # One env is enough for joystick control and significantly speeds up startup and step time.
+        env_cfg.scene.num_envs = 1
 
     # Determine render mode based on video flag
     # For visual display, use None (default window rendering)
@@ -215,52 +274,80 @@ def main():
         command_bind=args.command_bind,
     )
 
-    # Create and initialize HAL server
-    # Select robot definition based on task name
-    # Unitree Go2 tasks require num_prop=53 to match checkpoint
-    if "Unitree-Go2" in args.task or "unitree_go2" in args.task.lower():
+    if args.robot == "hex":
+        robot_definition = KRABBY_HEX_DEFINITION
+        logger.info("Using Krabby Hex robot definition (18 joints)")
+    elif args.robot == "go2":
         robot_definition = UNITREE_GO2_DEFINITION
-        logger.info(f"Using Unitree Go2 robot definition (num_prop=53) for task: {args.task}")
-    else:
+        logger.info(f"Using Unitree Go2 robot definition for task: {args.task}")
+    elif args.robot == "quad":
         robot_definition = KRABBY_QUAD_DEFINITION
         logger.info(f"Using Krabby Quad robot definition for task: {args.task}")
+    else:
+        if "Unitree-Go2" in args.task or "unitree_go2" in args.task.lower():
+            robot_definition = UNITREE_GO2_DEFINITION
+            logger.info(f"Using Unitree Go2 robot definition (num_prop=53) for task: {args.task}")
+        else:
+            robot_definition = KRABBY_QUAD_DEFINITION
+            logger.info(f"Using Krabby Quad robot definition for task: {args.task}")
+    env_action_dim = env.unwrapped.action_manager.total_action_dim
+    robot_joint_count = robot_definition.get_total_joint_count()
+    if robot_joint_count != env_action_dim:
+        raise ValueError(
+            f"Robot joint count ({robot_joint_count} for --robot {args.robot}) does not match "
+            f"the task's action dimension ({env_action_dim}). "
+            f"The task '{args.task}' is configured for a different robot. "
+            "Use --robot quad or --robot go2 for Go2/quad tasks; hexapod (18-joint) requires a hexapod task (not yet available)."
+        )
+
     model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
     observation_dimensions = model_definition.get_observation_dimensions(robot_definition)
-    hal_server = IsaacSimHalServer(hal_server_config, robot_definition, env=env, observation_dimensions=observation_dimensions)
+    hal_server = IsaacSimHalServer(
+        hal_server_config,
+        robot_definition,
+        env=env,
+        observation_dimensions=observation_dimensions,
+        command_timeout_s=None if args.joystick else 1.0,
+    )
     hal_server.initialize()
+    if args.joystick and getattr(args, "debug", False):
+        hal_server.set_debug(True)
+        logger.debug("HAL server ZMQ debug enabled (will log received commands)")
     logger.info("HAL server initialized")
 
     # Get transport context for inproc connections
     transport_context = hal_server.get_transport_context()
 
-    # Create HAL client config
-    hal_client_config = HalClientConfig(
-        observation_endpoint=args.observation_bind,
-        command_endpoint=args.command_bind,
-    )
+    if not args.joystick:
+        # Create HAL client config
+        hal_client_config = HalClientConfig(
+            observation_endpoint=args.observation_bind,
+            command_endpoint=args.command_bind,
+        )
+        model_weights = ModelWeights(
+            checkpoint_path=args.checkpoint,
+            observation_dimensions=observation_dimensions,
+            action_dim=model_definition.action_dim,
+        )
+        parkour_client = ParkourInferenceClient(
+            hal_client_config=hal_client_config,
+            model_weights=model_weights,
+            observation_dimensions=observation_dimensions,
+            robot_definition=robot_definition,
+            control_rate=args.control_rate,
+            device=args.inference_device,
+            transport_context=transport_context,
+        )
+        # Initialize inference client first (creates model)
+        parkour_client.initialize()
+        logger.info("Parkour inference client initialized")
+        # Start inference client in separate thread
+        parkour_client.start_thread(running_flag=lambda: running)
+    else:
+        parkour_client = None
+        logger.info("Joystick mode: waiting for krabby-uno-sim on %s / %s", args.observation_bind, args.command_bind)
 
-    model_weights = ModelWeights(
-        checkpoint_path=args.checkpoint,
-        observation_dimensions=observation_dimensions,
-        action_dim=model_definition.action_dim,
-    )
-    parkour_client = ParkourInferenceClient(
-        hal_client_config=hal_client_config,
-        model_weights=model_weights,
-        observation_dimensions=observation_dimensions,
-        robot_definition=robot_definition,
-        control_rate=args.control_rate,
-        device=args.inference_device,
-        transport_context=transport_context,
-    )
-    # Initialize inference client first (creates model)
-    parkour_client.initialize()
-    logger.info("Parkour inference client initialized")
-
-    # Start inference client in separate thread
-    parkour_client.start_thread(running_flag=lambda: running)
-
-    logger.info(f"Starting integrated loop at {args.control_rate} Hz")
+    logger.info(f"Starting loop at {args.control_rate} Hz")
     period_s = 1.0 / args.control_rate
     
     # Get environment step dt for real-time mode
@@ -273,11 +360,19 @@ def main():
     # set_observation() will compute the observation (second call) and cache it
     hal_server.set_observation()
 
+    if args.joystick:
+        logger.info(
+            "Joystick: main loop ready, waiting for first command on %s (start krabby-uno-sim on host if not already)",
+            args.command_bind,
+        )
+
+    timestep = 0
+    loop_start_t = time.time()
+    telemetry_last_t = loop_start_t
     # Main loop: step simulation and publish observations
     # Pattern: wait for action (for observation we published) -> step -> publish new observation
     # ALL communication must go through HAL - no direct inference calls
     # Note: Initial observation was already published before the loop
-    timestep = 0
     while running and simulation_app.is_running():
         loop_start_ns = time.time_ns()
 
@@ -287,7 +382,7 @@ def main():
         # apply_command() will loop internally until command received or timeout (throws if timeout)
         # apply_command() automatically expands single action to all environments if num_envs > 1
         action = hal_server.apply_command()
-        
+
         # Ensure action has correct shape [num_envs, action_dim]
         # apply_command() should already expand to [num_envs, action_dim] if needed
         num_envs = env.unwrapped.num_envs
@@ -304,12 +399,11 @@ def main():
         # Track last applied action BEFORE stepping, so set_observation() can use it for previous_action
         # Extract first 12 joints (action_dim) from action tensor for first environment
         action_np = action[0].cpu().numpy() if action.ndim == 2 else action.cpu().numpy()
-        if len(action_np) >= 12:
-            hal_server._last_applied_action[:] = action_np[:12].astype(np.float32)
-        else:
-            logger.warning(f"Action length {len(action_np)} < 12, only tracking {len(action_np)} values")
-            hal_server._last_applied_action[:len(action_np)] = action_np.astype(np.float32)
-        
+        n = len(hal_server._last_applied_action)
+        prev = hal_server._last_applied_action.copy()
+        joint_delta_max = float(np.max(np.abs(action_np[:n] - prev))) if n else 0.0
+        hal_server._last_applied_action[:] = action_np[:n].astype(np.float32)
+
         # Step environment with action for all environments
         # Note: env.step() increments episode_length_buf BEFORE computing observations
         obs_dict, _, _, _, extras = env.step(action)
@@ -327,7 +421,17 @@ def main():
         hal_server.set_observation()
 
         timestep += 1
-        
+        if args.joystick:
+            t = time.time()
+            if timestep == 1:
+                logger.info("Joystick: first command received, sim stepping. Telemetry every 5s.")
+            # Periodic telemetry every 5s so Pro Controller activity is visible in logs.
+            if t - telemetry_last_t >= 5.0:
+                elapsed = t - loop_start_t
+                rate = timestep / elapsed if elapsed > 0 else 0
+                logger.info("Joystick: %d steps in %.1fs (~%.0f Hz)", timestep, elapsed, rate)
+                telemetry_last_t = t
+
         # Handle video recording limit
         if args.video:
             if timestep >= args.video_length:

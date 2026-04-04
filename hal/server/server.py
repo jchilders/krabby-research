@@ -46,6 +46,7 @@ class HalServerBase:
         self.command_socket: Optional[zmq.Socket] = None
         self._initialized = False
         self._debug_enabled = False
+        self._observation_send_count = 0  # for debug logging: which send we're on
 
     def get_transport_context(self):
         """Get transport context for inproc connections.
@@ -132,8 +133,8 @@ class HalServerBase:
     def set_observation(self, hw_obs: "HardwareObservations") -> None:
         """Set/publish hardware observation to clients.
 
-        Sends topic-prefixed multipart message: [topic, ...hw_obs_parts]
-        The timestamp is included in the hw_obs metadata, so no separate timestamp is needed.
+        Sends one ZMQ frame: topic prefix (b"observation") + serialized observation blob.
+        Single-part allows CONFLATE on the subscriber for latest-only semantics.
 
         Args:
             hw_obs: HardwareObservations instance
@@ -149,18 +150,29 @@ class HalServerBase:
         if not isinstance(hw_obs, HardwareObservations):
             raise ValueError(f"hw_obs must be HardwareObservations, got {type(hw_obs)}")
 
-        topic = TOPIC_OBSERVATION
-        hw_obs_parts = hw_obs.to_bytes()
+        # Single-part message: topic prefix + payload blob (enables CONFLATE on subscriber)
+        payload = hw_obs.to_bytes()
+        frame = TOPIC_OBSERVATION + payload
+        self._observation_send_count += 1
+        send_id = self._observation_send_count
 
         if self._debug_enabled:
             logger.debug(
-                f"[ZMQ SEND] observation: topic={topic.decode('utf-8')}, "
-                f"timestamp_ns={hw_obs.timestamp_ns}"
+                f"[HAL server] send #{send_id}: timestamp_ns={hw_obs.timestamp_ns}, frame_len={len(frame)} (topic + blob), SNDHWM={self.observation_socket.getsockopt(zmq.SNDHWM)}",
             )
-
-        self.observation_socket.send_multipart([topic] + hw_obs_parts, zmq.NOBLOCK)
+        try:
+            self.observation_socket.send(frame, zmq.NOBLOCK)
+        except zmq.ZMQError as e:
+            if self._debug_enabled:
+                logger.debug(
+                    f"[HAL server] send #{send_id} raised ZMQError: errno={e.errno}, str={e}",
+                )
+            raise
         if self._debug_enabled:
-            logger.debug(f"[ZMQ SEND] observation: message sent successfully, timestamp={hw_obs.timestamp_ns}")
+            wall_ns = time.time_ns()
+            logger.debug(
+                f"[HAL server] send #{send_id} completed (message queued for delivery), timestamp_ns={hw_obs.timestamp_ns}, wall_ns={wall_ns}",
+            )
 
     def get_joint_command(self, timeout_ms: int = 100) -> Optional["JointCommand"]:
         """Get latest joint command from clients.
@@ -189,19 +201,15 @@ class HalServerBase:
 
         # Poll for incoming command
         if self.command_socket.poll(timeout_ms, zmq.POLLIN):
-            # Receive command as multipart message
-            command_parts = self.command_socket.recv_multipart(zmq.NOBLOCK)
+            # Receive command as single-part message (blob)
+            command_frame = self.command_socket.recv(zmq.NOBLOCK)
 
-            # Debug logging (conditional to avoid overhead when disabled)
             if self._debug_enabled:
-                total_size = sum(len(p) for p in command_parts)
                 logger.debug(
-                    f"[ZMQ RECV] command: received {len(command_parts)} parts, {total_size} bytes total"
+                    f"[ZMQ RECV] command: received {len(command_frame)} bytes (single blob)",
                 )
 
-            # Deserialize to JointCommand
-            # Validation is handled by from_bytes() and __post_init__()
-            command = JointCommand.from_bytes(command_parts)
+            command = JointCommand.from_bytes(command_frame)
 
             # Debug logging after deserialization
             if self._debug_enabled:
@@ -211,7 +219,7 @@ class HalServerBase:
                 vals = list(d.values())
                 min_max = f"min={min(vals):.3f}, max={max(vals):.3f}, " if vals else ""
                 logger.debug(
-                    f"[ZMQ RECV] command: shape=({len(vals)},), dtype=float32, {min_max}"
+                    f"[ZMQ RECV] command: shape=({len(vals)},), dtype=float32, {min_max} "
                     f"timestamp_ns={command.timestamp_ns}, "
                     f"observation_timestamp_ns={command.observation_timestamp_ns}, "
                     f"round_trip_latency_ms={round_trip_latency_ms}"

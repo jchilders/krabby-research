@@ -3,7 +3,8 @@
 # Note: These are relative to the working directory
 source = 
     compute
-    HAL
+    hal
+    controller
     locomotion
 
 # Exclude patterns (these patterns are matched against file paths)

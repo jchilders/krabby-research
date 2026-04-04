@@ -3,28 +3,94 @@
 """
 
 import logging
+import os
 import time
 from typing import Optional
 
 import numpy as np
-from scipy.ndimage import zoom
 
 from hal.server import HalServerBase, HalServerConfig
 from hal.server.robot_definition import RobotDefinition
-from hal.client.data_structures.hardware import HardwareObservations, JointCommand
-from hal.server.jetson.camera import ZedCamera, create_zed_camera
+from hal.client.data_structures.hardware import (
+    HardwareObservations,
+    JointCommand,
+    RgbdCatalogObservation,
+)
+from hal.server.jetson.rgb_depth_camera import RgbDepthCamera
+from hal.server.jetson.front_camera_factory import (
+    FRONT_RGB_DEPTH_CAMERA_FACTORIES,
+    create_front_rgb_depth_camera,
+)
 from hal.server.jetson.krabby_mcusdk import KrabbyMCUSDK
+from hal.server.jetson.sensor_backend_jetson import (
+    JETSON_SENSOR_CATALOG,
+    JETSON_SENSOR_CATALOG_BY_ID,
+    JetsonSensorCatalogEntry,
+    JetsonSensorInterface,
+    assert_hal_rgbd_catalog_config,
+    front_observation_camera_catalog_entry,
+)
+from hal.server.sensor_interface import SensorInterface
 
 from compute.parkour.model_definition import ObservationDimensions
+from hal.server.jetson.depth_scan_features import (
+    extract_depth_features_from_map,
+    validate_depth_frame,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _policy_scan_from_depth(
+    depth_frame: np.ndarray, depth_feature_dim: int
+) -> Optional[np.ndarray]:
+    """Convert depth map (meters, H×W float32) to policy scan vector; None if unusable."""
+    if depth_feature_dim <= 0:
+        return None
+    if not validate_depth_frame(depth_frame):
+        return None
+    try:
+        feats = extract_depth_features_from_map(depth_frame, depth_feature_dim)
+    except Exception as e:
+        logger.warning("Depth scan feature extraction failed: %s", e)
+        return None
+    if len(feats) != depth_feature_dim:
+        logger.error(
+            "Depth scan length mismatch: %s != %s", len(feats), depth_feature_dim
+        )
+        return None
+    return feats
+
+
+def _read_optional_int_env(var_name: str) -> Optional[int]:
+    raw = os.environ.get(var_name, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("%s must be an integer; ignoring", var_name)
+        return None
+
+
+def _expected_rgb_depth_shapes_for_entry(
+    entry: JetsonSensorCatalogEntry,
+    primary_resolution_wh: tuple[int, int],
+) -> tuple[tuple[int, int, int], tuple[int, int]]:
+    """Return ((H, W, 3), (H, W)) for RGB uint8 and depth float32."""
+    w, h = primary_resolution_wh if entry.is_primary else entry.resolution
+    return (h, w, 3), (h, w)
 
 
 class JetsonHalServer(HalServerBase):
     """HAL server for Jetson robot deployment.
 
-    Integrates with ZED camera and real sensors to publish observations.
-    Applies joint commands to real actuators.
+    RGB-D devices are driven by ``JETSON_SENSOR_CATALOG``: the ``is_primary`` row always opens;
+    additional ``rgbd`` rows open when ``hal_open_rgbd`` is True (ZED serial from
+    ``zed_usb_serial_env``; MaixSense HTTP from ``maixsense_host_env`` / optional
+    ``maixsense_port_env``). Legacy ``camera_*`` / ``side_*`` encode the **policy** scan slices; **metric depth
+    for every opened stream** (including side / collision cameras) is in
+    ``HardwareObservations.rgbd_by_catalog_id``.
     """
 
     def __init__(
@@ -33,8 +99,10 @@ class JetsonHalServer(HalServerBase):
         observation_dimensions: ObservationDimensions,
         action_dim: int,
         robot_definition: RobotDefinition,
-        camera_resolution: tuple[int, int] = (640, 480),
-        camera_fps: int = 30,
+        camera_resolution: tuple[int, int] | None = None,
+        camera_fps: int | None = None,
+        camera_driver: str | None = None,
+        depth_mode: str = "PERFORMANCE",
         mcu_port: Optional[str] = None,
         mcu_baud: int = 115200,
         mcu_auto_connect: bool = True,
@@ -43,11 +111,15 @@ class JetsonHalServer(HalServerBase):
 
         Args:
             config: HAL server configuration
-            observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition)
+            observation_dimensions: Layout from model_definition.get_observation_dimensions(robot_definition).
+                Use a definition with ``num_side_scan > 0`` only with a matching checkpoint and
+                a matching side catalog row (see ``JETSON_SENSOR_CATALOG`` ``policy_scan_slot``).
             action_dim: Action dimension (model output joint count)
             robot_definition: Robot definition for joint names and order (adapter uses get_joint_names()).
-            camera_resolution: ZED camera resolution (width, height)
-            camera_fps: ZED camera FPS
+            camera_resolution: Front observation camera (width, height); default from the catalog ``is_primary`` row.
+            camera_fps: Front observation camera FPS; default from the catalog ``is_primary`` row.
+            camera_driver: Registered RGB-D driver id (see ``FRONT_RGB_DEPTH_CAMERA_FACTORIES``); default from the catalog ``is_primary`` row's ``camera_driver`` (also exposed on ``SensorInfo`` from ``list_sensors()``).
+            depth_mode: Passed to the camera driver when supported (e.g. ZED depth mode).
             mcu_port: Serial port for MCU connection. If None, uses default from MCU SDK.
             mcu_baud: Baud rate for MCU serial communication.
             mcu_auto_connect: If True, automatically connect to MCU on initialization.
@@ -56,13 +128,35 @@ class JetsonHalServer(HalServerBase):
         self.observation_dimensions = observation_dimensions
         self.action_dim = action_dim
         self.robot_definition = robot_definition
-        self.camera_resolution = camera_resolution
-        self.camera_fps = camera_fps
-        self.zed_camera: Optional[ZedCamera] = None
+        _obs_cam = front_observation_camera_catalog_entry()
+        self.camera_resolution = (
+            camera_resolution if camera_resolution is not None else _obs_cam.resolution
+        )
+        self.camera_fps = camera_fps if camera_fps is not None else _obs_cam.fps
+        _driver = camera_driver if camera_driver is not None else _obs_cam.camera_driver
+        if not _driver:
+            raise RuntimeError(
+                "camera_driver is unset; set it on the JETSON_SENSOR_CATALOG is_primary row "
+                "or pass camera_driver= to JetsonHalServer"
+            )
+        self._camera_driver = _driver
+        self._depth_mode = depth_mode
+        self.front_camera: Optional[RgbDepthCamera] = None
         self.state_source = None  # IMU/encoders (placeholder, real implementation in future)
         self.actuator_sink = None  # Motors (placeholder, real implementation in future)
         self._last_joint_positions: Optional[dict[str, float]] = None  # from command.to_positions_dict()
-        
+        self._hal_rgbd_cameras: dict[str, RgbDepthCamera] = {}
+        self._primary_catalog_id: str = front_observation_camera_catalog_entry().id
+        self._side_catalog_id: Optional[str] = None
+        for row in JETSON_SENSOR_CATALOG:
+            if row.policy_scan_slot == "side":
+                self._side_catalog_id = row.id
+                break
+        self.side_camera: Optional[RgbDepthCamera] = None
+
+        # GStreamer multi-sensor interface (optional)
+        self._sensor_interface: Optional[SensorInterface] = None
+
         # Initialize Krabby MCU SDK when robot definition has MCU joints
         self._mcusdk: Optional[KrabbyMCUSDK] = None
         mcu_joints = self.robot_definition.get_mcu_joints()
@@ -87,27 +181,103 @@ class JetsonHalServer(HalServerBase):
                     exc_info=True,
                 )
 
-    def initialize_camera(self) -> None:
-        """Initialize ZED camera.
+    def get_sensor_interface(self) -> SensorInterface:
+        """Return the GStreamer multi-sensor interface (list_sensors, get_gstreamer_handle, build_pipeline)."""
+        if self._sensor_interface is None:
+            self._sensor_interface = JetsonSensorInterface()
+        return self._sensor_interface
 
-        Creates ZED camera wrapper with error handling.
-        """
-        logger.info("Initializing ZED camera...")
-        self.zed_camera = create_zed_camera(
-            resolution=self.camera_resolution,
-            fps=self.camera_fps,
-            depth_mode="PERFORMANCE",
-            depth_feature_dim=self.observation_dimensions.num_scan,
+    def initialize_camera(self) -> None:
+        """Initialize all HAL ``rgbd`` cameras selected by ``JETSON_SENSOR_CATALOG``."""
+        assert_hal_rgbd_catalog_config()
+
+        for cam in self._hal_rgbd_cameras.values():
+            cam.close()
+        self._hal_rgbd_cameras.clear()
+
+        logger.info(
+            "Initializing HAL RGB-D cameras from catalog (primary driver=%s)...",
+            self._camera_driver,
         )
 
-        if self.zed_camera is None:
-            logger.error("Failed to initialize ZED camera")
-            raise RuntimeError("ZED camera initialization failed")
-        elif not self.zed_camera.is_ready():
-            logger.error("ZED camera initialized but not ready")
-            raise RuntimeError("ZED camera is not ready")
-        else:
-            logger.info("ZED camera initialized successfully")
+        for entry in JETSON_SENSOR_CATALOG:
+            if entry.type != "rgbd" or not entry.camera_driver:
+                continue
+            if not entry.is_primary and not entry.hal_open_rgbd:
+                continue
+            if entry.camera_driver not in FRONT_RGB_DEPTH_CAMERA_FACTORIES:
+                logger.warning(
+                    "Skipping HAL RGB-D catalog %s: driver %r not in FRONT_RGB_DEPTH_CAMERA_FACTORIES",
+                    entry.id,
+                    entry.camera_driver,
+                )
+                continue
+
+            zed_serial: Optional[int] = None
+            if entry.camera_driver == "zed":
+                if entry.zed_usb_serial_env:
+                    zed_serial = _read_optional_int_env(entry.zed_usb_serial_env)
+                if not entry.is_primary and zed_serial is None:
+                    logger.warning(
+                        "Skipping HAL RGB-D %s: ZED needs integer USB serial in env %s",
+                        entry.id,
+                        entry.zed_usb_serial_env or "(set zed_usb_serial_env on catalog row)",
+                    )
+                    continue
+
+            res = (
+                self.camera_resolution if entry.is_primary else entry.resolution
+            )
+            fps = self.camera_fps if entry.is_primary else entry.fps
+
+            cam = create_front_rgb_depth_camera(
+                entry.camera_driver,
+                resolution=res,
+                fps=fps,
+                depth_mode=self._depth_mode,
+                zed_serial_number=zed_serial,
+                maixsense_host_env=entry.maixsense_host_env,
+                maixsense_port_env=entry.maixsense_port_env,
+            )
+            if cam is None or not cam.is_ready():
+                if cam is not None:
+                    cam.close()
+                if entry.is_primary:
+                    logger.error("Primary HAL RGB-D %s failed to initialize", entry.id)
+                    raise RuntimeError(
+                        f"Primary catalog RGB-D camera {entry.id!r} initialization failed"
+                    )
+                logger.warning("HAL RGB-D %s failed to initialize; skipping", entry.id)
+                continue
+
+            self._hal_rgbd_cameras[entry.id] = cam
+            logger.info(
+                "HAL RGB-D catalog %s ready (driver=%s, %dx%d @ %d Hz)",
+                entry.id,
+                entry.camera_driver,
+                res[0],
+                res[1],
+                fps,
+            )
+
+        self.front_camera = self._hal_rgbd_cameras.get(self._primary_catalog_id)
+        if self.front_camera is None:
+            raise RuntimeError(
+                f"Primary catalog camera {self._primary_catalog_id!r} not opened (check catalog and drivers)"
+            )
+
+        self.side_camera = (
+            self._hal_rgbd_cameras.get(self._side_catalog_id)
+            if self._side_catalog_id
+            else None
+        )
+
+        if self.observation_dimensions.num_side_scan > 0 and self.side_camera is None:
+            logger.warning(
+                "num_side_scan=%d but side HAL RGB-D not available "
+                "(catalog hal_open_rgbd, driver init, or ZED USB serial env for side row)",
+                self.observation_dimensions.num_side_scan,
+            )
 
     def initialize_sensors(self) -> None:
         """Initialize state sensors (IMU/encoders).
@@ -141,32 +311,15 @@ class JetsonHalServer(HalServerBase):
         # Placeholder - actual implementation needs motor drivers
         logger.info("Actuator initialization (placeholder)")
 
-    def _build_depth_features(self) -> np.ndarray:
-        """Build depth features from ZED camera.
-
-        Returns:
-            Depth features as float32 array
-
-        Raises:
-            RuntimeError: If camera is not initialized or depth features cannot be obtained
-        """
-        if self.zed_camera is None:
-            raise RuntimeError(
-                "ZED camera not initialized. "
-                "Camera must be initialized via initialize_camera() before building depth features."
-            )
-
-        # Get depth features (includes capture, validation, and feature extraction)
-        depth_features = self.zed_camera.get_depth_features()
-        if depth_features is None:
-            raise RuntimeError(
-                "Failed to get depth features from ZED camera. "
-                "Depth features are required for policy operation. "
-                "Check camera connection and ensure frames are being captured."
-            )
-
-        # Return features array
-        return depth_features
+    def _build_depth_features(self) -> Optional[np.ndarray]:
+        """Build front policy scan vector from one RGB-D capture (same depth as observations)."""
+        if self.front_camera is None:
+            return None
+        _rgb, depth_frame = self.front_camera.get_camera_frames()
+        if depth_frame is None:
+            return None
+        nf = self.observation_dimensions.num_scan_front
+        return _policy_scan_from_depth(np.asarray(depth_frame, dtype=np.float32), nf)
 
     def _build_state_vector(self) -> Optional[np.ndarray]:
         """Build state vector from sensors.
@@ -248,16 +401,18 @@ class JetsonHalServer(HalServerBase):
         Constructs HardwareObservations from raw sensor data.
         Extracts:
         - Joint positions from state vector (echoed from last command)
-        - Depth maps from ZED camera (if available)
-        - RGB images if available from ZED camera (if available)
+        - Depth maps from front camera (if available)
+        - RGB images from front camera (if available)
         
         Base class will loop until observation is published or throw if client isn't consuming.
         
-        Note: Camera initialization is optional for basic infrastructure testing.
-        If camera is not initialized, placeholder values (zeros) will be used for
-        depth and RGB images. WARNING: These placeholder values are NOT suitable
-        for actual policy inference - the model requires real depth/scan features.
-        For production deployment, camera MUST be initialized.
+        For each opened HAL RGB-D catalog camera, frames are grabbed every tick. If the driver
+        returns no RGB or no depth (``None``), that stream uses **zero** tensors at the catalog
+        resolution and zero scan features when applicable—**camera temporarily unavailable**.
+        If ``get_camera_frames()`` raises, or returned arrays do not match the catalog resolution,
+        a **RuntimeError** is raised (fail fast). Primary **camera_rgb** / **camera_depth** are
+        omitted only when the primary camera was never opened. WARNING: Zero placeholders are
+        unsafe for real policy behavior until the camera recovers.
         """
         # Build state vector (required for publishing observations)
         state_vector = self._build_state_vector()
@@ -307,59 +462,122 @@ class JetsonHalServer(HalServerBase):
             for i in range(num_prev):
                 previous_action[i] = self._last_joint_positions.get(names[i], 0.0)
 
-        # Get camera data from ZED camera
-        # ZED camera provides depth features for model input, but we also need
-        # raw depth maps and RGB images for HardwareObservations
+        # Catalog RGB-D: one grab per opened HAL camera. If the driver returns no frame
+        # (rgb or depth None), use zero tensors at the catalog resolution. Shape mismatches
+        # and other errors from get_camera_frames propagate (not converted to zeros).
         camera_height, camera_width = self.camera_resolution[1], self.camera_resolution[0]
-        
-        # Initialize with placeholder values
-        rgb_camera_1 = np.zeros((camera_height, camera_width, 3), dtype=np.uint8)
-        rgb_camera_2 = np.zeros((camera_height, camera_width, 3), dtype=np.uint8)
-        depth_map = np.zeros((camera_height, camera_width), dtype=np.float32)
-        confidence_map = np.ones((camera_height, camera_width), dtype=np.float32)
-        
-        if self.zed_camera is not None:
-            # Try to get raw depth map if available
-            if hasattr(self.zed_camera, 'get_depth_map'):
-                depth_map_data = self.zed_camera.get_depth_map()
-                if depth_map_data is not None:
-                    # Ensure it's a numpy array
-                    if not isinstance(depth_map_data, np.ndarray):
-                        depth_map_data = np.array(depth_map_data)
-                    
-                    # Resize if needed to match camera resolution
-                    if depth_map_data.shape != (camera_height, camera_width):
-                        zoom_factors = (camera_height / depth_map_data.shape[0], 
-                                      camera_width / depth_map_data.shape[1])
-                        depth_map = zoom(depth_map_data, zoom_factors, order=1).astype(np.float32)
-                    else:
-                        depth_map = depth_map_data.astype(np.float32)
-            
-            # Try to get RGB images if available
-            if hasattr(self.zed_camera, 'get_rgb_images'):
-                rgb_images = self.zed_camera.get_rgb_images()
-                if rgb_images is not None and len(rgb_images) >= 2:
-                    # Ensure RGB images are uint8
-                    rgb_camera_1 = np.array(rgb_images[0], dtype=np.uint8)
-                    rgb_camera_2 = np.array(rgb_images[1], dtype=np.uint8)
-                    
-                    # Resize if needed
-                    if rgb_camera_1.shape[:2] != (camera_height, camera_width):
-                        zoom_factors = (camera_height / rgb_camera_1.shape[0], 
-                                      camera_width / rgb_camera_1.shape[1], 1)
-                        rgb_camera_1 = zoom(rgb_camera_1, zoom_factors, order=1).astype(np.uint8)
-                    if rgb_camera_2.shape[:2] != (camera_height, camera_width):
-                        zoom_factors = (camera_height / rgb_camera_2.shape[0], 
-                                      camera_width / rgb_camera_2.shape[1], 1)
-                        rgb_camera_2 = zoom(rgb_camera_2, zoom_factors, order=1).astype(np.uint8)
+        expected_rgb_shape = (camera_height, camera_width, 3)
+        expected_depth_shape = (camera_height, camera_width)
+        nf_scan = self.observation_dimensions.num_scan_front
+        ns_scan = self.observation_dimensions.num_side_scan
 
-        # Create hardware observation
+        rgbd_by_catalog_id: dict[str, RgbdCatalogObservation] = {}
+        for cid, cam in self._hal_rgbd_cameras.items():
+            entry = JETSON_SENSOR_CATALOG_BY_ID.get(cid)
+            if entry is None:
+                logger.error(
+                    "HAL RGB-D camera id %r not in JETSON_SENSOR_CATALOG_BY_ID; skipping",
+                    cid,
+                )
+                continue
+
+            exp_rgb_shape, exp_depth_shape = _expected_rgb_depth_shapes_for_entry(
+                entry, self.camera_resolution
+            )
+            rgb_frame, depth_frame = cam.get_camera_frames()
+
+            placeholder = False
+            if rgb_frame is None or depth_frame is None:
+                logger.error(
+                    "HAL RGB-D catalog %s: no frame from camera (rgb_ok=%s depth_ok=%s); "
+                    "using zero tensors shaped rgb=%s depth=%s",
+                    cid,
+                    rgb_frame is not None,
+                    depth_frame is not None,
+                    exp_rgb_shape,
+                    exp_depth_shape,
+                )
+                rgb_u8 = np.zeros(exp_rgb_shape, dtype=np.uint8)
+                depth_f = np.zeros(exp_depth_shape, dtype=np.float32)
+                placeholder = True
+            else:
+                rgb_u8 = np.asarray(rgb_frame, dtype=np.uint8)
+                depth_f = np.asarray(depth_frame, dtype=np.float32)
+                if (
+                    rgb_u8.shape != exp_rgb_shape
+                    or depth_f.shape != exp_depth_shape
+                ):
+                    raise RuntimeError(
+                        f"HAL RGB-D catalog {cid!r}: frame shape mismatch "
+                        f"rgb={rgb_u8.shape} depth={depth_f.shape} "
+                        f"(expected rgb {exp_rgb_shape}, depth {exp_depth_shape})"
+                    )
+
+            scan_c: Optional[np.ndarray] = None
+            if not placeholder:
+                if entry.is_primary and nf_scan > 0:
+                    scan_c = _policy_scan_from_depth(depth_f, nf_scan)
+                elif entry.policy_scan_slot == "side" and ns_scan > 0:
+                    scan_c = _policy_scan_from_depth(depth_f, ns_scan)
+            else:
+                if entry.is_primary and nf_scan > 0:
+                    scan_c = np.zeros(nf_scan, dtype=np.float32)
+                elif entry.policy_scan_slot == "side" and ns_scan > 0:
+                    scan_c = np.zeros(ns_scan, dtype=np.float32)
+
+            rgbd_by_catalog_id[cid] = RgbdCatalogObservation(
+                rgb=rgb_u8,
+                depth=depth_f,
+                scan_features=(
+                    np.asarray(scan_c, dtype=np.float32)
+                    if scan_c is not None
+                    else None
+                ),
+            )
+
+        camera_rgb: Optional[np.ndarray] = None
+        camera_depth: Optional[np.ndarray] = None
+        scan_features: Optional[np.ndarray] = None
+        chunk_p = rgbd_by_catalog_id.get(self._primary_catalog_id)
+        if chunk_p is None:
+            logger.warning(
+                "Primary catalog %s: no HAL RGB-D chunk (camera not opened); "
+                "camera_rgb / camera_depth omitted",
+                self._primary_catalog_id,
+            )
+        else:
+            if chunk_p.rgb.shape != expected_rgb_shape:
+                raise RuntimeError(
+                    f"Primary catalog {self._primary_catalog_id!r}: rgb shape "
+                    f"{chunk_p.rgb.shape} != expected {expected_rgb_shape}"
+                )
+            if chunk_p.depth.shape != expected_depth_shape:
+                raise RuntimeError(
+                    f"Primary catalog {self._primary_catalog_id!r}: depth shape "
+                    f"{chunk_p.depth.shape} != expected {expected_depth_shape}"
+                )
+            camera_rgb = chunk_p.rgb
+            camera_depth = chunk_p.depth
+            scan_features = chunk_p.scan_features
+            if scan_features is not None:
+                scan_features = np.asarray(scan_features, dtype=np.float32)
+
+        side_scan_features: Optional[np.ndarray] = None
+        side_camera_rgb: Optional[np.ndarray] = None
+        side_camera_depth: Optional[np.ndarray] = None
+        if self._side_catalog_id:
+            chunk_s = rgbd_by_catalog_id.get(self._side_catalog_id)
+            if chunk_s is not None:
+                side_camera_rgb = chunk_s.rgb
+                side_camera_depth = chunk_s.depth
+                side_scan_features = chunk_s.scan_features
+                if side_scan_features is not None:
+                    side_scan_features = np.asarray(
+                        side_scan_features, dtype=np.float32
+                    )
+
         hw_obs = HardwareObservations(
             joint_positions=joint_positions,
-            rgb_camera_1=rgb_camera_1,
-            rgb_camera_2=rgb_camera_2,
-            depth_map=depth_map,
-            confidence_map=confidence_map,
             camera_height=camera_height,
             camera_width=camera_width,
             timestamp_ns=time.time_ns(),
@@ -369,6 +587,13 @@ class JetsonHalServer(HalServerBase):
             joint_velocities=joint_velocities,
             contact_forces=contact_forces,
             previous_action=previous_action,
+            camera_rgb=camera_rgb,
+            camera_depth=camera_depth,
+            scan_features=scan_features,
+            side_scan_features=side_scan_features,
+            side_camera_rgb=side_camera_rgb,
+            side_camera_depth=side_camera_depth,
+            rgbd_by_catalog_id=rgbd_by_catalog_id if rgbd_by_catalog_id else None,
         )
 
         # Publish hardware observation via base-class publisher
@@ -438,10 +663,11 @@ class JetsonHalServer(HalServerBase):
             self._mcusdk.close()
             self._mcusdk = None
         
-        # Close camera
-        if self.zed_camera is not None:
-            self.zed_camera.close()
-            self.zed_camera = None
+        for cam in self._hal_rgbd_cameras.values():
+            cam.close()
+        self._hal_rgbd_cameras.clear()
+        self.side_camera = None
+        self.front_camera = None
 
         # Close server resources (sockets, context)
         super().close()

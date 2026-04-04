@@ -78,7 +78,7 @@ class HWObservationsToParkourMapper:
             vision: list = []
         else:
             # To implement vision on hardware we would need:
-            # - Run the same vision encoder used at training on hw_obs (rgb_camera_1, rgb_camera_2).
+            # - Run the same vision encoder used at training on hw_obs (camera_rgb).
             # - Match training preprocessing (resize, normalization, etc.).
             # - Output one feature vector per camera with sizes matching observation_dimensions.vision_dims.
             # - Integrate the encoder (and any GPU usage) into the inference path.
@@ -191,55 +191,64 @@ class HWObservationsToParkourMapper:
     
     def _extract_scan_features(self, hw_obs: HardwareObservations) -> np.ndarray:
         """Extract scan/depth features from hardware observations.
-        
+
         Matches training format: 132 height measurements from ray scanner.
-        The HAL server now extracts scan features directly from the observation manager's
-        measured_heights, which ensures exact matching with the environment.
-        
-        If scan_features is available in HardwareObservations (extracted from observation
-        manager), use it directly. Otherwise, fall back to reconstructing from depth_map.
-        
+        Scan features must be provided by the HAL server:
+        - Isaac: from observation manager measured_heights.
+        - Jetson: from front depth map via HAL policy scan mapping when the camera is initialized.
+
+        If scan_features is None (e.g. Jetson without ZED), returns zeros. Policy
+        behavior will be degraded without real scan/terrain data.
+
         Args:
             hw_obs: Hardware observations
-            
-        Returns:
-            Scan features array of shape (num_scan,)
-        """
-        num_scan = self._dims.num_scan
-        if hasattr(hw_obs, "scan_features") and hw_obs.scan_features is not None:
-            scan_features = hw_obs.scan_features
-            if len(scan_features) == num_scan:
-                return scan_features.astype(np.float32)
-            elif len(scan_features) > num_scan:
-                return scan_features[:num_scan].astype(np.float32)
-            features = np.zeros(num_scan, dtype=np.float32)
-            features[: len(scan_features)] = scan_features.astype(np.float32)
-            return features
 
-        height, width = hw_obs.depth_map.shape
-        grid_rows = int(np.sqrt(num_scan))
-        grid_cols = (num_scan + grid_rows - 1) // grid_rows
-        features = np.zeros(num_scan, dtype=np.float32)
-        row_indices = np.linspace(0, height - 1, grid_rows, dtype=np.int32)
-        col_indices = np.linspace(0, width - 1, grid_cols, dtype=np.int32)
-        idx = 0
-        for row in row_indices:
-            for col in col_indices:
-                if idx >= num_scan:
-                    break
-                # Get depth value at this point
-                depth_value = hw_obs.depth_map[row, col]
-                
-                # Convert depth to height measurement (relative to camera)
-                # Depth is distance from camera, height is relative to camera position
-                # For simplicity, use depth directly as height measurement
-                # Apply normalization: clip(height - 0.3, -1, 1)
-                height_measurement = np.clip(depth_value - 0.3, -1.0, 1.0)
-                features[idx] = height_measurement
-                idx += 1
-            if idx >= num_scan:
-                break
-        return features
+        Returns:
+            Scan features array of shape (num_scan,) (front then optional side).
+        """
+        d = self._dims
+        nf = d.num_scan_front
+        ns = d.num_side_scan
+        total = d.num_scan
+
+        def front_block() -> np.ndarray:
+            if hw_obs.scan_features is not None:
+                scan_features = hw_obs.scan_features
+                if len(scan_features) == nf:
+                    return scan_features.astype(np.float32)
+                if len(scan_features) > nf:
+                    return scan_features[:nf].astype(np.float32)
+                features = np.zeros(nf, dtype=np.float32)
+                features[: len(scan_features)] = scan_features.astype(np.float32)
+                return features
+            return np.zeros(nf, dtype=np.float32)
+
+        if ns == 0:
+            out = front_block()
+            if len(out) != total:
+                raise ValueError(
+                    f"internal: num_scan_front {nf} != num_scan total {total} with num_side_scan=0"
+                )
+            return out
+
+        front = front_block()
+        if hw_obs.side_scan_features is not None:
+            side = hw_obs.side_scan_features
+            if len(side) == ns:
+                side_arr = side.astype(np.float32)
+            elif len(side) > ns:
+                side_arr = side[:ns].astype(np.float32)
+            else:
+                side_arr = np.zeros(ns, dtype=np.float32)
+                side_arr[: len(side)] = side.astype(np.float32)
+        else:
+            side_arr = np.zeros(ns, dtype=np.float32)
+        out = np.concatenate([front, side_arr])
+        if len(out) != total:
+            raise ValueError(
+                f"scan concat length {len(out)} != num_scan {total} (front {nf} + side {ns})"
+            )
+        return out
 
     def _extract_priv_explicit(self, hw_obs: HardwareObservations) -> np.ndarray:
         """Extract privileged explicit features from hardware observations.

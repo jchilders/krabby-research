@@ -29,19 +29,35 @@ class ExtremeParkourObservations(ManagerTermBase):
 
     def __init__(self, cfg: ObservationTermCfg, env: ParkourManagerBasedRLEnv):
         super().__init__(cfg, env)
-        self.contact_sensor: ContactSensor = env.scene.sensors['contact_forces']
-        self.ray_sensor: RayCaster = env.scene.sensors['height_scanner']
+        self.contact_sensor: ContactSensor | None = env.scene.sensors.get("contact_forces")
+        self.ray_sensor: RayCaster = env.scene.sensors["height_scanner"]
         self.parkour_event: ParkourEvent =  env.parkour_manager.get_term(cfg.params["parkour_name"])
         self.asset: Articulation = env.scene[cfg.params["asset_cfg"].name]
         self.sensor_cfg = cfg.params["sensor_cfg"]
         self.asset_cfg = cfg.params["asset_cfg"]
-        self.history_length = cfg.params['history_length']
-        self._obs_history_buffer = torch.zeros(self.num_envs, self.history_length, 3 + 2 + 3 + 4 + 36 + 5, device=self.device)
+        self.history_length = cfg.params["history_length"]
+        # obs_buf dim: 13 (base/imu/cmd) + 2*num_joints (pos, vel) + action_dim (last_act from joint_pos term) + 4 (contact)
+        num_joints = self.asset.num_joints
+        joint_pos_term = env.action_manager.get_term("joint_pos")
+        action_dim = getattr(joint_pos_term, "_num_joints", num_joints)
+        self._obs_buf_dim = 13 + 2 * num_joints + action_dim + 4
+        self._obs_history_buffer = torch.zeros(
+            self.num_envs, self.history_length, self._obs_buf_dim, device=self.device
+        )
         self.delta_yaw = torch.zeros(self.num_envs, device=self.device)
         self.delta_next_yaw = torch.zeros(self.num_envs, device=self.device)
         self.measured_heights = torch.zeros(self.num_envs, 132, device=self.device)
         self.env = env
-        self.body_id = self.asset.find_bodies('base')[0]
+        # Support both "base" (Go2) and "base_link" (e.g. crab_hex). find_bodies raises if no match.
+        base_bodies = None
+        for name in ("base", "base_link"):
+            try:
+                base_bodies = self.asset.find_bodies(name)
+                if base_bodies:
+                    break
+            except ValueError:
+                continue
+        self.body_id = base_bodies[0] if base_bodies else 0
         
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
         self._obs_history_buffer[env_ids, :, :] = 0. 
@@ -102,12 +118,15 @@ class ExtremeParkourObservations(ManagerTermBase):
     def _get_contact_fill(
         self,
         ):
-        contact_forces = self.contact_sensor.data.net_forces_w_history[:, 0, self.sensor_cfg.body_ids] #(N, 4, 3)
-        contact = torch.norm(contact_forces, dim=-1) > 2.
-        previous_contact_forces = self.contact_sensor.data.net_forces_w_history[:, -1, self.sensor_cfg.body_ids] # N, 4, 3
-        last_contacts = torch.norm(previous_contact_forces, dim=-1) > 2.
-        contact_filt = torch.logical_or(contact, last_contacts) 
-        return (contact_filt.float()-0.5).to(self.device)
+        if self.contact_sensor is None:
+            # No contact sensor (e.g. crab_hex); use zeros for contact part (4 feet for obs shape).
+            return torch.zeros(self.num_envs, 4, device=self.device) - 0.5
+        contact_forces = self.contact_sensor.data.net_forces_w_history[:, 0, self.sensor_cfg.body_ids]  # (N, 4, 3)
+        contact = torch.norm(contact_forces, dim=-1) > 2.0
+        previous_contact_forces = self.contact_sensor.data.net_forces_w_history[:, -1, self.sensor_cfg.body_ids]
+        last_contacts = torch.norm(previous_contact_forces, dim=-1) > 2.0
+        contact_filt = torch.logical_or(contact, last_contacts)
+        return (contact_filt.float() - 0.5).to(self.device)
     
     def _get_priv_explicit(
         self,
@@ -228,3 +247,4 @@ class obervation_delta_yaw_ok(ManagerTermBase):
             _, _, yaw = euler_xyz_from_quat(asset.data.root_quat_w)
             self.delta_yaw = parkour_event.target_yaw - wrap_to_pi(yaw)
         return self.delta_yaw < threshold
+1

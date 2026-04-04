@@ -14,6 +14,8 @@ dataclasses-json>=0.6.0
 # Utilities
 # typing-extensions>=4.10.0 required for PyTorch 2.7.0 compatibility
 typing-extensions>=4.10.0
+# flatdict required by isaaclab.sim.simulation_context
+flatdict
 # matplotlib>=3.5.0 required for Python 3.12 compatibility (older versions use deprecated configparser.SafeConfigParser)
 matplotlib>=3.5.0
 

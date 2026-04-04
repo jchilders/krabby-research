@@ -5,9 +5,9 @@ This directory contains the production Dockerfile for the Jetson Orin robot depl
 ## Overview
 
 The production container combines:
-- **Policy inference** (`compute/parkour/`) - Policy wrapper and model inference
-- **HAL server** (`locomotion/jetson/`) - Jetson HAL server with ZED camera integration
-- **Inference runner** (`locomotion/jetson/inference_runner.py`) - Production control loop
+- **Policy inference** (`compute/parkour/`) — policy wrapper and model inference (e.g. **`ParkourInferenceClient`**)
+- **HAL server** (`hal/server/jetson/`) — Jetson HAL server (catalog-driven RGB-D: ZED, MaixSense, etc.)
+- **Process entrypoint** — `python -m hal.server.jetson.main` (see **JETSON_DEPLOYMENT.md**); control loop and HAL share inproc ZMQ in the same container
 
 All components communicate via **inproc ZMQ** (same process, zero-copy) for optimal performance.
 
@@ -48,6 +48,6 @@ See `DOCKER_DEPENDENCIES.md` for complete dependency list.
 
 - ZED SDK Python bindings (`pyzed`) are installed via pip, but require ZED SDK to be installed on the system (via NVIDIA installer)
 - If ZED SDK is not available, the code will gracefully fall back to mock camera mode
-- Container runs as production entry point (`locomotion/jetson/main.py`)
+- Container entrypoint runs **`hal.server.jetson.main`** (`hal/server/jetson/main.py`)
 - All ZMQ communication uses inproc endpoints for same-process communication
 

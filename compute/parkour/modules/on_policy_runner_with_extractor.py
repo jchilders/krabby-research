@@ -18,7 +18,10 @@ from collections import deque
 
 import rsl_rl
 from rsl_rl.env import VecEnv
-from rsl_rl.networks import EmpiricalNormalization
+try:
+    from rsl_rl.networks import EmpiricalNormalization  # rsl_rl >= 3.1.2
+except ModuleNotFoundError:
+    from rsl_rl.modules import EmpiricalNormalization  # rsl_rl 2.x
 from .actor_critic_with_encoder import ActorCriticRMA
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
 from .feature_extractors import DefaultEstimator

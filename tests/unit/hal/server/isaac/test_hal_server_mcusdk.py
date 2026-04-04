@@ -139,9 +139,8 @@ class TestIsaacSimHalServerMCUSDK:
         server_thread.start()
         time.sleep(0.01)  # Small delay to ensure server thread is waiting
         
-        # Send command via ZMQ
-        command_parts = command.to_bytes()
-        pusher.send_multipart(command_parts)
+        # Send command via ZMQ (single-blob)
+        pusher.send(command.to_bytes())
         
         server_thread.join(timeout=2.0)
         action = received_action[0]

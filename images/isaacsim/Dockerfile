@@ -53,7 +53,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip uninstall -y scipy || true  # Remove scipy if installed to avoid conflicts with Isaac Sim's bundled scipy
 
 # Install Isaac Lab packages using the installation script
-# Use Docker build cache mount for pip to speed up subsequent builds
+# BuildKit cache mount for pip (requires DOCKER_BUILDKIT=1 — see Makefile DOCKER_BUILD)
 # With --system-site-packages, the venv can import isaacsim from base image,
 # allowing the VSCode setup script to find ISAAC_PATH automatically
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -75,10 +75,10 @@ RUN echo "export PYTHONPATH=\"\$PYTHONPATH:/isaac-sim/python_packages\"" >> /wor
 COPY hal/client/dist/*.whl /tmp/wheels/
 COPY hal/server/dist/*.whl /tmp/wheels/
 COPY hal/server/isaac/dist/*.whl /tmp/wheels/
+COPY hal/tools/dist/*.whl /tmp/wheels/
 COPY compute/parkour/dist/*.whl /tmp/wheels/
 COPY parkour/dist/*.whl /tmp/wheels/
 # Note: hal/server/jetson is not needed for Isaac Sim container
-# Note: hal/tools is excluded by default (only install when needed for debugging)
 # Install wheels into venv since that's where production code runs
 RUN . /workspace/testenv/bin/activate && \
     bash -c "pip install --no-cache-dir /tmp/wheels/*.whl"

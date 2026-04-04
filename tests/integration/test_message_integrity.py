@@ -36,32 +36,18 @@ def test_corrupt_message_handling():
         observation_endpoint="inproc://test_observation_corrupt",
         command_endpoint="inproc://test_command_corrupt",
     )
-    client = HalClient(client_config)
+    client = HalClient(client_config, context=server.get_transport_context())
     client.initialize()
 
     client.set_debug(True)
 
-    # Send corrupt message directly via ZMQ
-    context = zmq.Context()
-    publisher = context.socket(zmq.PUB)
-    publisher.bind("inproc://test_observation_corrupt")  # observation endpoint
-    # Use a small high-water mark to exercise buffer behavior (match server config)
-    publisher.setsockopt(zmq.SNDHWM, 1)
-    # Small delay for socket to be ready
-    time.sleep(0.01)
+    # Send malformed message via server's socket (topic only, no payload blob)
+    server.observation_socket.send(b"observation")
 
-    # Send malformed message (wrong number of parts)
-    publisher.send(b"observation")  # Only topic, missing payload
+    # Client raises ValueError for payload too short (single-part format requires 4B metadata len + payload)
+    with pytest.raises(ValueError, match="at least 4 bytes|payload too short"):
+        client.poll(timeout_ms=1000)
 
-    # Poll should handle gracefully
-    client.poll(timeout_ms=1000)
-
-    # Client should not crash and should handle corrupt message
-    # Latest camera should remain None or previous value
-    # (We can't easily test this without more setup, but the code should not crash)
-
-    publisher.close()
-    context.term()
     client.close()
     server.close()
 
@@ -81,44 +67,26 @@ def test_malformed_binary_payload():
         observation_endpoint="inproc://test_observation_malformed",
         command_endpoint="inproc://test_command_malformed",
     )
-    client = HalClient(client_config)
+    client = HalClient(client_config, context=server.get_transport_context())
     client.initialize()
 
     client.set_debug(True)
 
     time.sleep(0.1)
 
-    # Send message with invalid binary payload
-    context = zmq.Context()
-    publisher = context.socket(zmq.PUB)
-    publisher.bind("inproc://test_observation_malformed")  # observation endpoint
-    # Use a small high-water mark to exercise buffer behavior (match server config)
-    publisher.setsockopt(zmq.SNDHWM, 1)
-    # Small delay for socket to be ready
-    time.sleep(0.01)
+    # Send invalid frame via server's socket (topic + invalid payload; blob parse will fail)
+    server.observation_socket.send(b"observation" + b"not a float32 array")
 
-    # Send message with invalid payload (not float32 array)
-    topic = b"observation"
-    invalid_payload = b"not a float32 array"
-    publisher.send_multipart([topic, invalid_payload])
+    # Client raises ValueError when deserializing invalid blob
+    with pytest.raises(ValueError):
+        client.poll(timeout_ms=1000)
 
-    # Poll should handle gracefully
-    client.poll(timeout_ms=1000)
-
-    # Client should not crash
-    # (The deserialization will fail, but should be handled gracefully)
-
-    publisher.close()
-    context.term()
     client.close()
     server.close()
 
 
 def test_missing_multipart_messages():
-    """Test handling of missing multipart messages."""
-    # This is similar to corrupt message test
-    # The client should handle messages that don't have 3 parts
-    # Use shared context for inproc connections
+    """Test handling of invalid observation messages (e.g. topic-only frame, payload too short)."""
     server_config = HalServerConfig(
         observation_bind="inproc://test_observation_multipart",
         command_bind="inproc://test_command_multipart",
@@ -148,13 +116,12 @@ def test_missing_multipart_messages():
     assert received_hw_obs is not None
     previous_joint_pos = received_hw_obs.joint_positions.copy()
 
-    # Send invalid message (missing parts) - use server's socket directly
-    # Can't bind twice with inproc, so send directly through server socket
-    server.observation_socket.send(b"observation")  # Only topic (incomplete message)
+    # Send invalid message: single frame with topic only (no payload blob)
+    server.observation_socket.send(b"observation")
 
-    # Poll again - should return None or previous value depending on implementation
-    # The key is that it should not crash
-    client.poll(timeout_ms=1000)
+    # Client raises ValueError for payload too short (need at least 4 bytes for metadata length)
+    with pytest.raises(ValueError, match="at least 4 bytes|payload too short"):
+        client.poll(timeout_ms=1000)
     client.close()
     server.close()
 
@@ -354,10 +321,6 @@ def test_timestamp_synchronization_realistic_sequence():
     time.sleep(0.001)  # 1ms delay
     hw_obs_1 = HardwareObservations(
         joint_positions=np.zeros(12, dtype=np.float32),
-        rgb_camera_1=np.zeros((480, 640, 3), dtype=np.uint8),
-        rgb_camera_2=np.zeros((480, 640, 3), dtype=np.uint8),
-        depth_map=np.zeros((480, 640), dtype=np.float32),
-        confidence_map=np.ones((480, 640), dtype=np.float32),
         camera_height=480,
         camera_width=640,
         timestamp_ns=time.time_ns(),  # Fresh timestamp
@@ -389,10 +352,6 @@ def test_timestamp_synchronization_realistic_sequence():
         time.sleep(0.01)  # 10ms between observations (100Hz)
         hw_obs = HardwareObservations(
             joint_positions=np.zeros(12, dtype=np.float32),
-            rgb_camera_1=np.zeros((480, 640, 3), dtype=np.uint8),
-            rgb_camera_2=np.zeros((480, 640, 3), dtype=np.uint8),
-            depth_map=np.zeros((480, 640), dtype=np.float32),
-            confidence_map=np.ones((480, 640), dtype=np.float32),
             camera_height=480,
             camera_width=640,
             timestamp_ns=time.time_ns(),  # Fresh timestamp each time

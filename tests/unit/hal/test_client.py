@@ -36,7 +36,8 @@ def test_hal_client_initialization():
         observation_endpoint="inproc://test_observation",
         command_endpoint="inproc://test_command",
     )
-    client = HalClient(client_config)
+    # Use server's context so inproc works and client.close() does not term() the context (avoids segfault)
+    client = HalClient(client_config, context=server.get_transport_context())
     client.initialize()
     client.set_debug(True)
 

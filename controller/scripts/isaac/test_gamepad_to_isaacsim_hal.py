@@ -11,7 +11,7 @@ This script tests the complete end-to-end flow:
 6. IsaacSimMCUSDK logs the command in Isaac's preferred joint format
 
 Usage:
-    python controller/scripts/demo/test_gamepad_to_isaacsim_hal.py
+    python controller/scripts/isaac/test_gamepad_to_isaacsim_hal.py
 
 Requirements:
     - A gamepad/joystick connected (Bluetooth or USB)
@@ -28,7 +28,7 @@ import os
 import sys
 
 # Add project root to Python path so we can import controller, hal, etc.
-# Script is in controller/scripts/demo/, so go up 3 levels to reach project root
+# Script is in controller/scripts/isaac/, so go up 3 levels to reach project root
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.join(script_dir, "../../..")
 project_root = os.path.abspath(project_root)

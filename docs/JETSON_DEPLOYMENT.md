@@ -9,8 +9,16 @@ This guide explains how to build and deploy the parkour policy runtime on Jetson
 - **Kernel**: 5.15.148-tegra (NVIDIA Tegra)
 - **Architecture**: aarch64 (ARM64)
 - **JetPack**: 6.1/6.2 (L4T 36.4) or later
-- **ZED 2i Camera**: Optional, for depth sensing (ZED SDK 5.1.1+ for L4T 36.4)
+- **ZED 2i Camera**: Optional RGB-D (ZED SDK 5.1.1+ for L4T 36.4)
+- **MaixSense-A075V**: Optional RGB-D over USB RNDIS + HTTP (no ZED SDK); see [MaixSense-A075V (optional host bring-up)](#maixsense-a075v-optional-host-bring-up) below
 - **Model checkpoint file**: `.pt` format (e.g., `unitree_go2_parkour_teacher.pt`)
+
+### Seeed reComputer Jetson Robotics J401 (reference carrier)
+
+If you deploy on **Seeed Studio**’s [reComputer Jetson Robotics J401](https://wiki.seeedstudio.com/recomputer_jetson_robotics_J401_getting_started/), use their documentation alongside this guide:
+
+- **Getting started:** [reComputer Jetson Robotics J401 — Seeed Wiki](https://wiki.seeedstudio.com/recomputer_jetson_robotics_J401_getting_started/)
+- **Hardware reference:** [reComputer Jetson Robotics J401 datasheet (PDF)](https://files.seeedstudio.com/products/NVIDIA-Jetson/reComputer_robotics_J401_datasheet.pdf)
 
 ## Prerequisites: System Setup
 
@@ -204,6 +212,8 @@ Optional: verify the ZED 2i on the host before using it in the container.
 3. **Verify USB**: `lsusb | grep -i zed` — device must appear on a USB 3.0 port.
 4. **Run diagnostics**: `ZED_Diagnostic -c -d`
 
+   You should see **OK** for: ZED SDK Diagnostic, Processor, Graphics Card, and CUDA Operations. Under **AI Models Diagnostic**, detection models (MULTI CLASS, HUMAN BODY, PERSON HEAD, REID) may show "not optimized" — that is normal and not used by the HAL RGB/depth pipeline. For depth, ensure **NEURAL LIGHT DEPTH**, **NEURAL DEPTH**, and **NEURAL PLUS DEPTH** show "optimized" (run the pre-optimization step below if needed).
+
 **If the SDK can’t open the camera** (appears in `lsusb` but diagnostic fails), install udev rules:
 
 ```bash
@@ -212,6 +222,39 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 Unplug and replug the ZED, then retry.
+
+**Two ZED units:** the default catalog’s second RGB-D row is **`side_rgbd`** (policy side slot when `policy_scan_slot="side"`). For that row, set **`KRABBY_SIDE_ZED_USB_SERIAL`** to the **integer USB serial** of the side ZED so HAL selects the correct device; the primary `front_rgbd` ZED can use the first enumerated device when no serial is set there.
+
+### MaixSense-A075V (optional host bring-up)
+
+Optional RGB-D over **HTTP** (no Stereolabs SDK). Use as the primary `front_rgbd` driver or as extra `rgbd` catalog rows. Official docs: [MaixSense-A075V – Sipeed Wiki](https://wiki.sipeed.com/hardware/en/maixsense/maixsense-a075v/maixsense-a075v.html).
+
+1. **USB / link**: Often **`0525:a4a2`** (Linux RNDIS). The module is **`192.168.233.1`** on the USB Ethernet link by default.
+2. **Jetson IP**: Put **`192.168.233.2/24`** on the RNDIS interface only. Find the iface with `ip -br link` (commonly **`enx…`**, not always `usb0`). Do not attach **`192.168.233.0/24`** to another NIC.
+3. **Check reachability**: `ip route get 192.168.233.1` must show the RNDIS device and `src 192.168.233.2`; then `ping -c 3 192.168.233.1` and `curl -sS -o /dev/null -w '%{http_code}\n' http://192.168.233.1/`.
+4. **NetworkManager** (replace `IFACE`):
+
+```bash
+sudo nmcli connection add type ethernet ifname IFACE con-name maixsense-rndis \
+  ipv4.method manual ipv4.addresses 192.168.233.2/24 \
+  ipv6.method ignore connection.autoconnect yes
+sudo nmcli connection up maixsense-rndis
+```
+
+5. **Web UI**: `http://192.168.233.1` (~10–15 s after power-on). Remote browser via Jetson: `ssh -N -L 8080:192.168.233.1:80 USER@JETSON` then open `http://127.0.0.1:8080`.
+6. **Driver problems**: [Sipeed install / driver notes](https://wiki.sipeed.com/hardware/en/maixsense/maixsense-a075v/install_drivers.html).
+
+**HAL wiring**
+
+- Python extras: `pip install "krabby-hal-server-jetson[maixsense]"` (`requests`, `opencv-python-headless`).
+- Catalog: set **`camera_driver="maixsense_a075v"`** on each **`rgbd`** row that uses MaixSense (primary **`front_rgbd`** and/or extra rows with **`hal_open_rgbd=True`**). Each such row must set **`maixsense_host_env`** / optional **`maixsense_port_env`** to the **names** of env vars that hold that module’s HTTP host and port—**you choose those names** in **`JETSON_SENSOR_CATALOG`** (distinct per module). Deployment passes **one `-e`** (and optional port **`-e`**) per name.
+- **Policy** uses **`camera_*`** / **`scan_features`** from the primary row; optional **`side_*`** when one row has **`policy_scan_slot="side"`** and the checkpoint uses **`num_side_scan`**. **Collision / extra streams**: read **`HardwareObservations.rgbd_by_catalog_id[id].rgb`** / **`.depth`** (each row’s own resolution). Implementation: `hal/server/jetson/maixsense_a075v.py`, `maixsense_rgb_depth_camera.py`, **`JETSON_SENSOR_CATALOG`** in `sensor_backend_jetson.py`.
+- **Hardware smoke test**: `scripts/run_jetson_maixsense_hal_hw_test.sh` (expects Docker image `krabby-locomotion:latest`, **`--network host`**, and **`KRABBY_MAIXSENSE_LIVE_TEST_HOST`** set to the module IP; optional **`KRABBY_MAIXSENSE_LIVE_TEST_PORT`**).
+
+**Docker**: No ZED-style USB passthrough for HTTP; the container must reach each module’s IP (**`--network host`** on Jetson is typical). For every MaixSense row, the catalog’s **`maixsense_host_env`** / **`maixsense_port_env`** name the variables you set at **`docker run`** (**`-e NAME=value`**, one pair per module)—same pattern as multiple ZED serial envs.
+
+**HAL front camera (camera_rgb / camera_depth)**  
+The Jetson HAL fills `HardwareObservations.camera_rgb` and `camera_depth` from the **front RGB-D observation camera** defined in **`JETSON_SENSOR_CATALOG`**: the row with **`id="front_rgbd"`** and **`is_primary=True`** sets **`camera_driver`** (e.g. **`zed`** or **`maixsense_a075v`**), **resolution**, and **fps**. Optional constructor overrides: **`camera_resolution`**, **`camera_fps`**, **`camera_driver`**. **`depth_mode`** applies to **ZED** only. **Policy scan** (`scan_features`, optional **`side_*`**) comes from the configured depth streams; **every opened RGB-D row** also appears under **`rgbd_by_catalog_id`**. GStreamer IDs, ZED install, and MaixSense networking: **SENSOR_INTERFACE.md**, ZED section above, and [MaixSense-A075V (optional host bring-up)](#maixsense-a075v-optional-host-bring-up). Wire format: **HAL_GUIDE.md** and `hal/client/data_structures/hardware.py`.
 
 ## Obtaining the Docker Image
 
@@ -269,6 +312,25 @@ docker run --rm --runtime=nvidia \
 ```
 
 **Note**: On first use the ZED SDK downloads and optimizes NEURAL depth models, adding several minutes to startup. Pre-optimize using the section below to avoid this.
+
+### With MaixSense-A075V (HTTP in container)
+
+Configure RNDIS on the **Jetson host** first ([MaixSense-A075V (optional host bring-up)](#maixsense-a075v-optional-host-bring-up)). The container must reach **every** module IP you use; **`--network host`** is typical.
+
+**Example (`docker run`):** use **`--network host`** so the container can reach each module. Each **`-e`** name must match that row’s **`maixsense_host_env`** (and port env if **`maixsense_port_env`** is set) in **`JETSON_SENSOR_CATALOG`**. Below uses illustrative host env names for a **front** + **side** pair; rename them in the catalog and in **`docker run`** if you prefer other strings.
+
+```bash
+docker run --rm --runtime=nvidia --network host \
+    -v /path/to/checkpoints:/workspace/checkpoints \
+    -e KRABBY_JETSON_MAIXSENSE_FRONT_HOST=192.168.233.1 \
+    -e KRABBY_JETSON_MAIXSENSE_SIDE_HOST=192.168.234.1 \
+    krabby-locomotion:latest \
+    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
+    --inference_device cuda \
+    --control_rate 100.0
+```
+
+Add more **`-e …`** (and optional **`-e …_PORT=…`**) for every MaixSense row you open. Third-party USB–Ethernet links may use different subnets—set values accordingly.
 
 ### Pre-optimizing ZED NEURAL depth models
 
@@ -440,7 +502,12 @@ Adjust control rate based on actual latency:
 - **Network Isolation**: With `iptables: false`, Docker won't manage network isolation between containers. Use host networking mode if needed.
 - **Camera**: ZED camera must be initialized for production deployment to provide valid depth/scan features for inference.
 
+## Isaac Sim synthetic front camera
+
+When running the HAL server in Isaac Sim, the **synthetic front camera** is used: the first camera in `scene.sensors` that provides depth/RGB is used to fill `camera_rgb` and `camera_depth` (same as `rgb_camera_1` and `depth_map`). Add a camera in the scene that approximates the real ZED (position and FOV) and attach it to the robot or a fixed frame. Resolution is 480×640 in the current implementation. Validate by connecting a HAL client to the Isaac HAL observation endpoint and verifying `camera_rgb` and `camera_depth` in the observations.
+
 ## Additional Resources
 
 - Docker dependencies: See `docs/DOCKER_DEPENDENCIES.md`
+- HAL architecture and observation format: See `docs/HAL_GUIDE.md`
 

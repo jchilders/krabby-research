@@ -35,6 +35,10 @@ dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
 ]
+maixsense = [
+    "requests>=2.28.0",
+    "opencv-python-headless>=4.8.0",
+]
 
 [project.scripts]
 krabby-hal-server-jetson = "hal.server.jetson.main:main"

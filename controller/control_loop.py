@@ -7,6 +7,7 @@ This module provides a ControlLoop class that wires singleton components
 
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -17,6 +18,7 @@ from controller.mappers.gamepad_to_isaacsim_hal_mapper import GamepadToIsaacSimH
 from controller.mappers.gamepad_to_krabby_hal_mapper import GamepadToKrabbyHALMapper
 from hal.client import HalClient
 from hal.client.config import HalClientConfig
+from hal.server.robot_definition import RobotDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -41,14 +43,16 @@ class ControlLoopConfig:
         mapper_hip_up_down_scale: Scaling factor for hip up/down axis
         mapper_knee_out_in_scale: Scaling factor for knee out/in axis
         mapper_hip_yaw_scale: Scaling factor for hip yaw axis
+        isaacsim_robot_definition: Optional robot definition for IsaacSim mapper (quad 12-joint or hex 18-joint).
     """
     mode: ControlMode
     input_controller_device_id: Optional[int] = None
     input_controller_update_rate_hz: float = 50.0
     hal_client_config: Optional[HalClientConfig] = None
-    mapper_hip_up_down_scale: float = 0.3
-    mapper_knee_out_in_scale: float = 0.3
-    mapper_hip_yaw_scale: float = 0.2
+    mapper_hip_up_down_scale: float = 1.0
+    mapper_knee_out_in_scale: float = 1.0
+    mapper_hip_yaw_scale: float = 1.0
+    isaacsim_robot_definition: Optional[RobotDefinition] = None
 
 
 class ControlLoop:
@@ -83,7 +87,8 @@ class ControlLoop:
         self._hal_client: Optional[HalClient] = None
         self._gamepad_to_isaacsim_hal_mapper: Optional[GamepadToIsaacSimHALMapper] = None
         self._gamepad_to_krabby_hal_mapper: Optional[GamepadToKrabbyHALMapper] = None
-    
+        self._isaacsim_first_send_logged = False
+
     def start(self) -> None:
         """Start the control loop.
         
@@ -150,11 +155,11 @@ class ControlLoop:
         )
         self._hal_client.initialize()
         
-        # Initialize mapper
         self._gamepad_to_isaacsim_hal_mapper = GamepadToIsaacSimHALMapper(
             hip_up_down_scale=self.config.mapper_hip_up_down_scale,
             knee_out_in_scale=self.config.mapper_knee_out_in_scale,
             hip_yaw_scale=self.config.mapper_hip_yaw_scale,
+            robot_definition=self.config.isaacsim_robot_definition,
         )
         
         # Register callback to send commands when gamepad state changes
@@ -220,11 +225,13 @@ class ControlLoop:
             
             # Send command via HAL client
             self._hal_client.put_joint_command(joint_cmd)
-            
+            if not self._isaacsim_first_send_logged:
+                self._isaacsim_first_send_logged = True
+                logger.info("Pro Controller: first joint command sent to HAL server (commands now streaming)")
             d = joint_cmd.to_positions_dict()
             logger.debug(
-                f"Sent joint command: "
-                f"joint_range=[{min(d.values()):.3f}, {max(d.values()):.3f}]"
+                "Sent joint command (Pro Controller/gamepad): %d joints, range=[%.3f, %.3f]",
+                len(d), min(d.values()), max(d.values()),
             )
         except Exception as e:
             logger.error(f"Error processing gamepad state: {e}", exc_info=True)
@@ -262,3 +269,26 @@ class ControlLoop:
             True if running, False otherwise
         """
         return self._running
+
+    def wait_for_hal_server(self, timeout_s: float = 15.0, poll_interval_s: float = 0.1) -> bool:
+        """Wait until the HAL server is reachable (at least one observation received).
+        
+        Only applicable when using INPUT_CONTROLLER_ISAACSIM mode. Polls the observation
+        socket until data is received or timeout. Use after start() to fail fast if the
+        Isaac Sim HAL server is not running.
+        
+        Args:
+            timeout_s: Maximum time to wait in seconds.
+            poll_interval_s: Time between poll attempts in seconds.
+            
+        Returns:
+            True if an observation was received, False on timeout.
+        """
+        if self._hal_client is None:
+            return False
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            obs = self._hal_client.poll(timeout_ms=int(poll_interval_s * 1000))
+            if obs is not None:
+                return True
+        return False
