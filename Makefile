@@ -215,7 +215,7 @@ test-coverage: build-test-image
 	docker run --rm --gpus all \
 		-v $$(pwd)/tests/coverage:/workspace/tests/coverage \
 		krabby-testing-x86:latest \
-		pytest tests/ -v -m "not jetson and not isaacsim" --cov=hal --cov=compute --cov-report=html --cov-report=term
+		pytest tests/ -v -m "not jetson and not isaacsim" --cov=. --cov-report=html --cov-report=term
 
 .PHONY: test-isaacsim
 test-isaacsim: build-isaacsim-image

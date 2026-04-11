@@ -79,9 +79,10 @@ RUN . /workspace/testenv/bin/activate && \
 # Copy remaining code that's not in wheels (e.g., compute/testing for test runner)
 COPY compute/ /workspace/compute/
 
-# Copy controller and firmware so tests and hal.server.jetson can import them
+# Copy controller, firmware, and data_collection (rosbag integration tests)
 COPY controller/ /workspace/controller/
 COPY firmware/ /workspace/firmware/
+COPY data_collection/ /workspace/data_collection/
 
 # Copy tests/ (test scenarios)
 COPY tests/ /workspace/tests/

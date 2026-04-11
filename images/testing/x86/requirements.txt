@@ -28,6 +28,10 @@ pytest>=7.4.0
 pytest-cov>=4.1.0
 coverage>=7.3.0
 
+# Data collector / rosbag2 mcap tests
+rosbags>=0.10.0
+PyYAML>=6.0.0
+
 # Reinforcement learning library
 # Pin to 3.1.2 to match Isaac Sim image (Isaac Lab installs 3.1.2 as dependency)
 # Version 3.1.2 has EmpiricalNormalization in rsl_rl.networks

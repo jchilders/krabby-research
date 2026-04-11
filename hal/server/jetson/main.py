@@ -14,8 +14,11 @@ import argparse
 import logging
 import signal
 import sys
+import threading
 import time
 
+from data_collection.collector import start_collector_thread
+from data_collection.collector_settings import build_data_collector_config
 from hal.client.config import HalClientConfig
 from hal.server import HalServerConfig
 from hal.server.jetson import JetsonHalServer
@@ -59,6 +62,17 @@ def main():
         default="inproc://hal_commands",
         help="Command endpoint (inproc for same-process)",
     )
+    parser.add_argument(
+        "--data-collector",
+        action="store_true",
+        help="Enable second HalClient + rosbag2 (mcap) recording (settings: data_collection/collector_settings.py)",
+    )
+    parser.add_argument(
+        "--data-collector-output-dir",
+        type=str,
+        default=None,
+        help="Override bag output directory (default: DEFAULT_OUTPUT_DIR in collector_settings.py)",
+    )
 
     args = parser.parse_args()
 
@@ -80,6 +94,8 @@ def main():
 
     hal_server = None
     parkour_client = None
+    collector_stop: threading.Event | None = None
+    collector_thread: threading.Thread | None = None
 
     try:
         # Create HAL server config (inproc for production)
@@ -135,6 +151,22 @@ def main():
         # Start inference client in separate thread
         parkour_client.start_thread(running_flag=lambda: running)
 
+        if args.data_collector:
+            dc_cfg = build_data_collector_config(
+                observation_endpoint=args.observation_bind,
+                command_endpoint=args.command_bind,
+                output_dir=args.data_collector_output_dir,
+            )
+            collector_stop = threading.Event()
+            _collector, collector_thread = start_collector_thread(
+                dc_cfg,
+                transport_context,
+                collector_stop,
+            )
+            _collector.initialize()
+            collector_thread.start()
+            logger.info("HalDataCollector thread started (output_dir=%s)", dc_cfg.output_dir)
+
         logger.info(f"Starting production loop at {args.control_rate} Hz")
         period_s = 1.0 / args.control_rate
 
@@ -180,6 +212,12 @@ def main():
         sys.exit(1)
 
     finally:
+        if collector_stop is not None:
+            collector_stop.set()
+        if collector_thread is not None and collector_thread.is_alive():
+            collector_thread.join(timeout=8.0)
+            if collector_thread.is_alive():
+                logger.warning("HalDataCollector thread did not exit within timeout")
         # Clean up in reverse order of creation
         if parkour_client:
             parkour_client.close()

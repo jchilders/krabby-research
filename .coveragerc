@@ -1,15 +1,8 @@
 [run]
-# Source directories to include in coverage
-# Note: These are relative to the working directory
-source = 
-    compute
-    hal
-    controller
-    locomotion
+# Measure from the repo root; run pytest from that root (e.g. /workspace in the test image).
+source = .
 
-# Exclude patterns (these patterns are matched against file paths)
-omit = 
-    */parkour/*
+omit =
     */tests/*
     */test_*.py
     */__pycache__/*
@@ -18,6 +11,27 @@ omit =
     */dist-packages/*
     */venv/*
     */env/*
+    */testenv/*
+    */build/*
+    */build/lib/*
+    */*.egg-info/*
+    # Top-level and nested ``parkour/`` trees (tasks, Isaac Lab envs, vendored scripts)
+    parkour/*
+    */parkour/*
+    # Docker / CI glue, not primary library code
+    */images/*
+    */.build-cache/*
+    # Compute test harness (runner, mocks, etc.; not product libraries)
+    */compute/testing/*
+    # One-off CLIs and examples
+    */scripts/*
+    # HAL verification CLIs (see docs; not core server/client libraries)
+    */hal/tools/*
+    # Process entrypoints (``python -m pkg`` / deployment mains), not libraries under test
+    */main.py
+    */__main__.py
+    # Package markers / re-exports (usually thin)
+    */__init__.py
 
 [report]
 # Exclude lines from coverage report
@@ -47,10 +61,9 @@ precision = 2
 # Show missing line numbers
 show_missing = True
 
-# Skip empty files
+# Skip files with no executable lines (e.g. docstring-only __init__.py)
 skip_empty = True
 
 [html]
 # Directory for HTML coverage report
 directory = tests/coverage/htmlcov
-

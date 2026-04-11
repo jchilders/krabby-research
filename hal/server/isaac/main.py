@@ -16,12 +16,16 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
 from isaaclab.app import AppLauncher
 
+from data_collection.collector import start_collector_thread
+from data_collection.collector_settings import build_data_collector_config
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +143,17 @@ def main():
         default=None,
         help="Command endpoint (default: inproc or tcp://*:5556 if --joystick)",
     )
+    parser.add_argument(
+        "--data-collector",
+        action="store_true",
+        help="Enable second HalClient + rosbag2 (mcap) recording (settings: data_collection/collector_settings.py)",
+    )
+    parser.add_argument(
+        "--data-collector-output-dir",
+        type=str,
+        default=None,
+        help="Override bag output directory (default: DEFAULT_OUTPUT_DIR in collector_settings.py)",
+    )
 
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
@@ -233,6 +248,8 @@ def main():
     hal_server = None
     parkour_client = None
     env = None
+    collector_stop: threading.Event | None = None
+    collector_thread: threading.Thread | None = None
 
     # Parse environment configuration
     # Note: parse_env_cfg() will import parkour_tasks internally, which triggers
@@ -347,6 +364,22 @@ def main():
         parkour_client = None
         logger.info("Joystick mode: waiting for krabby-uno-sim on %s / %s", args.observation_bind, args.command_bind)
 
+    if args.data_collector:
+        dc_cfg = build_data_collector_config(
+            observation_endpoint=args.observation_bind,
+            command_endpoint=args.command_bind,
+            output_dir=args.data_collector_output_dir,
+        )
+        collector_stop = threading.Event()
+        _collector, collector_thread = start_collector_thread(
+            dc_cfg,
+            transport_context,
+            collector_stop,
+        )
+        _collector.initialize()
+        collector_thread.start()
+        logger.info("HalDataCollector thread started (output_dir=%s)", dc_cfg.output_dir)
+
     logger.info(f"Starting loop at {args.control_rate} Hz")
     period_s = 1.0 / args.control_rate
     
@@ -456,6 +489,12 @@ def main():
                 time.sleep(sleep_time)
 
     # Clean up in reverse order of creation
+    if collector_stop is not None:
+        collector_stop.set()
+    if collector_thread is not None and collector_thread.is_alive():
+        collector_thread.join(timeout=8.0)
+        if collector_thread.is_alive():
+            logger.warning("HalDataCollector thread did not exit within timeout")
     if parkour_client:
         parkour_client.close()
     if hal_server:

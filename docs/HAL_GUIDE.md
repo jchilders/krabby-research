@@ -291,6 +291,8 @@ The observation PUB/SUB channel uses HWM=1 (high-watermark=1):
 - Prevents queue buildup and ensures real-time control uses fresh data
 - When `poll()` is called, it returns the latest observation if available, or `None` if no new data
 
+**Multiple `HalClient` instances** (e.g. policy inference plus a data collector) may share the same `zmq.Context` and connect their SUB sockets to the **same** `observation_endpoint`. Each client uses **`RCVHWM=1`** and **`CONFLATE=1`** (see `hal/client/client.py`). Every subscriber therefore sees **latest-only** semantics independently: rosbags and policies record the same class of stream the PUB makes available at each `poll()`, not a full history of every published frame.
+
 ## Synchronization
 
 - **Topic filtering**: Subscribers subscribe to the `"observation"` topic

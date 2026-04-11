@@ -91,6 +91,9 @@ COPY parkour/ /workspace/parkour/
 # Note: compute/testing is included in the wheel but we want latest source for development
 COPY compute/ /workspace/compute/
 
+# HAL data collector (rosbag2 / mcap); same layout as locomotion image
+COPY data_collection/ /workspace/data_collection/
+
 # Copy test assets (checkpoints, test data, etc.) to generic test assets directory
 # This directory can be used for any test content files
 RUN mkdir -p /workspace/test_assets/checkpoints
