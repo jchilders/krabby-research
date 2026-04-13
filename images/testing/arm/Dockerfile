@@ -19,6 +19,10 @@ RUN apt-get update && apt-get install -y \
     git \
     build-essential \
     libzmq3-dev \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-ugly \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file first (for better Docker layer caching)

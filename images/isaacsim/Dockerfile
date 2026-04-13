@@ -13,11 +13,34 @@ USER root
 
 # Install system dependencies
 # Most dependencies are included in Isaac Sim base image
+#
+# GStreamer + GObject introspection (below): Isaac Sim base does not ship a full Gst Python stack.
+# hal.server.gstreamer_runtime uses pip PyGObject in /workspace/testenv with system typelibs (gir1.2-*).
+# libcairo2-dev, libgirepository1.0-dev, libglib2.0-dev, libgstreamer*-dev, pkg-config, and
+# gobject-introspection support building/linking PyGObject; meson/ninja are common build deps for that path.
+# plugins-* provide x264enc, h264parse (in -bad), videoconvert, etc. Jetson deploy images skip this
+# full toolchain—see images/locomotion/Dockerfile (JetPack + ZED supply hardware paths; no venv Gst CI).
 RUN apt-get update && apt-get install -y \
     python3-venv \
     python3-pip \
     git \
     libzmq3-dev \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gir1.2-gstreamer-1.0 \
+    gir1.2-gst-plugins-base-1.0 \
+    libcairo2-dev \
+    libgirepository1.0-dev \
+    libglib2.0-dev \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    pkg-config \
+    gobject-introspection \
+    meson \
+    ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file first (for better Docker layer caching)
@@ -82,6 +105,11 @@ COPY parkour/dist/*.whl /tmp/wheels/
 # Install wheels into venv since that's where production code runs
 RUN . /workspace/testenv/bin/activate && \
     bash -c "pip install --no-cache-dir /tmp/wheels/*.whl"
+
+# Isaac Lab's install script and/or wheels can drop or override venv packages; reinstall PyGObject
+# so hal.server.gstreamer_runtime keeps working: venv Python + system Gst typelibs from apt above.
+RUN . /workspace/testenv/bin/activate && \
+    pip install --no-cache-dir 'PyGObject>=3.42.0,<3.51'
 
 # Copy parkour source so parkour_isaaclab is available
 # Note: parkour_isaaclab is not included in the wheel, so we need the source

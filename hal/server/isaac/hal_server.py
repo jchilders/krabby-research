@@ -550,19 +550,26 @@ class IsaacSimHalServer(HalServerBase):
                 if not self._first_command_received:
                     self._first_command_received = True
                     logger.info("Client connected (joint command received).")
-                d = command.to_positions_dict()
-                non_zero = [(k, v) for k, v in d.items() if v != 0.0]
-                logger.debug(
-                    "Joint command received: %d joints, range=[%.3f, %.3f]",
-                    len(d), min(d.values()), max(d.values()),
-                )
-                if non_zero:
+                # Guard expensive work: logger.debug() does not skip building args, and this path can run at ~100 Hz.
+                # isEnabledFor(DEBUG) respects this logger's level (e.g. tests set INFO for speed).
+                if logger.isEnabledFor(logging.DEBUG):
+                    d = command.to_positions_dict()
+                    non_zero = [(k, v) for k, v in d.items() if v != 0.0]
                     logger.debug(
-                        "  non-zero positions (joint=rad): %s",
-                        ", ".join(f"{k}={v:.3f}" for k, v in non_zero),
+                        "Joint command received: %d joints, range=[%.3f, %.3f]",
+                        len(d),
+                        min(d.values()),
+                        max(d.values()),
                     )
-                else:
-                    logger.debug("  all positions zero (no leg selected or sticks neutral)")
+                    if non_zero:
+                        logger.debug(
+                            "  non-zero positions (joint=rad): %s",
+                            ", ".join(f"{k}={v:.3f}" for k, v in non_zero),
+                        )
+                    else:
+                        logger.debug(
+                            "  all positions zero (no leg selected or sticks neutral)"
+                        )
                 break
 
             # No command available, sleep and retry

@@ -361,10 +361,10 @@ def run_test_isaacsim_hal_server_with_real_isaaclab():
         )
         logger.info("[STEP] HAL server config created")
         
-        from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+        from hal.server.isaac.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
         # Create and initialize HAL server with real environment
         logger.info("[STEP] Creating IsaacSimHalServer...")
-        hal_server = IsaacSimHalServer(hal_server_config, KRABBY_QUAD_DEFINITION, env=env)
+        hal_server = IsaacSimHalServer(hal_server_config, UNITREE_GO2_DEFINITION, env=env)
         logger.info("[STEP] IsaacSimHalServer created, calling initialize()...")
         hal_server.initialize()
         logger.info("[STEP] HAL server initialized successfully")
@@ -497,14 +497,17 @@ def run_test_inference_latency_requirement():
         logger.info("[STEP] Environment reset complete")
         
         from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
-        from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+        from hal.server.isaac.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
+
+        robot_definition = UNITREE_GO2_DEFINITION
         observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
-            KRABBY_QUAD_DEFINITION
+            robot_definition
         )
+        action_dim = robot_definition.get_total_joint_count()
         # Create and initialize HAL server with real environment
         logger.info("[STEP] Creating and initializing HAL server...")
         server = IsaacSimHalServer(
-            hal_server_config, KRABBY_QUAD_DEFINITION, env=env, observation_dimensions=observation_dimensions
+            hal_server_config, robot_definition, env=env, observation_dimensions=observation_dimensions
         )
         server.initialize()
         logger.info("[STEP] HAL server initialized")
@@ -514,7 +517,7 @@ def run_test_inference_latency_requirement():
         weights = ModelWeights(
             checkpoint_path=str(checkpoint_path),
             observation_dimensions=observation_dimensions,
-            action_dim=12,
+            action_dim=action_dim,
         )
         client_config = HalClientConfig(
             observation_endpoint="inproc://test_obs_latency",
@@ -525,7 +528,7 @@ def run_test_inference_latency_requirement():
             hal_client_config=client_config,
             model_weights=weights,
             observation_dimensions=observation_dimensions,
-            robot_definition=KRABBY_QUAD_DEFINITION,
+            robot_definition=robot_definition,
             control_rate=100.0,
             device=device,
             transport_context=server.get_transport_context(),
@@ -562,13 +565,16 @@ def run_test_inference_latency_requirement():
         
         # Apply first action and step environment (matching main.py)
         obs_dict, _, _, _, extras = env.step(first_action)
-        
+        # Must match hal.server.isaac.main: cache env.step() policy obs for the next set_observation()
+        server._latest_obs_dict = obs_dict
+        server._latest_obs_tensor = obs_dict["policy"]
+
         # Track first applied action for next observation's previous_action
         action_np = first_action[0].cpu().numpy() if first_action.ndim == 2 else first_action.cpu().numpy()
-        if len(action_np) >= 12:
-            server._last_applied_action[:] = action_np[:12].astype(np.float32)
+        if len(action_np) >= action_dim:
+            server._last_applied_action[:] = action_np[:action_dim].astype(np.float32)
         else:
-            server._last_applied_action[:len(action_np)] = action_np.astype(np.float32)
+            server._last_applied_action[: len(action_np)] = action_np.astype(np.float32)
         
         timestep += 1
         
@@ -597,13 +603,15 @@ def run_test_inference_latency_requirement():
             
             # Step environment (matching main.py)
             obs_dict, _, _, _, extras = env.step(action)
-            
+            server._latest_obs_dict = obs_dict
+            server._latest_obs_tensor = obs_dict["policy"]
+
             # Track last applied action for next observation's previous_action
             action_np = action[0].cpu().numpy() if action.ndim == 2 else action.cpu().numpy()
-            if len(action_np) >= 12:
-                server._last_applied_action[:] = action_np[:12].astype(np.float32)
+            if len(action_np) >= action_dim:
+                server._last_applied_action[:] = action_np[:action_dim].astype(np.float32)
             else:
-                server._last_applied_action[:len(action_np)] = action_np.astype(np.float32)
+                server._last_applied_action[: len(action_np)] = action_np.astype(np.float32)
             
             timestep += 1
             

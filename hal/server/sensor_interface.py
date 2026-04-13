@@ -64,6 +64,14 @@ class GStreamerHandle:
     fps: int
     camera_driver: str | None = None  # Same as matching ``SensorInfo.camera_driver`` when applicable
     appsrc_pixel_format: str = "RGB"  # GStreamer ``video/x-raw,format=`` for appsrc caps
+    # For ``appsrc_pixel_format == "GRAY16_LE"``: ``(d_min, d_max)`` in **meters**, **per camera**.
+    # Different devices have different usable distance bands (e.g. short-range vs long-range);
+    # this pair is that band for **this** stream. The encoder always has the same **65536**
+    # codepoints: valid samples in ``[d_min, d_max]`` are stretched linearly to **0..65534**, so the
+    # full uint16 resolution covers **this** sensor's window instead of wasting codes on distances
+    # it never reports. NaN / Inf / outside the band → **65535**; decoders need the same
+    # ``(d_min, d_max)`` to map codes back to approximate meters.
+    depth_range_m: Optional[tuple[float, float]] = None
     backend_data: Any = None  # Backend-specific (e.g. Isaac sensor name map in extra)
 
 

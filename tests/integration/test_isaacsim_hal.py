@@ -6,6 +6,7 @@ For real Isaac Sim integration tests, see images/isaacsim/test_runner.py.
 
 import logging
 import time
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -28,6 +29,45 @@ from compute.testing.inference_test_runner import InferenceTestRunner
 _TEST_OBS_DIMS = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
     KRABBY_QUAD_DEFINITION
 )
+
+# Loggers that emit high-volume DEBUG during the 100 Hz HAL + inference loop (pytest may use log_cli DEBUG).
+_SPEED_SENSITIVE_LOGGERS = (
+    "hal.server.isaac.hal_server",
+    "hal.server.isaac.isaacsim_mcusdk",
+    "hal.server.server",
+    "hal.client.client",
+    "compute.parkour",
+)
+
+
+@contextmanager
+def _strict_timing_log_isolation(
+    names: tuple[str, ...] = _SPEED_SENSITIVE_LOGGERS,
+    level: int = logging.INFO,
+):
+    """Keep timing assertions strict: pytest ``log_cli_level=DEBUG`` adds root handlers at DEBUG.
+
+    Without clamping **root** and **handlers**, DEBUG records from any library still format and emit
+    on every ~10 ms loop and cause false stall / rate failures.
+    """
+    root = logging.getLogger()
+    root_level_prev = root.level
+    handler_prev = [(h, h.level) for h in root.handlers]
+    loggers = [logging.getLogger(n) for n in names]
+    logger_prev = [lg.level for lg in loggers]
+    try:
+        root.setLevel(level)
+        for h in root.handlers:
+            h.setLevel(level)
+        for lg in loggers:
+            lg.setLevel(level)
+        yield
+    finally:
+        for lg, prv in zip(loggers, logger_prev):
+            lg.setLevel(prv)
+        for h, prv in handler_prev:
+            h.setLevel(prv)
+        root.setLevel(root_level_prev)
 
 
 @pytest.fixture
@@ -787,16 +827,19 @@ def test_isaacsim_hal_server_full_parkour_eval_simulation(mock_isaac_env, hal_se
     
     Matches main.py sequence: uses ParkourInferenceClient in a thread.
     """
+    with _strict_timing_log_isolation():
+        _run_full_parkour_eval_body(mock_isaac_env, hal_server_config, hal_client_config)
+
+
+def _run_full_parkour_eval_body(mock_isaac_env, hal_server_config, hal_client_config) -> None:
     from compute.parkour.inference_client import ParkourInferenceClient
     from compute.parkour.policy_interface import ModelWeights
     from hal.client.config import HalClientConfig
-    import threading
-    
+
     # Use shared context for inproc connections
     # Setup HAL server with shared context
     hal_server = IsaacSimHalServer(hal_server_config, KRABBY_QUAD_DEFINITION, env=mock_isaac_env, observation_dimensions=_TEST_OBS_DIMS)
     hal_server.initialize()
-    hal_server.set_debug(True)
 
     checkpoint_path = "/workspace/test_assets/checkpoints/unitree_go2_parkour_teacher.pt"
     # Use Unitree Go2 robot so observation dimensions match the checkpoint (num_prop=53, obs_dim=753).

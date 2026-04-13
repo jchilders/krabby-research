@@ -76,25 +76,28 @@ class IsaacSimMCUSDK:
         # (e.g. DelayedJointPositionAction) converts these values to position targets.
         # We return the (thresholded) command dict for the caller to convert to an array/tensor.
 
-        # Log command in Isaac's preferred joint format
-        # Format: joint positions as comma-separated name=value pairs.
-        # Order follows robot definition (e.g. hexapod: FL, FR, ML, MR, RL, RR, 3 DOF per leg).
-        joint_values_str = ", ".join(
-            f"{name}={thresholded_cmd[name]:.4f}" for name in order if name in thresholded_cmd
-        )
-        logger.debug(
-            f"IsaacSimMCUSDK: Applying joint command "
-            f"(timestamp_ns={command.timestamp_ns}, observation_timestamp_ns={command.observation_timestamp_ns}): "
-            f"{joint_values_str}"
-        )
-
-        # Log summary statistics
-        vals = [thresholded_cmd[name] for name in order if name in thresholded_cmd]
-        if vals:
-            stdev = statistics.stdev(vals) if len(vals) > 1 else 0.0
-            logger.debug(
-                f"IsaacSimMCUSDK: Joint command stats - "
-                f"min={min(vals):.4f}, max={max(vals):.4f}, mean={statistics.mean(vals):.4f}, std={stdev:.4f}"
+        # Hot path: skip building debug strings unless this logger is actually at DEBUG.
+        if logger.isEnabledFor(logging.DEBUG):
+            joint_values_str = ", ".join(
+                f"{name}={thresholded_cmd[name]:.4f}" for name in order if name in thresholded_cmd
             )
+            logger.debug(
+                "IsaacSimMCUSDK: Applying joint command "
+                "(timestamp_ns=%s, observation_timestamp_ns=%s): %s",
+                command.timestamp_ns,
+                command.observation_timestamp_ns,
+                joint_values_str,
+            )
+            vals = [thresholded_cmd[name] for name in order if name in thresholded_cmd]
+            if vals:
+                stdev = statistics.stdev(vals) if len(vals) > 1 else 0.0
+                logger.debug(
+                    "IsaacSimMCUSDK: Joint command stats - "
+                    "min=%.4f, max=%.4f, mean=%.4f, std=%.4f",
+                    min(vals),
+                    max(vals),
+                    statistics.mean(vals),
+                    stdev,
+                )
 
         return thresholded_cmd

@@ -181,6 +181,7 @@ The Dockerfile downloads the ZED SDK installer from Stereolabs, extracts it, and
 
 #### System Dependencies
 - Most dependencies included in Isaac Sim base image
+- **`images/isaacsim/Dockerfile`** installs a **full in-container Gst + GI stack** for HAL tests and tooling: **`gstreamer1.0-tools`**, **`gstreamer1.0-plugins-{base,good,bad,ugly}`** (e.g. **`videoconvert`**, **`x264enc`**, **`h264parse`**), **`gir1.2-gstreamer-1.0`**, **`gir1.2-gst-plugins-base-1.0`**, and dev packages (**`libgstreamer1.0-dev`**, **`libgstreamer-plugins-base1.0-dev`**, **`libgirepository1.0-dev`**, **`libglib2.0-dev`**, **`pkg-config`**, **`gobject-introspection`**, **`meson`**, **`ninja-build`**, **`libcairo2-dev`**) so **`pip install PyGObject`** into **`/workspace/testenv`** can compile against system typelibs and **`import gi.repository.Gst`** matches the distro GStreamer. **`pytest tests/unit/hal/test_gstreamer_runtime.py`** is expected to run in **`krabby-testing-x86`** / Isaac CI images built from this Dockerfile. The **locomotion** image carries runtime GStreamer plugins for ZED/Jetson paths but does not duplicate this full venv+GI build (see **`images/locomotion/Dockerfile`** comments).
 - Additional packages if needed:
   - `python3.10`
   - `python3-pip`

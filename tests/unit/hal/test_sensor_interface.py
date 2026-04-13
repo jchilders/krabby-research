@@ -34,8 +34,13 @@ def test_front_observation_camera_catalog_entry():
 def test_jetson_list_sensors_matches_catalog():
     iface = JetsonSensorInterface()
     sensors = iface.list_sensors()
-    assert len(sensors) == len(JETSON_SENSOR_CATALOG)
-    assert [s.id for s in sensors] == [e.id for e in JETSON_SENSOR_CATALOG]
+    n_depth = sum(1 for e in JETSON_SENSOR_CATALOG if e.gst_depth_quant_range_m is not None)
+    assert len(sensors) == len(JETSON_SENSOR_CATALOG) + n_depth
+    ids = [s.id for s in sensors]
+    for e in JETSON_SENSOR_CATALOG:
+        assert e.id in ids
+        if e.gst_depth_quant_range_m is not None:
+            assert f"{e.id}_gray16_depth" in ids
 
 
 def test_jetson_get_gstreamer_handle_is_pure_transform():
@@ -112,6 +117,32 @@ def test_jetson_build_pipeline_raw_shape():
     assert pipe.rstrip().endswith("fakesink")
 
 
+def test_jetson_depth_gray16_handle_and_sw_pipeline_shape():
+    iface = JetsonSensorInterface(use_nvenc=False)
+    depth = next(s for s in iface.list_sensors() if s.id == "front_rgbd_gray16_depth")
+    handle = iface.get_gstreamer_handle(depth)
+    assert handle.appsrc_pixel_format == "GRAY16_LE"
+    assert handle.depth_range_m == (0.2, 25.0)
+
+    pipe = iface.build_pipeline(handle, encoding="h264", output_element="fakesink")
+    assert "appsrc name=src" in pipe
+    assert "video/x-raw,format=GRAY16_LE,width=640,height=480,framerate=30/1" in pipe
+    assert "videoconvert" in pipe
+    assert "x264enc" in pipe
+    assert pipe.rstrip().endswith("fakesink")
+
+
+def test_jetson_depth_gray16_nvenc_pipeline_shape():
+    iface = JetsonSensorInterface(use_nvenc=True)
+    depth = next(s for s in iface.list_sensors() if s.id == "side_rgbd_gray16_depth")
+    handle = iface.get_gstreamer_handle(depth)
+    pipe = iface.build_pipeline(handle, encoding="h264", output_element="fakesink")
+    assert "format=GRAY16_LE" in pipe
+    assert "videoconvert" in pipe
+    assert "nvvidconv" in pipe
+    assert "nvv4l2h264enc" in pipe
+
+
 def test_isaac_list_and_handle_and_pipeline_shape():
     iface = IsaacSensorInterface(configured_sensors=ISAAC_PIPELINE_EXAMPLE_SENSORS)
     sensors = iface.list_sensors()
@@ -137,6 +168,17 @@ def test_isaac_radar_handle_uses_gray8_in_pipeline():
 
     pipe = iface.build_pipeline(handle, encoding="h264", output_element="fakesink")
     assert "format=GRAY8" in pipe
+
+
+def test_isaac_depth_gray16_handle_and_pipeline_shape():
+    iface = IsaacSensorInterface(configured_sensors=ISAAC_PIPELINE_EXAMPLE_SENSORS)
+    depth = next(s for s in iface.list_sensors() if s.id == "front_rgbd_gray16_depth")
+    handle = iface.get_gstreamer_handle(depth)
+    assert handle.appsrc_pixel_format == "GRAY16_LE"
+    assert handle.depth_range_m == (0.2, 25.0)
+    pipe = iface.build_pipeline(handle, encoding="h264", output_element="fakesink")
+    assert "format=GRAY16_LE" in pipe
+    assert "x264enc" in pipe
 
 
 def test_gstreamer_handle_manual_build_pipeline_jetson():

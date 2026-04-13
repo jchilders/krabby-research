@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from hal.server.gstreamer_runtime import build_software_appsrc_encode_pipeline_string
 from hal.server.sensor_interface import (
     GStreamerHandle,
     SensorInfo,
@@ -36,6 +37,20 @@ ISAAC_PIPELINE_EXAMPLE_SENSORS: tuple[SensorInfo, ...] = (
         pose=SensorPose(0.33, 0.0, 0.08, 0.0, 0.0, 0.0, 1.0),
         camera_driver="isaac_scene",
         extra={"isaac_sensor_rgb": "front_rgb", "isaac_sensor_depth": "front_camera"},
+    ),
+    SensorInfo(
+        id="front_rgbd_gray16_depth",
+        type="depth",
+        modality="depth",
+        resolution=(640, 480),
+        fps=30,
+        pose=SensorPose(0.33, 0.0, 0.08, 0.0, 0.0, 0.0, 1.0),
+        camera_driver="isaac_scene",
+        extra={
+            "isaac_sensor_depth": "front_camera",
+            "depth_range_m": (0.2, 25.0),
+            "gst_depth_source_catalog_id": "front_rgbd",
+        },
     ),
     SensorInfo(
         id="side_left_rgb",
@@ -129,7 +144,21 @@ def _sensor_infos_from_scene_cameras(scene_sensors: dict) -> list[SensorInfo]:
             pose=pose,
             camera_driver="isaac_scene",
             extra={"isaac_sensor_rgb": "front_rgb", "isaac_sensor_depth": "front_camera"},
-        )
+        ),
+        SensorInfo(
+            id="front_rgbd_gray16_depth",
+            type="depth",
+            modality="depth",
+            resolution=res,
+            fps=fps,
+            pose=pose,
+            camera_driver="isaac_scene",
+            extra={
+                "isaac_sensor_depth": "front_camera",
+                "depth_range_m": (0.2, 25.0),
+                "gst_depth_source_catalog_id": "front_rgbd",
+            },
+        ),
     ]
 
 
@@ -142,19 +171,14 @@ def _appsrc_sw_encode_pipeline(
     output_element: str = "fakesink",
 ) -> str:
     """Build appsrc -> videoconvert -> software encode -> sink (for Isaac synthetic)."""
-    caps = (
-        f"appsrc name=src is-live=true format=time ! "
-        f"video/x-raw,format={format_caps},width={width},height={height},framerate={fps}/1"
+    return build_software_appsrc_encode_pipeline_string(
+        width,
+        height,
+        fps,
+        format_caps=format_caps,
+        encoding=encoding,
+        output_element=output_element,
     )
-    if encoding == "raw":
-        return f"{caps} ! videoconvert ! {output_element}"
-    if encoding == "h264":
-        enc = "x264enc tune=zerolatency ! h264parse"
-    elif encoding == "h265":
-        enc = "x265enc ! h265parse"
-    else:
-        enc = "x264enc tune=zerolatency ! h264parse"
-    return f"{caps} ! videoconvert ! {enc} ! {output_element}"
 
 
 class IsaacSensorInterface(SensorInterface):
@@ -176,6 +200,23 @@ class IsaacSensorInterface(SensorInterface):
         return list(self._sensors)
 
     def get_gstreamer_handle(self, sensor: SensorInfo) -> GStreamerHandle:
+        if sensor.modality == "depth" or sensor.type == "depth":
+            dr = (sensor.extra or {}).get("depth_range_m")
+            if dr is None or len(dr) != 2:
+                raise ValueError(
+                    "Depth Gst sensors require SensorInfo.extra['depth_range_m'] = (d_min, d_max) in meters"
+                )
+            return GStreamerHandle(
+                sensor_id=sensor.id,
+                sensor_type=sensor.type,
+                modality=sensor.modality,
+                resolution=sensor.resolution,
+                fps=sensor.fps,
+                camera_driver=sensor.camera_driver,
+                appsrc_pixel_format="GRAY16_LE",
+                depth_range_m=(float(dr[0]), float(dr[1])),
+                backend_data={"extra": sensor.extra} if sensor.extra else None,
+            )
         fmt = "GRAY8" if sensor.type == "radar" else "RGB"
         return GStreamerHandle(
             sensor_id=sensor.id,

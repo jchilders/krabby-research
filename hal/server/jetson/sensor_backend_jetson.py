@@ -29,7 +29,7 @@ class JetsonSensorCatalogEntry:
     resolution: tuple[int, int]
     fps: int
     pose: SensorPose
-    appsrc_pixel_format: str  # caps: RGB or GRAY8 for appsrc
+    appsrc_pixel_format: str  # caps: RGB or GRAY8 for appsrc (rgb/radar rows)
     is_primary: bool = False  # exactly one row: HAL front observation camera (resolution/fps defaults)
     # Required on ``is_primary`` rgbd rows: key in ``front_camera_factory.FRONT_RGB_DEPTH_CAMERA_FACTORIES``
     # (e.g. ``zed``, ``maixsense_a075v``). Other rows: logical capture id for listing/pipelines.
@@ -47,6 +47,9 @@ class JetsonSensorCatalogEntry:
     # env var name (if omitted, port 80 is used without reading an env var).
     maixsense_host_env: str | None = None
     maixsense_port_env: str | None = None
+    # When set, ``JetsonSensorInterface.list_sensors()`` also lists ``{id}_gray16_depth`` (Gst GRAY16_LE).
+    gst_depth_quant_range_m: tuple[float, float] | None = None
+
 
 # ``JetsonHalServer`` uses ``front_observation_camera_catalog_entry()`` for resolution/fps and driver.
 # Swap primary ``camera_driver`` between ``zed`` and ``maixsense_a075v`` for interchangeable front RGB-D.
@@ -63,6 +66,7 @@ JETSON_SENSOR_CATALOG: tuple[JetsonSensorCatalogEntry, ...] = (
         appsrc_pixel_format="RGB",
         is_primary=True,
         camera_driver="zed",
+        gst_depth_quant_range_m=(0.2, 25.0),
     ),
     # Second RGB-D (policy side slot when ``policy_scan_slot="side"``): driver is per-row
     # (default ``zed`` here). Non-primary ZED rows should set ``zed_usb_serial_env`` to an
@@ -88,6 +92,7 @@ JETSON_SENSOR_CATALOG: tuple[JetsonSensorCatalogEntry, ...] = (
         hal_open_rgbd=True,
         policy_scan_slot="side",
         zed_usb_serial_env="KRABBY_SIDE_ZED_USB_SERIAL",
+        gst_depth_quant_range_m=(0.15, 12.0),
     ),
 )
 
@@ -183,9 +188,11 @@ def _nvenc_pipeline(
     output_element: str,
     encoding: str = "h264",
     bitrate: int = 4_000_000,
+    *,
+    raw_input_gray16_le: bool = False,
 ) -> str:
-    """Build Jetson nvenc pipeline: caps -> nvvidconv -> nvv4l2h264enc -> parse -> sink."""
-    # nvvidconv expects raw input; output NV12 in NVMM for encoder
+    """Build Jetson nvenc pipeline: caps -> [videoconvert ->] nvvidconv -> nvv4l2h264enc -> parse -> sink."""
+    # nvvidconv expects raw input; output NV12 in NVMM for encoder. GRAY16_LE needs CPU videoconvert first.
     if encoding == "h264":
         enc = f"nvv4l2h264enc bitrate={bitrate} ! h264parse"
     elif encoding == "h265":
@@ -195,9 +202,14 @@ def _nvenc_pipeline(
     else:
         enc = f"nvv4l2h264enc bitrate={bitrate} ! h264parse"
 
+    to_nvmm = (
+        f"{caps} ! videoconvert ! nvvidconv"
+        if raw_input_gray16_le
+        else f"{caps} ! nvvidconv"
+    )
     if encoding == "raw":
         return f"{caps} ! {output_element}"
-    return f"{caps} ! nvvidconv ! video/x-raw(memory:NVMM),format=NV12 ! {enc} ! {output_element}"
+    return f"{to_nvmm} ! video/x-raw(memory:NVMM),format=NV12 ! {enc} ! {output_element}"
 
 
 def _sw_encode_pipeline(
@@ -215,8 +227,43 @@ def _sw_encode_pipeline(
     return f"{caps} ! videoconvert ! {enc} ! {output_element}"
 
 
+def _jetson_sensor_infos_from_catalog() -> list[SensorInfo]:
+    """Catalog rows plus optional ``{id}_gray16_depth`` Gst depth streams."""
+    sensors: list[SensorInfo] = []
+    for entry in JETSON_SENSOR_CATALOG:
+        sensors.append(
+            SensorInfo(
+                id=entry.id,
+                type=entry.type,
+                modality=entry.modality,
+                resolution=entry.resolution,
+                fps=entry.fps,
+                pose=entry.pose,
+                camera_driver=entry.camera_driver,
+            )
+        )
+        if entry.gst_depth_quant_range_m is not None:
+            lo, hi = entry.gst_depth_quant_range_m
+            sensors.append(
+                SensorInfo(
+                    id=f"{entry.id}_gray16_depth",
+                    type="depth",
+                    modality="depth",
+                    resolution=entry.resolution,
+                    fps=entry.fps,
+                    pose=entry.pose,
+                    camera_driver=entry.camera_driver,
+                    extra={
+                        "depth_range_m": (float(lo), float(hi)),
+                        "gst_depth_source_catalog_id": entry.id,
+                    },
+                )
+            )
+    return sensors
+
+
 class JetsonSensorInterface(SensorInterface):
-    """Jetson sensor interface: one ``SensorInfo`` per ``JETSON_SENSOR_CATALOG`` row.
+    """Jetson sensor interface: catalog rows plus optional per-row GRAY16 depth Gst entries.
 
     ``build_pipeline(..., output_element=None)`` defaults to a **decode + display** tail
     (``nvv4l2decoder ! nv3dsink`` with nvenc, or software decode + ``autovideosink``).
@@ -226,24 +273,30 @@ class JetsonSensorInterface(SensorInterface):
 
     def __init__(self, *, use_nvenc: bool = True) -> None:
         self.use_nvenc = use_nvenc
-        self._sensors: list[SensorInfo] = []
-        for entry in JETSON_SENSOR_CATALOG:
-            self._sensors.append(
-                SensorInfo(
-                    id=entry.id,
-                    type=entry.type,
-                    modality=entry.modality,
-                    resolution=entry.resolution,
-                    fps=entry.fps,
-                    pose=entry.pose,
-                    camera_driver=entry.camera_driver,
-                )
-            )
+        self._sensors = _jetson_sensor_infos_from_catalog()
 
     def list_sensors(self) -> list[SensorInfo]:
         return list(self._sensors)
 
     def get_gstreamer_handle(self, sensor: SensorInfo) -> GStreamerHandle:
+        bd: dict[str, Any] = {"use_nvenc": self.use_nvenc}
+        if sensor.modality == "depth" or sensor.type == "depth":
+            dr = (sensor.extra or {}).get("depth_range_m")
+            if dr is None or len(dr) != 2:
+                raise ValueError(
+                    "Depth Gst sensors require SensorInfo.extra['depth_range_m'] = (d_min, d_max) in meters"
+                )
+            return GStreamerHandle(
+                sensor_id=sensor.id,
+                sensor_type=sensor.type,
+                modality=sensor.modality,
+                resolution=sensor.resolution,
+                fps=sensor.fps,
+                camera_driver=sensor.camera_driver,
+                appsrc_pixel_format="GRAY16_LE",
+                depth_range_m=(float(dr[0]), float(dr[1])),
+                backend_data=bd,
+            )
         fmt = _APPSRC_PIXEL_FORMAT_BY_SENSOR_ID.get(sensor.id, "RGB")
         return GStreamerHandle(
             sensor_id=sensor.id,
@@ -253,7 +306,7 @@ class JetsonSensorInterface(SensorInterface):
             fps=sensor.fps,
             camera_driver=sensor.camera_driver,
             appsrc_pixel_format=fmt,
-            backend_data={"use_nvenc": self.use_nvenc},
+            backend_data=bd,
         )
 
     def build_pipeline(
@@ -272,6 +325,32 @@ class JetsonSensorInterface(SensorInterface):
         w, h = handle.resolution
         fps = handle.fps
         bitrate = kwargs.get("bitrate", 4_000_000)
+
+        if handle.appsrc_pixel_format == "GRAY16_LE":
+            if handle.depth_range_m is None:
+                raise ValueError(
+                    "GRAY16_LE depth pipelines require GStreamerHandle.depth_range_m = (d_min, d_max)"
+                )
+            caps = (
+                f"appsrc name=src is-live=true format=time ! "
+                f"video/x-raw,format=GRAY16_LE,width={w},height={h},framerate={fps}/1"
+            )
+            if encoding == "raw":
+                sink = output_element if output_element is not None else "autovideosink"
+                return f"{caps} ! videoconvert ! {sink}"
+            sink = output_element if output_element is not None else _jetson_default_sink_tail(encoding, use_nvenc)
+            if use_nvenc:
+                return _nvenc_pipeline(
+                    caps,
+                    w,
+                    h,
+                    fps,
+                    sink,
+                    encoding=encoding,
+                    bitrate=bitrate,
+                    raw_input_gray16_le=True,
+                )
+            return _sw_encode_pipeline(caps, sink, encoding=encoding)
 
         fmt = handle.appsrc_pixel_format
         caps = (

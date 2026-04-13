@@ -10,6 +10,11 @@ FROM nvcr.io/nvidia/pytorch:25.10-py3
 WORKDIR /workspace
 
 # Install system dependencies
+#
+# GStreamer + GObject introspection (below): same purpose as images/isaacsim/Dockerfile—pip PyGObject
+# in the test venv plus system typelibs and plugins so `make test` can run tests/unit/hal/test_gstreamer_runtime.py
+# (software x264 + h264parse path). Not duplicated on images/locomotion/Dockerfile: that Jetson image has
+# no PyGObject in requirements and relies on JetPack/L4T + ZED for on-robot pipelines, not this CI stack.
 RUN apt-get update && apt-get install -y \
     python3.12 \
     python3.12-dev \
@@ -17,6 +22,20 @@ RUN apt-get update && apt-get install -y \
     git \
     build-essential \
     libzmq3-dev \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gir1.2-gstreamer-1.0 \
+    gir1.2-gst-plugins-base-1.0 \
+    libcairo2-dev \
+    libgirepository1.0-dev \
+    libglib2.0-dev \
+    libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev \
+    pkg-config \
+    gobject-introspection \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file first (for better Docker layer caching)
