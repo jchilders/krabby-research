@@ -33,27 +33,27 @@ static const char* roleName(BoardRole r)
 }
 
 // --- All 18 actuators (names fixed; each board uses the same physical pins for its 6) ---
-// Leader/Default Board
-LinearActuator flhy("FLHY", 2, 3, 22, 23, A6, A0);
-LinearActuator flhl("FLHL", 4, 5, 24, 25, A7, A1);
-LinearActuator flkl("FLKL", 6, 7, 26, 27, A8, A2);
-LinearActuator frhy("FRHY", 8, 9, 28, 29, A9, A3);
-LinearActuator frhl("FRHL", 10, 11, 30, 31, A10, A4);
-LinearActuator frkl("FRKL", 12, 13, 32, 33, A11, A5);
+// Leader/Default Board — one EN per actuator (L leg22/23/24, R leg 25/26/27); PWM + analog unchanged
+LinearActuator flhy("FLHY", 2, 3, 22, A6, A0);
+LinearActuator flhl("FLHL", 4, 5, 23, A7, A1);
+LinearActuator flkl("FLKL", 6, 7, 24, A8, A2);
+LinearActuator frhy("FRHY", 8, 9, 28, A9, A3);
+LinearActuator frhl("FRHL", 10, 11, 26, A10, A4);
+LinearActuator frkl("FRKL", 12, 13, 27, A11, A5);
 // Left Follower Board
-LinearActuator rlhy("RLHY", 2, 3, 22, 23, A6, A0);
-LinearActuator rlhl("RLHL", 4, 5, 24, 25, A7, A1);
-LinearActuator rlkl("RLKL", 6, 7, 26, 27, A8, A2);
-LinearActuator mlhy("MLHY", 8, 9, 28, 29, A9, A3);
-LinearActuator mlhl("MLHL", 10, 11, 30, 31, A10, A4);
-LinearActuator mlkl("MLKL", 12, 13, 32, 33, A11, A5);
+LinearActuator rlhy("RLHY", 2, 3, 22, A6, A0);
+LinearActuator rlhl("RLHL", 4, 5, 23, A7, A1);
+LinearActuator rlkl("RLKL", 6, 7, 24, A8, A2);
+LinearActuator mlhy("MLHY", 8, 9, 28, A9, A3);
+LinearActuator mlhl("MLHL", 10, 11, 26, A10, A4);
+LinearActuator mlkl("MLKL", 12, 13, 27, A11, A5);
 // Right Follower Board
-LinearActuator rrhy("RRHY", 2, 3, 22, 23, A6, A0);
-LinearActuator rrhl("RRHL", 4, 5, 24, 25, A7, A1);
-LinearActuator rrkl("RRKL", 6, 7, 26, 27, A8, A2);
-LinearActuator mrhy("MRHY", 8, 9, 28, 29, A9, A3);
-LinearActuator mrhl("MRHL", 10, 11, 30, 31, A10, A4);
-LinearActuator mrkl("MRKL", 12, 13, 32, 33, A11, A5);
+LinearActuator rrhy("RRHY", 2, 3, 22, A6, A0);
+LinearActuator rrhl("RRHL", 4, 5, 23, A7, A1);
+LinearActuator rrkl("RRKL", 6, 7, 24, A8, A2);
+LinearActuator mrhy("MRHY", 8, 9, 28, A9, A3);
+LinearActuator mrhl("MRHL", 10, 11, 26, A10, A4);
+LinearActuator mrkl("MRKL", 12, 13, 27, A11, A5);
 
 // Role → which 6 actuators this board drives (no mutation)
 static const size_t ACT_COUNT = 6;

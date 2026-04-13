@@ -26,8 +26,7 @@ public:
     // PIN ASSIGNMENTS
     const int pinPwmR; // Sending on PWM_R defines desired motor voltage in the right/extend direction (note: Only send one of PWM_R or PWM_L at a time to avoid motor chatter/damage)
     const int pinPwmL; // Sending on PWM_L defines desired motor voltage in the left/retract direction (note: Only send one of PWM_R or PWM_L at a time to avoid motor chatter/damage)
-    const int pinEnR;  // Sending HIGH to EN_R enables 'right' half of H-Bridge (note: both EN_R and EN_L should be HIGH to enable motor drive)
-    const int pinEnL;  // Sending HIGH to EN_L enables 'left' half of H-Bridge (note: both EN_R and EN_L should be HIGH to enable motor drive)
+    const int pinEn;   // Single enable (HIGH while driving)
     const int pinIS;   // Analog current sense pin, reads motor current from H-Bridge as a value between 0 (0 Amp) and 1023 (Max motor Amps, e.g. ~8A @ 12V for common linear actuators)
     const int pinPot;  // Analog potentiometer pin, reads actuator position as a value between 0 (fully retracted) and 1023 (fully extended)
 
@@ -46,8 +45,8 @@ public:
 
 
     // TODO: This should accept a name and a 'SlotConfig' struct for pin assignment, so we can reuse the pin config w/ different actuator names (on different leader/follower boards)
-    LinearActuator(const char *n, int pR, int pL, int eR, int eL, int isPin, int pot)
-        : name(n), pinPwmR(pR), pinPwmL(pL), pinEnR(eR), pinEnL(eL), pinIS(isPin), pinPot(pot) {}
+    LinearActuator(const char *n, int pR, int pL, int en, int isPin, int pot)
+        : name(n), pinPwmR(pR), pinPwmL(pL), pinEn(en), pinIS(isPin), pinPot(pot) {}
     void setControlConfig(const ControlConfig &cfg) { controlConfig = cfg; }
 
     void init()
@@ -55,8 +54,7 @@ public:
         // Configure pin modes
         pinMode(pinPwmR, OUTPUT);
         pinMode(pinPwmL, OUTPUT);
-        pinMode(pinEnR, OUTPUT);
-        pinMode(pinEnL, OUTPUT);
+        pinMode(pinEn, OUTPUT);
         pinMode(pinIS, INPUT);
         pinMode(pinPot, INPUT);
 
@@ -65,8 +63,7 @@ public:
         // via driveActuator() (in update() / manualDrive()).
         analogWrite(pinPwmR, 0);
         analogWrite(pinPwmL, 0);
-        digitalWrite(pinEnR, LOW);
-        digitalWrite(pinEnL, LOW);
+        digitalWrite(pinEn, LOW);
 
         // Initialize averaging
         avgPot = analogRead(pinPot);
@@ -204,9 +201,10 @@ public:
         out.print(' ');
         out.print((int)avgIS);
         out.print(' ');
-        out.print(digitalRead(pinEnL));
+        int en = digitalRead(pinEn);
+        out.print(en);
         out.print(' ');
-        out.print(digitalRead(pinEnR));
+        out.print(en);
         out.print(' ');
         out.print(currentPwm < 0 ? abs(currentPwm) : 0);
         out.print(' ');
@@ -222,22 +220,19 @@ private:
     {
         if (abs(pwm) < pwmDeadband)
         {
-            digitalWrite(pinEnR, LOW);
-            digitalWrite(pinEnL, LOW);
+            digitalWrite(pinEn, LOW);
             analogWrite(pinPwmR, 0);
             analogWrite(pinPwmL, 0);
         }
         else if (pwm < 0)
         {
-            digitalWrite(pinEnR, HIGH);
-            digitalWrite(pinEnL, HIGH);
+            digitalWrite(pinEn, HIGH);
             analogWrite(pinPwmR, 0);
             analogWrite(pinPwmL, abs(pwm));
         }
         else
         {
-            digitalWrite(pinEnR, HIGH);
-            digitalWrite(pinEnL, HIGH);
+            digitalWrite(pinEn, HIGH);
             analogWrite(pinPwmR, pwm);
             analogWrite(pinPwmL, 0);
         }
