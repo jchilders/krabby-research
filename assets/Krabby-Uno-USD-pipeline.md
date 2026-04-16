@@ -46,12 +46,11 @@ After loading the exported USD in **Isaac Sim**, the following was applied so th
 8. Assign **mass** to all leg parts and to the **top** and **bottom** plates (avoid **duplicate** mass on decorative or child meshes that share the same physical body).
 9. Set **joint limits** and **drive** parameters (stiffness, damping, targets) for stable motion and hardware-consistent ranges — hip **angular** and hip/knee **prismatic** drives use **moderate stiffness with higher damping** in-repo to avoid idle oscillation under gravity/contacts; knee **linear** drives use **target position 0** where appropriate.
 
-**Actuation model (3 motors per leg, in-repo):** only **`HipRevoluteJoint`** has an **angular** drive; **hip–femur** and **femur–tibia** **prismatic** joints have **linear** drives. All other leg revolutes are **passive** with **±0.001°** angular limits (no `PhysicsDriveAPI:angular`). See `assets/scripts/README.md` for the **Flat18** command layout. These details apply to the checked-in **`assets/crab_hex.usd`**.
+**Actuation model (3 motors per leg, in-repo):** only **`HipRevoluteJoint`** has an **angular** drive; **hip–femur** and **femur–tibia** **prismatic** joints have **linear** drives. All other leg revolutes are **passive** with **±0.001°** angular limits (no `PhysicsDriveAPI:angular`). Per leg, command **hip mount yaw** (degrees), **hip–femur prismatic** (meters), **femur–tibia prismatic** (meters) on the driven joint prims under `/World/KrabbyUno/Root_{leg}/`. These details apply to the checked-in **`assets/crab_hex.usd`**.
 
 ### In-repo USD edits (after Isaac Sim)
 
 The checked-in **`crab_hex.usd`** includes **hand-tuned physics** not implied by “export once from Blender”: joint drive gains, plate-weld frame cleanup, **passive** (limit-only) revolutes on the parallel leg chain, mirrored **MR/ML** leg graphs to match the other four legs, and mass fixes. When regenerating from Blender/Isaac, re-apply or merge these layers rather than expecting a fresh export to match bit-for-bit.
-
 
 ## References
 
