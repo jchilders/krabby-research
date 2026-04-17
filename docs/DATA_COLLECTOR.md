@@ -8,27 +8,52 @@ That is done with a **second `HalClient`** in the **same process** as the primar
 
 1. Build **locomotion** (`images/locomotion/Dockerfile`) or **Isaac Sim** (`images/isaacsim/Dockerfile`). Both images include `data_collection/` and pin **`rosbags`** (and **`PyYAML`** for optional `load_config` / tests) in their `requirements.txt`.
 2. Adjust recording defaults in **`data_collection/collector_settings.py`** (same pattern as camera rows in **`hal/server/jetson/sensor_backend_jetson.py`**).
-3. **Optional:** pass **`--data-collector`** to enable recording (omit it for the usual run with no bags). **`--data-collector-output-dir`** is also optional; if omitted, bags go to **`DEFAULT_OUTPUT_DIR`** in **`collector_settings.py`**.
+3. Pass **`--data-collector-output-dir <container_path>`** to enable recording.
+4. Mount a host directory to that same container path so bags persist after container exit.
 
-**Jetson (locomotion image):**
+### Host mount requirement
 
-```bash
-python3 -m hal.server.jetson.main \
-  --checkpoint /path/to.ckpt \
-  --data-collector
-# Optional: --data-collector-output-dir /data/krabby_bags
-```
+Recordings are written to the container filesystem unless you mount a host path. Use a bind mount so rosbags persist after container exit.
 
-**Isaac Sim image** (`krabby-isaacsim`): pass the same optional flags after the image name (wrapper forwards to `hal.server.isaac.main`):
+Create a host directory once:
 
 ```bash
-docker run --rm -e ACCEPT_EULA=Y ... krabby-isaacsim:latest \
-  --task 'Your-Task-v0' --checkpoint /workspace/test_assets/checkpoints/your.ckpt \
-  --data-collector
-# Optional: --data-collector-output-dir /data/krabby_bags
+mkdir -p /path/to/krabby_bags
 ```
 
-Mount a host directory when you rely on **`DEFAULT_OUTPUT_DIR`** or pass **`--data-collector-output-dir`**.
+### Jetson (locomotion image)
+
+Collector output path in container (`/workspace/bags`):
+
+```bash
+docker run --rm --runtime=nvidia \
+  -v /path/to/checkpoints:/workspace/checkpoints \
+  -v /path/to/krabby_bags:/workspace/bags \
+  -v /dev:/dev \
+  --privileged \
+  krabby-locomotion:latest \
+  --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
+  --data-collector-output-dir /workspace/bags
+```
+
+### Isaac Sim image (`krabby-isaacsim`)
+
+Collector output path in container (`/workspace/bags`):
+
+```bash
+docker run --rm --gpus all \
+  -e ACCEPT_EULA=Y \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v /path/to/checkpoints:/workspace/checkpoints \
+  -v /path/to/krabby_bags:/workspace/bags \
+  krabby-isaacsim:latest \
+  --task 'Your-Task-v0' \
+  --checkpoint /workspace/checkpoints/your.ckpt \
+  --data-collector-output-dir /workspace/bags
+```
+
+If you launch from an interactive shell inside a running container (instead of `docker run`), pass `--data-collector-output-dir`; the chosen output path must be on a mounted volume if you want host persistence.
 
 ## Configuration (Python)
 
@@ -66,7 +91,7 @@ Recording parameters live in **`data_collection/collector_settings.py`**. The en
 
 ## Architecture
 
-The collector is not a separate service. When **`--data-collector`** is set, the HAL server entrypoint (`hal.server.jetson.main` or `hal.server.isaac.main`) constructs a **second `HalClient`** in the **same process** as the policy client, sharing the **`zmq.Context`** and using the **same** observation and command endpoint strings as the primary `HalClientConfig`. Both subscribers receive the same published `HardwareObservations`; the collector only serializes and writes them. That keeps recordings aligned with what the stack already exposes, avoids an extra HAL bridge or network hop, and leaves HAL’s contract unchanged—recording is an optional side path in the existing process.
+The collector is not a separate service. When **`--data-collector-output-dir`** is set, the HAL server entrypoint (`hal.server.jetson.main` or `hal.server.isaac.main`) constructs a **second `HalClient`** in the **same process** as the policy client, sharing the **`zmq.Context`** and using the **same** observation and command endpoint strings as the primary `HalClientConfig`. Both subscribers receive the same published `HardwareObservations`; the collector only serializes and writes them. That keeps recordings aligned with what the stack already exposes, avoids an extra HAL bridge or network hop, and leaves HAL’s contract unchanged—recording is an optional side path in the existing process.
 
 Serialization and bags use **[rosbags](https://pypi.org/project/rosbags/)** (rosbag2 layout, no full ROS 2 distro required). If `rosbags` cannot be imported, the writer is skipped and the rest of the server still runs.
 

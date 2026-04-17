@@ -264,6 +264,27 @@ The Docker image must be available on the Jetson device. Pull it from your conta
 
 **Important**: Checkpoint files are not included in the Docker image. You must mount your checkpoint directory as a volume using `-v /path/to/checkpoints:/workspace/checkpoints`. All examples below assume checkpoints are mounted at `/workspace/checkpoints` inside the container.
 
+**Optional: Enable data collection with host persistence**
+
+Create the host folder first:
+
+```bash
+mkdir -p /path/to/krabby_bags
+```
+
+Set `--data-collector-output-dir` to enable recording. The mount target must match the same container path:
+
+```bash
+docker run --rm --runtime=nvidia \
+    -v /path/to/checkpoints:/workspace/checkpoints \
+    -v /path/to/krabby_bags:/workspace/bags \
+    -v /dev:/dev \
+    --privileged \
+    krabby-locomotion:latest \
+    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
+    --data-collector-output-dir /workspace/bags
+```
+
 ### Important: GPU Runtime Flag
 
 **On Jetson, use `--runtime=nvidia` instead of `--gpus all`:**
@@ -286,9 +307,7 @@ docker run --rm --runtime=nvidia \
     -v /path/to/checkpoints:/workspace/checkpoints \
     -v /dev:/dev \
     krabby-locomotion:latest \
-    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --inference_device cuda \
-    --control_rate 100.0
+    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
 ```
 
 **Note**: 
@@ -306,9 +325,7 @@ docker run --rm --runtime=nvidia \
     -v /dev:/dev \
     --privileged \
     krabby-locomotion:latest \
-    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --inference_device cuda \
-    --control_rate 100.0
+    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
 ```
 
 **Note**: On first use the ZED SDK downloads and optimizes NEURAL depth models, adding several minutes to startup. Pre-optimize using the section below to avoid this.
@@ -325,9 +342,7 @@ docker run --rm --runtime=nvidia --network host \
     -e KRABBY_JETSON_MAIXSENSE_FRONT_HOST=192.168.233.1 \
     -e KRABBY_JETSON_MAIXSENSE_SIDE_HOST=192.168.234.1 \
     krabby-locomotion:latest \
-    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --inference_device cuda \
-    --control_rate 100.0
+    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
 ```
 
 Add more **`-e …`** (and optional **`-e …_PORT=…`**) for every MaixSense row you open. Third-party USB–Ethernet links may use different subnets—set values accordingly.
@@ -355,8 +370,7 @@ Optimization is GPU-specific and must run on the target Jetson. Use a persistent
        -v /dev:/dev --privileged \
        -v ~/zed-resources:/usr/local/zed/resources \
        krabby-locomotion:latest \
-       --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-       --inference_device cuda --control_rate 100.0
+       --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
    ```
 
 ### In-Process Mode (Default - Recommended for Production)
@@ -368,9 +382,7 @@ docker run --rm --runtime=nvidia \
     -v /path/to/checkpoints:/workspace/checkpoints \
     -v /dev:/dev \
     krabby-locomotion:latest \
-    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --inference_device cuda \
-    --control_rate 100.0
+    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
 ```
 
 **Note**: In-process mode (`inproc://`) provides zero-copy communication and lowest latency. This is the recommended mode for production deployment.
@@ -388,7 +400,6 @@ docker run --rm --runtime=nvidia \
     --name hal-server \
     krabby-locomotion:latest \
     --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --inference_device cuda \
     --observation_bind tcp://*:6001 \
     --command_bind tcp://*:6002
 ```
@@ -401,8 +412,7 @@ docker run --rm --runtime=nvidia \
     krabby-locomotion:latest \
     --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
     --observation_endpoint tcp://hal-server:6001 \
-    --command_endpoint tcp://hal-server:6002 \
-    --inference_device cuda
+    --command_endpoint tcp://hal-server:6002
 ```
 
 **Note**: Network mode is useful for debugging and multi-container setups, but has higher latency than in-process mode. Both containers require checkpoint volume mounts.
@@ -469,17 +479,9 @@ For faster inference, export the model to TensorRT format. This requires first e
 
 **Note**: TensorRT optimization can significantly reduce inference latency on Jetson devices. The exact conversion process depends on your model architecture and TensorRT version. Refer to NVIDIA's TensorRT documentation for detailed conversion steps.
 
-### Control Rate Adjustment
+### Control Loop Rate
 
-Adjust control rate based on actual latency:
-
-```bash
-# If latency is consistently < 10ms, can run at 100 Hz
---control_rate 100.0
-
-# If latency is 10-15ms, reduce to 80 Hz
---control_rate 80.0
-```
+The HAL runtime currently uses a fixed in-code control loop rate of 100 Hz.
 
 ## Production Deployment Notes
 

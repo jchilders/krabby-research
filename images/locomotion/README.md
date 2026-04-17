@@ -23,14 +23,16 @@ docker build -t krabby-locomotion:latest .
 ```bash
 docker run --rm --gpus all \
     -v /path/to/checkpoints:/workspace/checkpoints \
+    # Optional data collection persistence:
+    # -v /path/to/krabby_bags:/workspace/bags \
     krabby-locomotion:latest \
     --checkpoint /workspace/checkpoints/checkpoint.pt \
     --action_dim 12 \
     --obs_dim <OBS_DIM> \
-    --control_rate 100.0 \
-    --device cuda \
     --observation_bind inproc://hal_observation \
-    --command_bind inproc://hal_commands
+    --command_bind inproc://hal_commands \
+    # Optional data collection flag (enables collector):
+    # --data-collector-output-dir /workspace/bags
 ```
 
 ## Configuration

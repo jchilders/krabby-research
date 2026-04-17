@@ -94,7 +94,7 @@ typing-extensions>=4.8.0
 # - compute/parkour/ (inference logic)
 # - locomotion/jetson/ (HAL server with real sensors)
 
-# HAL data collector (optional `--data-collector`; settings in data_collection/collector_settings.py)
+# HAL data collector (optional `--data-collector-output-dir <path>`; settings in data_collection/collector_settings.py)
 PyYAML>=6.0.0
 rosbags>=0.10.0
 ```
@@ -210,7 +210,7 @@ typing-extensions>=4.8.0
 # - compute/parkour/ (inference logic)
 # - hal/server/isaac/ (HAL server with simulation)
 
-# HAL data collector (optional `--data-collector`; rosbag2 mcap via rosbags)
+# HAL data collector (optional `--data-collector-output-dir <path>`; rosbag2 mcap via rosbags)
 PyYAML>=6.0.0
 rosbags>=0.10.0
 ```

@@ -28,6 +28,7 @@ from data_collection.collector import start_collector_thread
 from data_collection.collector_settings import build_data_collector_config
 
 logger = logging.getLogger(__name__)
+CONTROL_RATE_HZ = 100.0
 
 
 def _ensure_server_log_visible(debug: bool = False) -> None:
@@ -63,12 +64,6 @@ def main():
         type=str,
         default=None,
         help="Path to model checkpoint (required unless --joystick)",
-    )
-    parser.add_argument(
-        "--control_rate",
-        type=float,
-        default=100.0,
-        help="Control loop rate in Hz",
     )
     parser.add_argument(
         "--inference_device",
@@ -144,15 +139,13 @@ def main():
         help="Command endpoint (default: inproc or tcp://*:5556 if --joystick)",
     )
     parser.add_argument(
-        "--data-collector",
-        action="store_true",
-        help="Enable second HalClient + rosbag2 (mcap) recording (settings: data_collection/collector_settings.py)",
-    )
-    parser.add_argument(
         "--data-collector-output-dir",
         type=str,
         default=None,
-        help="Override bag output directory (default: DEFAULT_OUTPUT_DIR in collector_settings.py)",
+        help=(
+            "Enable second HalClient + rosbag2 (mcap) recording and write bags to this directory. "
+            "Mount this path to host storage for persistence."
+        ),
     )
 
     AppLauncher.add_app_launcher_args(parser)
@@ -351,7 +344,7 @@ def main():
             model_weights=model_weights,
             observation_dimensions=observation_dimensions,
             robot_definition=robot_definition,
-            control_rate=args.control_rate,
+            control_rate=CONTROL_RATE_HZ,
             device=args.inference_device,
             transport_context=transport_context,
         )
@@ -364,7 +357,7 @@ def main():
         parkour_client = None
         logger.info("Joystick mode: waiting for krabby-uno-sim on %s / %s", args.observation_bind, args.command_bind)
 
-    if args.data_collector:
+    if args.data_collector_output_dir is not None:
         dc_cfg = build_data_collector_config(
             observation_endpoint=args.observation_bind,
             command_endpoint=args.command_bind,
@@ -380,8 +373,8 @@ def main():
         collector_thread.start()
         logger.info("HalDataCollector thread started (output_dir=%s)", dc_cfg.output_dir)
 
-    logger.info(f"Starting loop at {args.control_rate} Hz")
-    period_s = 1.0 / args.control_rate
+    logger.info(f"Starting loop at {CONTROL_RATE_HZ} Hz")
+    period_s = 1.0 / CONTROL_RATE_HZ
     
     # Get environment step dt for real-time mode
     dt = env.unwrapped.step_dt

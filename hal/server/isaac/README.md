@@ -56,9 +56,7 @@ krabby-hal-server-isaac \
   --task Isaac-Anymal-D-v0 \
   --checkpoint /path/to/model.pt \
   --action_dim 12 \
-  --obs_dim 753 \
-  --control_rate 100.0 \
-  --device cuda
+  --obs_dim 753
 ```
 
 ### Python module
@@ -80,8 +78,7 @@ python -m hal.server.isaac.main \
 - `--obs_dim`: Observation dimension (typically 753)
 
 **Optional:**
-- `--control_rate`: Control loop rate in Hz (default: 100.0)
-- `--device`: Device for inference, `cuda` or `cpu` (default: cuda)
+- `--inference_device`: Device for inference, `cuda` or `cpu` (default: cuda)
 - `--observation_bind`: Observation endpoint (default: `inproc://hal_observation`)
 - `--command_bind`: Command endpoint (default: `inproc://hal_commands`)
 

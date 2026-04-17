@@ -56,9 +56,7 @@ After installation, use the `krabby-hal-server-jetson` command:
 
 ```bash
 krabby-hal-server-jetson \
-  --checkpoint /path/to/model.pt \
-  --control_rate 100.0 \
-  --device cuda
+  --checkpoint /path/to/model.pt
 ```
 
 ### Python module
@@ -73,8 +71,7 @@ python -m hal.server.jetson.main --checkpoint /path/to/model.pt
 - `--checkpoint`: Path to model checkpoint file
 
 **Optional:**
-- `--control_rate`: Control loop rate in Hz (default: 100.0)
-- `--device`: Device for inference, `cuda` or `cpu` (default: cuda)
+- `--inference_device`: Device for inference, `cuda` or `cpu` (default: cuda)
 - `--observation_bind`: Observation endpoint (default: `inproc://hal_observation`)
 - `--command_bind`: Command endpoint (default: `inproc://hal_commands`)
 
