@@ -83,6 +83,9 @@ COPY hal/server/isaac/dist/*.whl /tmp/wheels/
 COPY hal/server/jetson/dist/*.whl /tmp/wheels/
 COPY compute/parkour/dist/*.whl /tmp/wheels/
 COPY parkour/dist/*.whl /tmp/wheels/
+COPY data_collection/dist/*.whl /tmp/wheels/
+COPY teleop/edge/dist/*.whl /tmp/wheels/
+COPY teleop/portal/dist/*.whl /tmp/wheels/
 # Note: krabby-hal-tools is excluded by default (only install when needed for debugging)
 # Install wheels into venv since that's where production code runs
 RUN . /workspace/testenv/bin/activate && \
@@ -97,11 +100,8 @@ RUN . /workspace/testenv/bin/activate && \
 
 # Copy remaining code that's not in wheels (e.g., compute/testing for test runner)
 COPY compute/ /workspace/compute/
-
-# Copy controller, firmware, and data_collection (rosbag integration tests)
 COPY controller/ /workspace/controller/
 COPY firmware/ /workspace/firmware/
-COPY data_collection/ /workspace/data_collection/
 
 # Copy tests/ (test scenarios)
 COPY tests/ /workspace/tests/

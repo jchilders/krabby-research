@@ -41,6 +41,9 @@ COPY hal/server/isaac/dist/*.whl /tmp/wheels/
 COPY hal/server/jetson/dist/*.whl /tmp/wheels/
 COPY compute/parkour/dist/*.whl /tmp/wheels/
 COPY parkour/dist/*.whl /tmp/wheels/
+COPY data_collection/dist/*.whl /tmp/wheels/
+COPY teleop/edge/dist/*.whl /tmp/wheels/
+COPY teleop/portal/dist/*.whl /tmp/wheels/
 # Note: krabby-hal-tools is excluded by default (only install when needed for debugging)
 RUN bash -c "pip3 install --no-cache-dir /tmp/wheels/*.whl"
 
@@ -49,6 +52,8 @@ COPY compute/ /workspace/compute/
 
 # Copy tests/ (test scenarios)
 COPY tests/ /workspace/tests/
+
+COPY scripts/ /workspace/scripts/
 
 # Copy pytest configuration
 COPY pytest.ini /workspace/pytest.ini

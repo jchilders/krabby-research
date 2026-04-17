@@ -10,7 +10,7 @@ must use ``appsrc name=src``; ``get_by_name("src")`` must yield ``GstApp.AppSrc`
 
 Threading: ``run_pipeline_with_appsrc_sync`` runs on the **caller's thread**: it polls the bus in
 a loop (no ``GLib.MainLoop``). That is enough for **short** headless checks (e.g. ``fakesink``).
-For **continuous** encode/stream (live sinks, ``webrtcbin``, heavy bus traffic), run the pipeline on
+For **continuous** encode/stream (live sinks, heavy bus traffic), run the pipeline on
 a **dedicated thread** so policy / HAL loops are not blocked; attach a ``GLib.MainLoop`` on that
 thread if an element or sink requires it, or keep bus polling co-located with ``push_buffer`` on
 the same thread—**do not** share one ``Gst.Bus`` / pipeline across threads without GStreamer's
@@ -27,6 +27,18 @@ from typing import Any, Optional, Sequence
 
 import numpy as np
 
+try:
+    import gi
+
+    gi.require_version("Gst", "1.0")
+    gi.require_version("GstApp", "1.0")
+    from gi.repository import Gst, GstApp
+    _GST_IMPORT_ERROR: Optional[Exception] = None
+except Exception as e:
+    Gst = None  # type: ignore[assignment]
+    GstApp = None  # type: ignore[assignment]
+    _GST_IMPORT_ERROR = e
+
 logger = logging.getLogger(__name__)
 
 _gst_lock = threading.Lock()
@@ -40,17 +52,11 @@ class GstRuntimeUnavailable(RuntimeError):
 def ensure_gst_initialized() -> None:
     """Idempotent ``Gst.init`` (and GstApp) for the process. Thread-safe."""
     global _gst_initialized
+    if _GST_IMPORT_ERROR is not None:
+        raise GstRuntimeUnavailable(str(_GST_IMPORT_ERROR)) from _GST_IMPORT_ERROR
     with _gst_lock:
         if _gst_initialized:
             return
-        try:
-            import gi
-
-            gi.require_version("Gst", "1.0")
-            gi.require_version("GstApp", "1.0")
-        except ValueError as e:
-            raise GstRuntimeUnavailable(str(e)) from e
-        from gi.repository import Gst  # noqa: WPS433
 
         Gst.init(None)
         _gst_initialized = True
@@ -182,7 +188,6 @@ def run_pipeline_with_appsrc_sync(
         return AppSrcPipelineResult(False, 0, "no frames")
 
     ensure_gst_initialized()
-    from gi.repository import Gst, GstApp
 
     pipeline: Optional[Gst.Element] = None
     deadline = time.monotonic() + timeout_s
@@ -281,45 +286,3 @@ def run_pipeline_with_appsrc_sync(
     finally:
         if pipeline is not None:
             pipeline.set_state(Gst.State.NULL)
-
-
-def smoke_from_sensor_interface(
-    iface: Any,
-    *,
-    encoding: str = "h264",
-    output_element: str = "fakesink",
-    n_frames: int = 2,
-    fps_override: Optional[int] = None,
-    build_pipeline_kwargs: Optional[dict[str, Any]] = None,
-) -> AppSrcPipelineResult:
-    """Build a pipeline from ``SensorInterface`` and run a short **RGB** fakesink smoke test.
-
-    Picks the first **rgb** or **rgbd** sensor (not GRAY16 depth-only rows). For depth smoke,
-    build a depth handle and use ``run_pipeline_with_appsrc_sync`` with ``uint16`` frames.
-
-    ``build_pipeline_kwargs`` is merged into ``build_pipeline`` (e.g. ``{"use_nvenc": False}`` on
-    Jetson so software x264 + ``fakesink`` runs without NVENC hardware).
-    """
-    sensors = iface.list_sensors()
-    if not sensors:
-        return AppSrcPipelineResult(False, 0, "no sensors from list_sensors()")
-
-    def _pick() -> Any:
-        for s in sensors:
-            if getattr(s, "type", None) in ("rgb", "rgbd"):
-                return s
-        return sensors[0]
-
-    sensor = _pick()
-    handle = iface.get_gstreamer_handle(sensor)
-    bp_kw: dict[str, Any] = {
-        "encoding": encoding,
-        "output_element": output_element,
-    }
-    if build_pipeline_kwargs:
-        bp_kw.update(build_pipeline_kwargs)
-    pipeline_str = iface.build_pipeline(handle, **bp_kw)
-    w, h = handle.resolution
-    fps = int(fps_override if fps_override is not None else handle.fps)
-    frames = [np.zeros((h, w, 3), dtype=np.uint8) for _ in range(max(1, n_frames))]
-    return run_pipeline_with_appsrc_sync(pipeline_str, frames, fps=fps, timeout_s=30.0)

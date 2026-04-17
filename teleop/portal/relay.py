@@ -1,0 +1,124 @@
+"""Minimal signaling relay: pairs one browser WebSocket with one edge WebSocket and forwards JSON text."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+
+from aiohttp import WSMsgType, web
+
+from teleop.portal.auth import teleop_auth_middleware
+from teleop.portal.client_config import teleop_client_config_handler
+from teleop.portal.ice_config import BrowserIceConfig
+from teleop.portal.settings import PortalAuthSettings
+
+logger = logging.getLogger(__name__)
+
+Role = str  # "browser" | "robot"
+
+
+def _static_dir() -> str:
+    return os.path.join(os.path.dirname(__file__), "static")
+
+
+async def _relay_ws(a: web.WebSocketResponse, b: web.WebSocketResponse) -> None:
+    async def a_to_b() -> None:
+        try:
+            async for msg in a:
+                if msg.type == WSMsgType.TEXT:
+                    await b.send_str(msg.data)
+                elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.ERROR):
+                    break
+        finally:
+            await b.close()
+
+    async def b_to_a() -> None:
+        try:
+            async for msg in b:
+                if msg.type == WSMsgType.TEXT:
+                    await a.send_str(msg.data)
+                elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING, WSMsgType.ERROR):
+                    break
+        finally:
+            await a.close()
+
+    await asyncio.gather(a_to_b(), b_to_a())
+
+
+class PairingBroker:
+    """Pairs the first browser with the first robot (FIFO). Same-role waiters are queued."""
+
+    def __init__(self) -> None:
+        self._inbox: asyncio.Queue[tuple[Role, web.WebSocketResponse, asyncio.Future[None]]] = asyncio.Queue()
+        self._matcher = asyncio.create_task(self._matcher_loop())
+
+    async def _matcher_loop(self) -> None:
+        pending: tuple[Role, web.WebSocketResponse, asyncio.Future[None]] | None = None
+        try:
+            while True:
+                role, ws, done = await self._inbox.get()
+                if pending is None:
+                    pending = (role, ws, done)
+                    continue
+                r0, ws0, d0 = pending
+                if r0 == role:
+                    await self._inbox.put((r0, ws0, d0))
+                    pending = (role, ws, done)
+                    continue
+                pending = None
+                if r0 == "browser":
+                    b_ws, r_ws = ws0, ws
+                    b_done, r_done = d0, done
+                else:
+                    b_ws, r_ws = ws, ws0
+                    b_done, r_done = done, d0
+                try:
+                    await _relay_ws(b_ws, r_ws)
+                except Exception:
+                    logger.exception("relay failed")
+                finally:
+                    for d in (b_done, r_done):
+                        if not d.done():
+                            d.set_result(None)
+        except asyncio.CancelledError:
+            raise
+
+    async def _join(self, role: Role, request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        loop = asyncio.get_running_loop()
+        done: asyncio.Future[None] = loop.create_future()
+        await self._inbox.put((role, ws, done))
+        await done
+        return ws
+
+    async def browser_handler(self, request: web.Request) -> web.WebSocketResponse:
+        return await self._join("browser", request)
+
+    async def robot_handler(self, request: web.Request) -> web.WebSocketResponse:
+        return await self._join("robot", request)
+
+
+def create_portal_app(
+    *,
+    pairing: PairingBroker | None = None,
+    browser_ice: BrowserIceConfig,
+    portal_auth_settings: PortalAuthSettings,
+) -> web.Application:
+    broker = pairing or PairingBroker()
+    logging.basicConfig(level=logging.INFO)
+    app = web.Application(middlewares=[teleop_auth_middleware])
+    app["browser_ice"] = browser_ice
+    app["portal_auth_settings"] = portal_auth_settings
+    app["pairing"] = broker
+    app.router.add_get("/", _portal_index)
+    app.router.add_get("/api/teleop-config", teleop_client_config_handler)
+    app.router.add_static("/static/", _static_dir(), name="static")
+    app.router.add_get("/ws/browser", broker.browser_handler)
+    app.router.add_get("/ws/robot", broker.robot_handler)
+    return app
+
+
+async def _portal_index(_request: web.Request) -> web.StreamResponse:
+    return web.FileResponse(os.path.join(_static_dir(), "portal_viewer.html"))

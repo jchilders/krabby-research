@@ -187,8 +187,14 @@ class JetsonHalServer(HalServerBase):
             self._sensor_interface = JetsonSensorInterface()
         return self._sensor_interface
 
-    def initialize_camera(self) -> None:
-        """Initialize all HAL ``rgbd`` cameras selected by ``JETSON_SENSOR_CATALOG``."""
+    def initialize_cameras(self) -> None:
+        """Initialize all HAL ``rgbd`` cameras selected by ``JETSON_SENSOR_CATALOG``.
+
+        Opens every catalog row that qualifies (primary always attempted; others per
+        ``hal_open_rgbd``). Rows that fail to open are skipped with warnings. The primary
+        front camera is also skippable: if it does not open, the server continues with
+        no RGB-D devices until hardware is available (observations omit primary vision).
+        """
         assert_hal_rgbd_catalog_config()
 
         for cam in self._hal_rgbd_cameras.values():
@@ -243,11 +249,13 @@ class JetsonHalServer(HalServerBase):
                 if cam is not None:
                     cam.close()
                 if entry.is_primary:
-                    logger.error("Primary HAL RGB-D %s failed to initialize", entry.id)
-                    raise RuntimeError(
-                        f"Primary catalog RGB-D camera {entry.id!r} initialization failed"
+                    logger.warning(
+                        "Primary HAL RGB-D %s failed to initialize or is not ready; "
+                        "continuing without front camera (observations omit primary vision until fixed)",
+                        entry.id,
                     )
-                logger.warning("HAL RGB-D %s failed to initialize; skipping", entry.id)
+                else:
+                    logger.warning("HAL RGB-D %s failed to initialize; skipping", entry.id)
                 continue
 
             self._hal_rgbd_cameras[entry.id] = cam
@@ -262,8 +270,10 @@ class JetsonHalServer(HalServerBase):
 
         self.front_camera = self._hal_rgbd_cameras.get(self._primary_catalog_id)
         if self.front_camera is None:
-            raise RuntimeError(
-                f"Primary catalog camera {self._primary_catalog_id!r} not opened (check catalog and drivers)"
+            logger.warning(
+                "Primary catalog camera %r not opened (device missing, driver error, or catalog). "
+                "HAL continues without front RGB-D; policy vision and teleop will be degraded until fixed.",
+                self._primary_catalog_id,
             )
 
         self.side_camera = (

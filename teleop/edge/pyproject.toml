@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "krabby-teleop-edge"
+version = "0.1.0"
+description = "Teleop robot agent: outbound WebSocket signaling and WebRTC (Jetson HAL — not the operator portal)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = [
+    "aiohttp>=3.9.0",
+    "aiortc>=1.6.0",
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[tool.setuptools]
+package-dir = {"teleop" = ".."}
+packages = ["teleop.edge"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+

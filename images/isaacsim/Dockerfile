@@ -101,6 +101,8 @@ COPY hal/server/isaac/dist/*.whl /tmp/wheels/
 COPY hal/tools/dist/*.whl /tmp/wheels/
 COPY compute/parkour/dist/*.whl /tmp/wheels/
 COPY parkour/dist/*.whl /tmp/wheels/
+COPY data_collection/dist/*.whl /tmp/wheels/
+COPY teleop/edge/dist/*.whl /tmp/wheels/
 # Note: hal/server/jetson is not needed for Isaac Sim container
 # Install wheels into venv since that's where production code runs
 RUN . /workspace/testenv/bin/activate && \
@@ -118,9 +120,6 @@ COPY parkour/ /workspace/parkour/
 # Copy compute source so compute/testing is available (for testing tools)
 # Note: compute/testing is included in the wheel but we want latest source for development
 COPY compute/ /workspace/compute/
-
-# HAL data collector (rosbag2 / mcap); same layout as locomotion image
-COPY data_collection/ /workspace/data_collection/
 
 # Copy test assets (checkpoints, test data, etc.) to generic test assets directory
 # This directory can be used for any test content files

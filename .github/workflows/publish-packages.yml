@@ -17,6 +17,7 @@ on:
       - 'hal-tools-v*'
       - 'hal-server-isaac-v*'
       - 'hal-server-jetson-v*'
+      - 'data-collection-v*'
 
 jobs:
   publish:
@@ -50,14 +51,20 @@ jobs:
           elif [[ "$TAG" == hal-server-isaac-v* ]]; then
             echo "pkg_key=hal-server-isaac" >> $GITHUB_OUTPUT
             echo "path=hal/server/isaac" >> $GITHUB_OUTPUT
-            echo "deps=hal/client hal/server compute/parkour" >> $GITHUB_OUTPUT
+            echo "deps=hal/client hal/server compute/parkour data_collection" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/hal/server/isaac/" >> $GITHUB_OUTPUT
             echo "build_self_first=" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == hal-server-jetson-v* ]]; then
             echo "pkg_key=hal-server-jetson" >> $GITHUB_OUTPUT
             echo "path=hal/server/jetson" >> $GITHUB_OUTPUT
-            echo "deps=hal/client hal/server compute/parkour firmware" >> $GITHUB_OUTPUT
+            echo "deps=hal/client hal/server compute/parkour firmware data_collection" >> $GITHUB_OUTPUT
             echo "test_path=tests/unit/hal/" >> $GITHUB_OUTPUT
+            echo "build_self_first=" >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == data-collection-v* ]]; then
+            echo "pkg_key=data-collection" >> $GITHUB_OUTPUT
+            echo "path=data_collection" >> $GITHUB_OUTPUT
+            echo "deps=hal/client" >> $GITHUB_OUTPUT
+            echo "test_path=tests/unit/data_collection/" >> $GITHUB_OUTPUT
             echo "build_self_first=" >> $GITHUB_OUTPUT
           elif [[ "$TAG" == hal-client-v* ]]; then
             echo "pkg_key=hal-client" >> $GITHUB_OUTPUT

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Krabby teleop portal viewer</title>
+  <style>
+    #videos {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+    #videos video { width: 100%; }
+    fieldset { margin: 0.75rem 0; max-width: 40rem; }
+    #debugRtc { font: 12px/1.4 monospace; color: #444; margin: 0.5rem 0; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Krabby teleop portal viewer</h1>
+  <p>Signaling via portal relay (<code>/ws/browser</code>).</p>
+  <p id="status">Connecting…</p>
+  <p id="latency">Signaling RTT: —</p>
+  <p id="streamStatus">Streams: —</p>
+  <p id="debugRtc"></p>
+  <fieldset>
+    <legend>HAL catalog ids (order matches recvonly video lines; leave empty to use robot bootstrap)</legend>
+    <label for="catalogIds">Comma-separated</label>
+    <input type="text" id="catalogIds" name="catalogIds" size="48" placeholder="empty = robot default (primary)" />
+  </fieldset>
+  <fieldset>
+    <legend>Synthetic test streams (re-offer replaces session)</legend>
+    <label><input type="radio" name="teleop_streams" value="1" checked /> 1</label>
+    <label><input type="radio" name="teleop_streams" value="2" /> 2</label>
+    <label><input type="radio" name="teleop_streams" value="3" /> 3</label>
+    <button type="button" id="applyStreams">Apply</button>
+  </fieldset>
+  <div id="videos"></div>
+  <script>window.TELEOP_WS_PATH = '/ws/browser';</script>
+  <script src="/static/teleop_session.js"></script>
+</body>
+</html>

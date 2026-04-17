@@ -73,6 +73,14 @@ def main():
         default=None,
         help="Override bag output directory (default: DEFAULT_OUTPUT_DIR in collector_settings.py)",
     )
+    parser.add_argument(
+        "--teleop",
+        action="store_true",
+        help=(
+            "Run teleop WebRTC in-process: RGB from HAL RGB-D cameras. "
+            "Configure signaling URL, mode, and optional sensor ids in teleop/edge/robot_settings.py."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -96,6 +104,9 @@ def main():
     parkour_client = None
     collector_stop: threading.Event | None = None
     collector_thread: threading.Thread | None = None
+    teleop_stop: threading.Event | None = None
+    teleop_thread: threading.Thread | None = None
+    teleop_sensor_ids: list[str] | None = None
 
     try:
         # Create HAL server config (inproc for production)
@@ -114,10 +125,27 @@ def main():
         hal_server.initialize()
 
         # Initialize hardware (camera, sensors, actuators)
-        # TODO: Re-enable camera initialization once ZED SDK/pyzed is properly configured
-        # hal_server.initialize_camera()
         hal_server.initialize_sensors()
         hal_server.initialize_actuators()
+        hal_server.initialize_cameras()
+        if args.teleop:
+            from teleop.edge.robot_settings import build_teleop_edge_settings
+
+            # Bootstrap HAL poll until the browser sends ``catalog_ids`` on hello/offer (portal viewer).
+            teleop_sensor_ids = [hal_server._primary_catalog_id]
+            _teleop_st = build_teleop_edge_settings()
+            if not _teleop_st.agent_enabled:
+                logger.error(
+                    "--teleop requires agent mode with a non-empty signaling URL: set "
+                    "TELEOP_EDGE_MODE=\"agent\" and SERVER_SIGNALING_WS_URL in "
+                    "teleop/edge/robot_settings.py; teleop signaling not started",
+                )
+                teleop_sensor_ids = None
+            elif not hal_server._hal_rgbd_cameras:
+                logger.warning(
+                    "--teleop: no HAL RGB-D cameras opened after initialize_cameras(); "
+                    "teleop signaling still starts (video will be black until cameras work)",
+                )
 
         logger.info("HAL server initialized")
 
@@ -129,6 +157,23 @@ def main():
             observation_endpoint=args.observation_bind,
             command_endpoint=args.command_bind,
         )
+
+        if teleop_sensor_ids is not None:
+            from hal.server.jetson.teleop_integration import start_jetson_teleop_signaling_thread
+
+            teleop_stop = threading.Event()
+            teleop_thread = start_jetson_teleop_signaling_thread(
+                hal_client_config,
+                transport_context,
+                stop_event=teleop_stop,
+                bootstrap_sensor_catalog_ids=teleop_sensor_ids,
+                teleop_edge_settings=_teleop_st,
+            )
+            logger.info(
+                "Teleop outbound signaling started (bootstrap catalog ids=%s; viewer may override "
+                "via signaling ``catalog_ids``); URL from teleop.edge.robot_settings.SERVER_SIGNALING_WS_URL",
+                teleop_sensor_ids,
+            )
 
         model_weights = ModelWeights(
             checkpoint_path=args.checkpoint,
@@ -212,6 +257,12 @@ def main():
         sys.exit(1)
 
     finally:
+        if teleop_stop is not None:
+            teleop_stop.set()
+        if teleop_thread is not None and teleop_thread.is_alive():
+            teleop_thread.join(timeout=8.0)
+            if teleop_thread.is_alive():
+                logger.warning("Teleop HTTP thread did not exit within timeout")
         if collector_stop is not None:
             collector_stop.set()
         if collector_thread is not None and collector_thread.is_alive():

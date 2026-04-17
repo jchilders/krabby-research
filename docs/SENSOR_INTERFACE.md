@@ -46,7 +46,7 @@ Pipeline strings can be used with `Gst.parse_launch()` or `gst-launch-1.0` (repl
 
 ## Obtaining the interface
 
-- **Jetson**: `JetsonHalServer.get_sensor_interface()` returns a `JetsonSensorInterface` built from `JETSON_SENSOR_CATALOG`. The **front observation** camera is the unique catalog row with **`is_primary=True`**: that row sets default resolution, FPS, and **`camera_driver`** for `initialize_camera()` (registered in `hal.server.jetson.front_camera_factory.FRONT_RGB_DEPTH_CAMERA_FACTORIES`). The matching **`SensorInfo`** in **`list_sensors()`** carries the same **`camera_driver`**. Override HAL defaults with `JetsonHalServer(..., camera_driver=..., camera_resolution=..., camera_fps=...)`.
+- **Jetson**: `JetsonHalServer.get_sensor_interface()` returns a `JetsonSensorInterface` built from `JETSON_SENSOR_CATALOG`. The **front observation** camera is the unique catalog row with **`is_primary=True`**: that row sets default resolution, FPS, and **`camera_driver`** for `initialize_cameras()` (registered in `hal.server.jetson.front_camera_factory.FRONT_RGB_DEPTH_CAMERA_FACTORIES`). The matching **`SensorInfo`** in **`list_sensors()`** carries the same **`camera_driver`**. Override HAL defaults with `JetsonHalServer(..., camera_driver=..., camera_resolution=..., camera_fps=...)`.
 - **Isaac**: `IsaacSimHalServer.get_sensor_interface()` passes `scene_sensors`; `IsaacSensorInterface` **introspects** `front_rgb` + `front_camera` into **`front_rgbd`** with **`camera_driver="isaac_scene"`** when present, otherwise **`list_sensors()` is empty**. For docs/tests, pass **`configured_sensors=`** (see `ISAAC_PIPELINE_EXAMPLE_SENSORS` in `sensor_backend_isaac.py`).
 
 Both implement the same abstract `SensorInterface`: `list_sensors()`, `get_gstreamer_handle(sensor)`, `build_pipeline(handle, ...)`.
@@ -91,7 +91,7 @@ On **first use**, the SDK may **download and optimize** NEURAL depth models (sev
 
 - **`JetsonHalServer`**: default **resolution** and **FPS** come from the **`is_primary`** catalog row unless you pass **`camera_resolution=`** and **`camera_fps=`**. **`depth_mode`** defaults to **`PERFORMANCE`**; pass **`QUALITY`** or **`ULTRA`** if you need a different ZED depth profile (constructor argument on `JetsonHalServer`).
 - **`camera_driver=`** defaults from the same **`is_primary`** row; override when using another registered driver. The **`SensorInfo`** for that row in **`list_sensors()`** carries the same **`camera_driver`**.
-- After **`initialize_camera()`**, observations fill **`HardwareObservations.camera_rgb`**, **`camera_depth`**, and policy **scan features** derived in **`JetsonHalServer`** from the same depth map (see `hal/server/jetson/depth_scan_features.py`). Verify shapes against **`camera_height` / `camera_width`** and your HAL client (see **HAL_GUIDE.md** and `hal/client/data_structures/hardware.py`).
+- After **`initialize_cameras()`**, observations fill **`HardwareObservations.camera_rgb`**, **`camera_depth`**, and policy **scan features** derived in **`JetsonHalServer`** from the same depth map (see `hal/server/jetson/depth_scan_features.py`). Verify shapes against **`camera_height` / `camera_width`** and your HAL client (see **HAL_GUIDE.md** and `hal/client/data_structures/hardware.py`).
 
 ### GStreamer example (primary RGB-D)
 

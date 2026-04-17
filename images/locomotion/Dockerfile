@@ -64,12 +64,12 @@ COPY hal/server/jetson/dist/*.whl /tmp/wheels/
 COPY hal/tools/dist/*.whl /tmp/wheels/
 COPY compute/parkour/dist/*.whl /tmp/wheels/
 COPY parkour/dist/*.whl /tmp/wheels/
+COPY data_collection/dist/*.whl /tmp/wheels/
+COPY teleop/edge/dist/*.whl /tmp/wheels/
 RUN bash -c "pip3 install --no-cache-dir /tmp/wheels/*.whl"
 
-# Copy controller, firmware, and HAL data collector (rosbag2 / mcap)
 COPY controller/ /workspace/controller/
 COPY firmware/ /workspace/firmware/
-COPY data_collection/ /workspace/data_collection/
 ENV PYTHONPATH=/workspace
 
 # Set entrypoint to HAL server with integrated inference

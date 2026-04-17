@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "krabby-teleop-portal"
+version = "0.1.0"
+description = "Krabby teleop operator portal: HTTP relay, static viewer, GET /api/teleop-config (no robot WebRTC stack)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = [
+    "aiohttp>=3.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+krabby-teleop-portal = "teleop.portal.main:main"
+
+[tool.setuptools]
+package-dir = {"teleop" = ".."}
+packages = ["teleop.portal"]
+
+[tool.setuptools.package-data]
+"teleop.portal" = ["static/*.html", "static/*.js"]
+

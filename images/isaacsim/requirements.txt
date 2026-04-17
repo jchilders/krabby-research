@@ -35,9 +35,8 @@ pytest>=7.0.0
 # This pin is for documentation - actual version will be 3.1.2 from Isaac Lab
 rsl-rl-lib==3.1.2
 
-# HAL data collector (Python settings + rosbag2 mcap writer); pure Python, no ROS distro required
+# PyYAML: settings and tests.
 PyYAML>=6.0.0
-rosbags>=0.10.0
 
 # Note: scipy is NOT installed here - Isaac Sim has its own bundled scipy
 # Installing scipy in the venv causes conflicts with Isaac Sim's bundled scipy

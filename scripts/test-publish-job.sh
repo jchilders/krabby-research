@@ -3,7 +3,7 @@
 # Usage: from repo root with venv activated:
 #   ./scripts/test-publish-job.sh <package-key>
 #   ./scripts/test-publish-job.sh all
-# Package keys: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson, firmware
+# Package keys: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson, data-collection, firmware
 # Does not upload to PyPI.
 
 set -e
@@ -22,15 +22,21 @@ run_one_job() {
   case "$key" in
     hal-server-isaac)
       path="hal/server/isaac"
-      deps="hal/client hal/server compute/parkour"
+      deps="hal/client hal/server compute/parkour data_collection"
       build_self_first=""
       test_path="tests/unit/hal/server/isaac/"
       ;;
     hal-server-jetson)
       path="hal/server/jetson"
-      deps="hal/client hal/server compute/parkour firmware"
+      deps="hal/client hal/server compute/parkour firmware data_collection"
       build_self_first=""
       test_path="tests/unit/hal/"
+      ;;
+    data-collection)
+      path="data_collection"
+      deps="hal/client"
+      build_self_first=""
+      test_path="tests/unit/data_collection/"
       ;;
     firmware)
       path="firmware"
@@ -70,7 +76,7 @@ run_one_job() {
       ;;
     *)
       echo "Unknown package key: $key"
-      echo "Valid keys: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson, firmware"
+      echo "Valid keys: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson, data-collection, firmware"
       exit 1
       ;;
   esac
@@ -110,7 +116,7 @@ run_one_job() {
 }
 
 if [[ "$1" == "all" ]]; then
-  for key in firmware hal-server-isaac hal-server-jetson hal-client hal-server compute-parkour controller hal-tools; do
+  for key in firmware hal-server-isaac hal-server-jetson hal-client hal-server compute-parkour data-collection controller hal-tools; do
     run_one_job "$key"
   done
 elif [[ -n "$1" ]]; then

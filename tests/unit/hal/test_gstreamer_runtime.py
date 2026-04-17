@@ -1,7 +1,10 @@
-"""Tests for ``hal.server.gstreamer_runtime`` (§3.1 shared Gst appsrc path)."""
+"""Tests for ``hal.server.gstreamer_runtime`` (shared Gst appsrc path)."""
 
 from __future__ import annotations
 
+from typing import Any, Optional
+
+import numpy as np
 import pytest
 
 from hal.server.gstreamer_runtime import (
@@ -9,8 +12,42 @@ from hal.server.gstreamer_runtime import (
     build_software_appsrc_encode_pipeline_string,
     float32_depth_to_gray16_le,
     run_pipeline_with_appsrc_sync,
-    smoke_from_sensor_interface,
 )
+
+
+def _smoke_from_sensor_interface(
+    iface: Any,
+    *,
+    encoding: str = "h264",
+    output_element: str = "fakesink",
+    n_frames: int = 2,
+    fps_override: Optional[int] = None,
+    build_pipeline_kwargs: Optional[dict[str, Any]] = None,
+) -> AppSrcPipelineResult:
+    """Build a pipeline from ``SensorInterface`` and run a short RGB fakesink smoke (test-only)."""
+    sensors = iface.list_sensors()
+    if not sensors:
+        return AppSrcPipelineResult(False, 0, "no sensors from list_sensors()")
+
+    def _pick() -> Any:
+        for s in sensors:
+            if getattr(s, "type", None) in ("rgb", "rgbd"):
+                return s
+        return sensors[0]
+
+    sensor = _pick()
+    handle = iface.get_gstreamer_handle(sensor)
+    bp_kw: dict[str, Any] = {
+        "encoding": encoding,
+        "output_element": output_element,
+    }
+    if build_pipeline_kwargs:
+        bp_kw.update(build_pipeline_kwargs)
+    pipeline_str = iface.build_pipeline(handle, **bp_kw)
+    w, h = handle.resolution
+    fps = int(fps_override if fps_override is not None else handle.fps)
+    frames = [np.zeros((h, w, 3), dtype=np.uint8) for _ in range(max(1, n_frames))]
+    return run_pipeline_with_appsrc_sync(pipeline_str, frames, fps=fps, timeout_s=30.0)
 
 
 def test_build_software_appsrc_encode_pipeline_string_h264() -> None:
@@ -133,7 +170,7 @@ def test_smoke_from_isaac_sensor_interface() -> None:
     )
 
     iface = IsaacSensorInterface(configured_sensors=ISAAC_PIPELINE_EXAMPLE_SENSORS)
-    r = smoke_from_sensor_interface(iface, n_frames=2)
+    r = _smoke_from_sensor_interface(iface, n_frames=2)
     assert r.success, r.error_message
 
 
@@ -142,7 +179,7 @@ def test_smoke_from_jetson_sensor_interface_sw_only() -> None:
     from hal.server.jetson.sensor_backend_jetson import JetsonSensorInterface
 
     iface = JetsonSensorInterface()
-    r = smoke_from_sensor_interface(
+    r = _smoke_from_sensor_interface(
         iface, n_frames=2, build_pipeline_kwargs={"use_nvenc": False}
     )
     assert r.success, r.error_message
@@ -153,6 +190,6 @@ def test_smoke_from_sensor_interface_no_sensors() -> None:
         def list_sensors(self):
             return []
 
-    r = smoke_from_sensor_interface(_Empty())
+    r = _smoke_from_sensor_interface(_Empty())
     assert not r.success
     assert "no sensors" in (r.error_message or "")

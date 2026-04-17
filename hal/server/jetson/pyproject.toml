@@ -26,6 +26,8 @@ dependencies = [
     "krabby-hal-server>=0.1.0",
     "krabby-hal-client>=0.1.0",
     "krabby-compute-parkour>=0.1.0",
+    "krabby-data-collection>=0.1.0",
+    "krabby-teleop-edge>=0.1.0",
     "numpy>=1.24.0",
     "scipy>=1.10.0",
 ]

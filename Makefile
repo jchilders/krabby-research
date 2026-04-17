@@ -118,8 +118,11 @@ build-wheels:
 	@cd hal/server/isaac && $(PYTHON) -m build --wheel
 	@cd hal/server/jetson && $(PYTHON) -m build --wheel
 	@cd hal/tools && $(PYTHON) -m build --wheel
+	@cd data_collection && $(PYTHON) -m build --wheel
 	@cd compute/parkour && $(PYTHON) -m build --wheel
 	@$(PYTHON) scripts/wheel-build/build_parkour_wheel.py
+	@cd teleop/edge && $(PYTHON) -m build --wheel
+	@cd teleop/portal && $(PYTHON) -m build --wheel
 	@echo "Wheels built in dist/ directories"
 
 .PHONY: clean
@@ -127,6 +130,9 @@ clean:
 	rm -rf hal/*/dist hal/*/build hal/*/*.egg-info
 	rm -rf hal/server/*/dist hal/server/*/build hal/server/*/*.egg-info
 	rm -rf compute/*/dist compute/*/build compute/*/*.egg-info
+	rm -rf data_collection/dist data_collection/build data_collection/*.egg-info
+	rm -rf teleop/edge/dist teleop/edge/build teleop/edge/*.egg-info
+	rm -rf teleop/portal/dist teleop/portal/build teleop/portal/*.egg-info
 	rm -rf controller/dist controller/build controller/*.egg-info
 	find . -type d -name __pycache__ -exec rm -r {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
@@ -141,12 +147,13 @@ install-editable:
 	@$(PIP) install -e hal/server/isaac
 	@$(PIP) install -e hal/server/jetson
 	@$(PIP) install -e hal/tools
+	@$(PIP) install -e data_collection
 	@$(PIP) install -e compute/parkour
 	@echo "Packages installed in editable mode. Edit files in hal/*/, controller/, and compute/*/ directories."
 
 # Run the same build-and-test steps as the publish workflow for a package (or all).
 # Usage: make test-publish-job PKG=hal-client  or  make test-publish-job PKG=all
-# Package keys: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson
+# Package keys: hal-client, hal-server, compute-parkour, controller, hal-tools, hal-server-isaac, hal-server-jetson, data-collection
 .PHONY: test-publish-job
 test-publish-job:
 	@./scripts/test-publish-job.sh $(PKG)

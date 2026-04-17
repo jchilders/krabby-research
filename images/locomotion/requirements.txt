@@ -35,6 +35,3 @@ PyYAML>=6.0.0
 pyserial>=3.5
 keyboard>=0.13.0
 
-# ROS 2 rosbag2 (mcap) writer for data_collection; pure Python, no ROS distro required
-rosbags>=0.10.0
-
