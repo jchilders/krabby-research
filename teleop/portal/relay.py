@@ -51,7 +51,23 @@ class PairingBroker:
 
     def __init__(self) -> None:
         self._inbox: asyncio.Queue[tuple[Role, web.WebSocketResponse, asyncio.Future[None]]] = asyncio.Queue()
-        self._matcher = asyncio.create_task(self._matcher_loop())
+        self._matcher_task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        """Schedule the FIFO matcher; call from aiohttp ``on_startup`` (requires a running loop)."""
+        if self._matcher_task is not None:
+            return
+        self._matcher_task = asyncio.create_task(self._matcher_loop())
+
+    async def stop(self) -> None:
+        if self._matcher_task is None:
+            return
+        self._matcher_task.cancel()
+        try:
+            await self._matcher_task
+        except asyncio.CancelledError:
+            pass
+        self._matcher_task = None
 
     async def _matcher_loop(self) -> None:
         pending: tuple[Role, web.WebSocketResponse, asyncio.Future[None]] | None = None
@@ -100,6 +116,14 @@ class PairingBroker:
         return await self._join("robot", request)
 
 
+async def _pairing_broker_startup(app: web.Application) -> None:
+    await app["pairing"].start()
+
+
+async def _pairing_broker_cleanup(app: web.Application) -> None:
+    await app["pairing"].stop()
+
+
 def create_portal_app(
     *,
     pairing: PairingBroker | None = None,
@@ -112,6 +136,8 @@ def create_portal_app(
     app["browser_ice"] = browser_ice
     app["portal_auth_settings"] = portal_auth_settings
     app["pairing"] = broker
+    app.on_startup.append(_pairing_broker_startup)
+    app.on_cleanup.append(_pairing_broker_cleanup)
     app.router.add_get("/", _portal_index)
     app.router.add_get("/api/teleop-config", teleop_client_config_handler)
     app.router.add_static("/static/", _static_dir(), name="static")

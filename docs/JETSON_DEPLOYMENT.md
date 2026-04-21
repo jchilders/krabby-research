@@ -20,15 +20,21 @@ If you deploy on **Seeed Studio**’s [reComputer Jetson Robotics J401](https://
 - **Getting started:** [reComputer Jetson Robotics J401 — Seeed Wiki](https://wiki.seeedstudio.com/recomputer_jetson_robotics_J401_getting_started/)
 - **Hardware reference:** [reComputer Jetson Robotics J401 datasheet (PDF)](https://files.seeedstudio.com/products/NVIDIA-Jetson/reComputer_robotics_J401_datasheet.pdf)
 
+This guide’s reference deployment uses **reComputer J4012**, which pairs the J401 carrier with a **Jetson Orin NX 16GB** module. Seeed’s product code (e.g. J4012) and the exact NVIDIA module SKU are printed on a **sticker on the bottom** of the Jetson module—use that sticker to confirm which hardware you have if the model number is unclear.
+
 ## Prerequisites: System Setup
 
 Before building and deploying, ensure the Jetson system is properly configured.
 
+For **flashing** and **initial setup** (before SSH and networking are dialed in), it helps to have a **keyboard**, **mouse**, and **display** connected directly to the Jetson. On the **reComputer J401** carrier, connect the monitor with a **USB-C to HDMI** adapter or cable to the **USB 3.2 / DisplayPort 1.4** USB-C port.
+
+Optionally, you can skip local peripherals and connect from the **flashing host** using **SSH over USB** (Jetson USB device mode), then complete **system configuration** using the **console interface** (terminal session over that link).
+
 ### 1. SSH Access
 
-You need SSH access to the Jetson from your development machine (e.g., to copy images, run commands, or deploy).
+**When it applies:** SSH from a **development machine** is the usual way to copy images, run commands, and deploy over the network. For a **field deployment**, remote SSH may be **unnecessary** if the Jetson is provisioned and operated without ongoing shell access from another host (for example, fully onboard workflows or non-SSH operational interfaces).
 
-**On the Jetson**: Ensure the SSH server is installed and running:
+**If you want SSH for remote access**, ensure the SSH server is installed and running **on the Jetson**:
 
 ```bash
 # Install OpenSSH server if not present
@@ -38,17 +44,53 @@ sudo systemctl enable ssh
 sudo systemctl start ssh
 ```
 
-**On your local machine**: Configure SSH so you can connect by hostname or alias. Edit or create `~/.ssh/config` (on Windows: `C:\Users\<YourUsername>\.ssh\config`):
+**On your local machine**
+
+These steps use **OpenSSH** (`ssh`, `ssh-keygen`). On **Linux and macOS** it is usually preinstalled. On **Windows 10/11**, install **OpenSSH Client** if `ssh` is not found: *Settings → Apps → Optional features → Add a feature → OpenSSH Client* (or `Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0` in an elevated PowerShell). **WSL** and **Git for Windows** shells behave like Linux for paths (`~/.ssh`).
+
+**Key-based authentication (recommended):** Use a key pair so you are not prompted for the account password on every login.
+
+1. Create a key pair if you do not already have one:
+
+   ```bash
+   ssh-keygen -t ed25519 -C "jetson"
+   ```
+
+   Accept the default path or choose another; you can set a passphrase or leave it empty. If you press Enter at the file prompt, OpenSSH names the key pair **`id_ed25519`** / **`id_ed25519.pub`** by convention for Ed25519 keys (that name is not special to this project—it is what `ssh-keygen` suggests). Typical full paths: **`~/.ssh/id_ed25519`** on Linux, macOS, and WSL; on **native Windows**, **`%USERPROFILE%\.ssh\id_ed25519`** (for example `C:\Users\<YourUsername>\.ssh\id_ed25519`).
+
+2. Install your **public** key on the Jetson (one-time; you will enter the Jetson user’s password when asked):
+
+   **Linux, macOS, or WSL** (has `ssh-copy-id`):
+
+   ```bash
+   ssh-copy-id -i ~/.ssh/id_ed25519.pub <username>@<hostname-or-ip>
+   ```
+
+   **Windows PowerShell** (no `ssh-copy-id` in the base OpenSSH package—pipe the public key over SSH):
+
+   ```powershell
+   Get-Content "$env:USERPROFILE\.ssh\id_ed25519.pub" | ssh <username>@<hostname-or-ip> "mkdir -p .ssh && chmod 700 .ssh && cat >> .ssh/authorized_keys && chmod 600 .ssh/authorized_keys"
+   ```
+
+   **Manual (any OS):** Append the contents of your `id_ed25519.pub` file to `~/.ssh/authorized_keys` on the Jetson (create the file and directory if needed), then on the Jetson run `chmod 700 ~/.ssh` and `chmod 600 ~/.ssh/authorized_keys`. On Windows you can copy the public key to the clipboard with `Get-Content "$env:USERPROFILE\.ssh\id_ed25519.pub" | Set-Clipboard`, then paste into an editor after SSHing in with a password.
+
+3. **SSH config** so you can use a short alias (`ssh jetson`). Create or edit:
+
+   - **Linux / macOS / WSL:** `~/.ssh/config`
+   - **Windows:** `C:\Users\<YourUsername>\.ssh\config` (create the `.ssh` folder if it does not exist)
 
 ```
 Host jetson
     HostName <hostname-or-ip>
     User <username>
-    # Optional: key-based authentication
-    # IdentityFile ~/.ssh/id_rsa
+    IdentityFile ~/.ssh/id_ed25519
 ```
 
 Replace `<hostname-or-ip>` with the Jetson’s hostname (if it resolves on your network) or its IP address. Replace `<username>` with your Jetson user account.
+
+**`IdentityFile` on Windows:** OpenSSH for Windows expands `~` to your user profile, so `~/.ssh/id_ed25519` in `config` often works. If not, use a full path with forward slashes, e.g. `IdentityFile C:/Users/<YourUsername>/.ssh/id_ed25519`.
+
+If you use **password authentication only**, omit the `IdentityFile` line (or leave it commented). Older tooling sometimes expects RSA keys (`ssh-keygen -t rsa -b 4096` and `IdentityFile ~/.ssh/id_rsa`).
 
 **Test the connection:**
 
@@ -105,29 +147,7 @@ docker --version
 
 This is required for the group membership to take effect.
 
-### 3. Docker iptables Configuration (Jetson-Specific)
-
-The Jetson kernel doesn't include the `iptable_raw` module, which Docker tries to use by default. This causes errors when running containers. Configure Docker to work around this:
-
-```bash
-# Create Docker daemon configuration directory if it doesn't exist
-sudo mkdir -p /etc/docker
-
-# Create daemon.json with iptables workaround
-sudo tee /etc/docker/daemon.json > /dev/null <<EOF
-{
-  "iptables": false,
-  "ip-forward": true
-}
-EOF
-
-# Restart Docker daemon
-sudo systemctl restart docker
-```
-
-**Note**: Disabling iptables means Docker won't manage network isolation between containers. This is acceptable for development/testing. For production, consider using host networking mode (`--network host`) if needed.
-
-### 4. NVIDIA Container Toolkit Installation
+### 3. NVIDIA Container Toolkit Installation
 
 Required for GPU access in Docker containers.
 
@@ -162,7 +182,7 @@ docker info | grep -i runtime
 
 **Note**: The NVIDIA runtime should appear as `nvidia` in the Docker info output. If it doesn't, verify the configuration was applied correctly.
 
-### 5. Power and performance mode (optional)
+### 4. Power and performance mode (optional)
 
 Many guides recommend setting the Jetson to maximum performance before running cameras or inference, to avoid throttling and USB/camera detection issues:
 
@@ -203,7 +223,7 @@ sudo systemctl enable jetson-maxperf.service
 
 After the next reboot, the service will set max power mode and lock clocks. To run it once without rebooting: `sudo systemctl start jetson-maxperf.service`. To disable: `sudo systemctl disable jetson-maxperf.service`. Adjust the `-m 0` or paths if your board uses different mode IDs or install locations (`which nvpmodel jetson_clocks`).
 
-### 6. ZED 2i Camera (Optional — Host Verification)
+### 5. ZED 2i Camera (Optional — Host Verification)
 
 Optional: verify the ZED 2i on the host before using it in the container.
 
@@ -440,12 +460,9 @@ If you get "unknown or invalid runtime name: nvidia":
 3. Restart Docker: `sudo systemctl restart docker`
 4. Verify: `docker info | grep -i runtime`
 
-### Docker iptables Errors
+### Docker iptables / networking errors
 
-If containers fail with iptables errors:
-1. Check `/etc/docker/daemon.json` contains `"iptables": false`
-2. Restart Docker: `sudo systemctl restart docker`
-3. Note: This disables Docker's network isolation (acceptable for development)
+If containers fail with iptables-related errors on Jetson (some kernels lack modules Docker expects for default bridge networking), run the container with **`--network host`** when that fits your deployment, and adjust how you expose or bind ports accordingly.
 
 ### CUDA Out of Memory
 
@@ -488,7 +505,7 @@ The HAL runtime currently uses a fixed in-code control loop rate of 100 Hz.
 ### System Configuration
 
 - **JetPack Version**: 6.1/6.2 (L4T 36.4) or later recommended
-- **Docker**: Must be configured with iptables workaround for Jetson kernel
+- **Docker**: Use **`--network host`** on the `docker run` line when needed for Jetson networking/iptables limitations (see **Docker iptables / networking errors** under Troubleshooting below).
 - **NVIDIA Runtime**: Must be configured for GPU access (`--runtime=nvidia`)
 - **User Permissions**: User must be in docker group to run containers without sudo
 
@@ -501,7 +518,6 @@ The HAL runtime currently uses a fixed in-code control loop rate of 100 Hz.
 
 ### Important Notes
 
-- **Network Isolation**: With `iptables: false`, Docker won't manage network isolation between containers. Use host networking mode if needed.
 - **Camera**: ZED camera must be initialized for production deployment to provide valid depth/scan features for inference.
 
 ## Isaac Sim synthetic front camera
