@@ -19,9 +19,9 @@ from hal.client.config import HalClientConfig
 from hal.server import HalServerConfig
 from hal.client.observation.types import NavigationCommand
 from hal.server.isaac import IsaacSimHalServer
-from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
-from hal.server.isaac.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
-from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+from hal.server.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+from hal.server.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
+from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
 from compute.testing.inference_test_runner import InferenceTestRunner

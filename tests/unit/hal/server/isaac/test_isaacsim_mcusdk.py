@@ -37,8 +37,8 @@ import pytest
 
 from hal.client.data_structures.hardware import JointCommand
 from hal.server.isaac.isaacsim_mcusdk import IsaacSimMCUSDK
-from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
-from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+from hal.server.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 
 def _make_command(joint_names: tuple[str, ...], values: list[float]) -> JointCommand:

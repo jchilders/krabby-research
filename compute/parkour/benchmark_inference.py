@@ -17,7 +17,7 @@ from compute.parkour.model_definition import (
     ObservationDimensions,
 )
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
-from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 logging.basicConfig(
     level=logging.INFO,

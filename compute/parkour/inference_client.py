@@ -84,6 +84,8 @@ class ParkourInferenceClient(HalClient):
             HWObservationsToParkourMapper(observation_dimensions) if not use_env_observations else None
         )
         self._env = None
+        self._non_finite_drop_count = 0
+        self._missing_action_drop_count = 0
 
     def initialize(self) -> None:
         """Initialize HAL client and policy model."""
@@ -230,9 +232,41 @@ class ParkourInferenceClient(HalClient):
             logger.error(f"Inference failed: {inference_result.error_message}")
             return False
 
+        # Guard against invalid model output (NaN/Inf) to keep inference thread alive.
+        action_tensor = inference_result.get_action()
+        if action_tensor is None:
+            self._missing_action_drop_count += 1
+            if self._missing_action_drop_count == 1 or self._missing_action_drop_count % 100 == 0:
+                logger.warning(
+                    "Inference produced no action tensor; dropping step (count=%d)",
+                    self._missing_action_drop_count,
+                )
+            return False
+        self._missing_action_drop_count = 0
+        if isinstance(action_tensor, torch.Tensor):
+            finite_ok = bool(torch.isfinite(action_tensor).all().item())
+        else:
+            finite_ok = bool(np.isfinite(np.asarray(action_tensor)).all())
+        if not finite_ok:
+            self._non_finite_drop_count += 1
+            if self._non_finite_drop_count == 1 or self._non_finite_drop_count % 100 == 0:
+                logger.warning(
+                    "Inference produced non-finite action values (NaN/Inf); dropping step (count=%d)",
+                    self._non_finite_drop_count,
+                )
+            return False
+        self._non_finite_drop_count = 0
+
         # Map inference response to hardware joint positions
         hw_mapper = ParkourLocomotionToHWMapper(self.robot_definition)
-        joint_cmd = hw_mapper.map(inference_result, observation_timestamp_ns=hw_obs.timestamp_ns)
+        try:
+            joint_cmd = hw_mapper.map(
+                inference_result,
+                observation_timestamp_ns=hw_obs.timestamp_ns,
+            )
+        except ValueError as e:
+            logger.warning("Failed to map inference output to joint command: %s", e)
+            return False
         
         # Update timestamp to current time
         joint_cmd.timestamp_ns = time.time_ns()
@@ -261,19 +295,30 @@ class ParkourInferenceClient(HalClient):
         observations_received = 0
         commands_sent = 0
         no_observation_count = 0
+        step_failure_count = 0
         while self._running and running_flag():
             iteration += 1
             loop_start_ns = time.time_ns()
 
             # Execute inference step
-            step_result = self._inference_step()
+            try:
+                step_result = self._inference_step()
+            except Exception as e:
+                step_result = False
+                logger.warning("Inference step raised unexpected exception; continuing: %s", e, exc_info=True)
             if step_result is True:
                 # Track successful steps (when observation was received and processed)
                 observations_received += 1
                 commands_sent += 1
                 no_observation_count = 0  # Reset counter on success
+                step_failure_count = 0
             elif step_result is False:
-                logger.warning("Inference step failed, continuing...")
+                step_failure_count += 1
+                if step_failure_count == 1 or step_failure_count % 100 == 0:
+                    logger.warning(
+                        "Inference step failed (count=%d), continuing...",
+                        step_failure_count,
+                    )
             else:
                 # step_result is None means no observation available
                 no_observation_count += 1

@@ -12,7 +12,7 @@ from hal.client.observation.types import NavigationCommand
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 from compute.parkour.parkour_types import ParkourObservation
 from hal.client.data_structures.hardware import HardwareObservations
-from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 from tests.helpers import create_dummy_hw_obs
 
 

@@ -27,10 +27,8 @@ docker run --rm --gpus all \
     # -v /path/to/krabby_bags:/workspace/bags \
     krabby-locomotion:latest \
     --checkpoint /workspace/checkpoints/checkpoint.pt \
-    --action_dim 12 \
-    --obs_dim <OBS_DIM> \
-    --observation_bind inproc://hal_observation \
-    --command_bind inproc://hal_commands \
+    # Optional log level:
+    # --log-level DEBUG \
     # Optional data collection flag (enables collector):
     # --data-collector-output-dir /workspace/bags
 ```

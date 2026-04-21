@@ -14,7 +14,7 @@ from compute.parkour.model_definition import (
 )
 from compute.parkour.mappers.hardware_to_model import HWObservationsToParkourMapper
 from hal.client.data_structures.hardware import HardwareObservations
-from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 logging.basicConfig(
     level=logging.INFO,

@@ -1,4 +1,4 @@
-"""Robot definition for Unitree Go2 (matches parkour teacher checkpoint: num_prop=53)."""
+"""Robot definition: Unitree Go2 (quad, parkour-compatible num_prop=53)."""
 
 from hal.server.robot_definition import (
     ObservationScalingDefinition,
@@ -7,10 +7,11 @@ from hal.server.robot_definition import (
 
 
 class UnitreeGo2RobotDefinition(RobotDefinition):
-    """Unitree Go2: same topology as quad but num_prop=53 to match parkour_rl_cfg training."""
+    """Unitree Go2 topology with parkour-compatible proprioceptive dimension."""
 
     def get_num_prop(self) -> int:
-        return 53  # ParkourRslRlBaseCfg num_prop: 3+2+3+4+36+5
+        # Matches teacher/student parkour checkpoints trained with num_prop=53.
+        return 53
 
 
 UNITREE_GO2_DEFINITION = UnitreeGo2RobotDefinition(

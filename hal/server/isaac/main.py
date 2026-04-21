@@ -220,8 +220,8 @@ def main():
     from hal.server import HalServerConfig
     from hal.server.isaac import IsaacSimHalServer
     from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
-    from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
-    from hal.server.isaac.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
+    from hal.server.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+    from hal.server.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
     from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
     from compute.parkour.inference_client import ParkourInferenceClient
     from compute.parkour.policy_interface import ModelWeights

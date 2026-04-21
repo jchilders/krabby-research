@@ -63,7 +63,6 @@ class PPOWithExtractor(PPO):
             )
 
         self.estimator: nn.Module = estimator
-        print(f"estimator MLP: {estimator}")
 
         self.priv_states_dim = estimator_paras["num_priv_explicit"]
         self.num_prop = estimator_paras["num_prop"]

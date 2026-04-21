@@ -1,9 +1,9 @@
 """MaixSense-A075V as :class:`~hal.server.jetson.rgb_depth_camera.RgbDepthCamera`.
 
 Use ``JETSON_SENSOR_CATALOG`` with ``camera_driver="maixsense_a075v"`` on any rgbd row (primary
-or ``hal_open_rgbd`` side/extra). Each row must set ``maixsense_host_env`` to the **name** of an
-environment variable holding that module's HTTP host. Optionally set ``maixsense_port_env`` to the
-name of a variable for the port; if omitted, port **80** is used (no env lookup).
+or ``hal_open_rgbd`` side/extra). Configure either literal ``maixsense_host`` / ``maixsense_port``
+or env-var names ``maixsense_host_env`` / ``maixsense_port_env``. If no port is provided, **80** is
+used.
 
 Depth is converted to meters (uint16 → mm/1000; uint8 → coarse 0–5 m) then resized to the catalog
 resolution. Requires MaixSense extras (``requests``, ``cv2``).
@@ -16,6 +16,10 @@ import os
 from typing import Any, Optional
 
 import numpy as np
+try:
+    from requests import exceptions as requests_exceptions
+except ImportError:  # pragma: no cover - optional dependency
+    requests_exceptions = None
 
 from hal.server.jetson.rgb_depth_camera import RgbDepthCamera
 
@@ -28,7 +32,7 @@ except ImportError:
 
 
 class MaixSenseA075VRgbDepthCamera:
-    """HTTP MaixSense RGB-D (host from catalog ``maixsense_host_env`` env var name)."""
+    """HTTP MaixSense RGB-D from literal host/port or env-var names."""
 
     def __init__(
         self,
@@ -36,7 +40,9 @@ class MaixSenseA075VRgbDepthCamera:
         fps: int = 30,
         depth_mode: str = "PERFORMANCE",
         *,
-        maixsense_host_env: str,
+        maixsense_host: Optional[str] = None,
+        maixsense_port: Optional[int] = None,
+        maixsense_host_env: Optional[str] = None,
         maixsense_port_env: Optional[str] = None,
     ) -> None:
         self._target_w, self._target_h = int(resolution[0]), int(resolution[1])
@@ -46,22 +52,28 @@ class MaixSenseA075VRgbDepthCamera:
         self._client: Any = None
         self._last_rgb: Optional[np.ndarray] = None
         self._last_depth_m: Optional[np.ndarray] = None
+        self._dependency_error_logged: bool = False
 
-        host_key = maixsense_host_env.strip()
-        if not host_key:
-            raise RuntimeError(
-                "maixsense_host_env must be a non-empty env var name for camera_driver=maixsense_a075v"
-            )
-        host = os.environ.get(host_key, "").strip()
+        host = (maixsense_host or "").strip()
+        host_key = (maixsense_host_env or "").strip()
         if not host:
-            raise RuntimeError(
-                f"Environment variable {host_key!r} must be set when using camera_driver=maixsense_a075v"
-            )
+            if not host_key:
+                raise RuntimeError(
+                    "maixsense_a075v requires either literal maixsense_host or "
+                    "maixsense_host_env (env var name)"
+                )
+            host = os.environ.get(host_key, "").strip()
+            if not host:
+                raise RuntimeError(
+                    f"Environment variable {host_key!r} must be set when using "
+                    "camera_driver=maixsense_a075v with maixsense_host_env"
+                )
+
         port_key_stripped = (maixsense_port_env or "").strip()
-        if not port_key_stripped:
-            port = 80
-            port_key = "(default 80)"
-        else:
+        if maixsense_port is not None:
+            port = int(maixsense_port)
+            port_key = "(literal)"
+        elif port_key_stripped:
             port_key = port_key_stripped
             port_raw = os.environ.get(port_key, "").strip()
             if not port_raw:
@@ -74,6 +86,9 @@ class MaixSenseA075VRgbDepthCamera:
                 raise RuntimeError(
                     f"Environment variable {port_key!r} must be an integer, got {port_raw!r}"
                 ) from e
+        else:
+            port = 80
+            port_key = "(default 80)"
 
         from hal.server.jetson.maixsense_a075v import MaixSenseA075VClient
 
@@ -118,6 +133,12 @@ class MaixSenseA075VRgbDepthCamera:
             return False
         try:
             frame = self._client.fetch_decoded()
+        except ImportError as e:
+            # Common configuration issue (opencv/requests missing). Log at error once to avoid loop spam.
+            if not self._dependency_error_logged:
+                logger.error("MaixSense dependency missing: %s", e)
+                self._dependency_error_logged = True
+            return False
         except Exception as e:
             logger.warning("MaixSense fetch failed: %s", e)
             return False
@@ -159,7 +180,9 @@ def create_maixsense_a075v_rgb_depth_camera(
     fps: int = 30,
     depth_mode: str = "PERFORMANCE",
     *,
-    maixsense_host_env: str,
+    maixsense_host: Optional[str] = None,
+    maixsense_port: Optional[int] = None,
+    maixsense_host_env: Optional[str] = None,
     maixsense_port_env: Optional[str] = None,
 ) -> Optional[RgbDepthCamera]:
     """Build MaixSense RGB-D camera; returns ``None`` on configuration or import errors."""
@@ -168,6 +191,8 @@ def create_maixsense_a075v_rgb_depth_camera(
             resolution=resolution,
             fps=fps,
             depth_mode=depth_mode,
+            maixsense_host=maixsense_host,
+            maixsense_port=maixsense_port,
             maixsense_host_env=maixsense_host_env,
             maixsense_port_env=maixsense_port_env,
         )
@@ -179,5 +204,20 @@ def create_maixsense_a075v_rgb_depth_camera(
         logger.error("MaixSense RGB-D camera import failed: %s", e)
         return None
     except Exception as e:
+        if requests_exceptions is not None and isinstance(
+            e,
+            (
+                requests_exceptions.ConnectTimeout,
+                requests_exceptions.ReadTimeout,
+                requests_exceptions.Timeout,
+                requests_exceptions.ConnectionError,
+            ),
+        ):
+            logger.error(
+                "MaixSense RGB-D camera connect/read failed (%s). "
+                "Check host/port, cable/link, and camera power; skipping this stream.",
+                e,
+            )
+            return None
         logger.error("MaixSense RGB-D camera unexpected error: %s", e, exc_info=True)
         return None

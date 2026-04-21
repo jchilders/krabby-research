@@ -361,7 +361,7 @@ def run_test_isaacsim_hal_server_with_real_isaaclab():
         )
         logger.info("[STEP] HAL server config created")
         
-        from hal.server.isaac.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
+        from hal.server.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
         # Create and initialize HAL server with real environment
         logger.info("[STEP] Creating IsaacSimHalServer...")
         hal_server = IsaacSimHalServer(hal_server_config, UNITREE_GO2_DEFINITION, env=env)
@@ -497,7 +497,7 @@ def run_test_inference_latency_requirement():
         logger.info("[STEP] Environment reset complete")
         
         from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
-        from hal.server.isaac.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
+        from hal.server.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
 
         robot_definition = UNITREE_GO2_DEFINITION
         observation_dimensions = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(

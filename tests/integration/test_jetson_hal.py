@@ -18,7 +18,7 @@ from compute.testing.inference_test_runner import InferenceTestRunner
 from hal.server.jetson.zed_camera import ZedCamera, create_zed_camera
 from hal.server.jetson import JetsonHalServer
 from hal.server.jetson.depth_scan_features import extract_depth_features_from_map
-from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 
 def _jetson_mock_rgb_depth(

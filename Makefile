@@ -198,7 +198,8 @@ build-locomotion-image: build-wheels
 	@echo "Building locomotion Docker image (for Jetson/ARM64)..."
 	@echo "Note: This target is for building on Jetson hardware (native ARM64)"
 	@echo "      For cross-platform builds from x86_64, use buildx manually"
-	$(DOCKER_BUILD) -f images/locomotion/Dockerfile -t krabby-locomotion:latest .
+	@echo "      --network=host allows the build to access the network during the build"
+	$(DOCKER_BUILD) --network=host -f images/locomotion/Dockerfile -t krabby-locomotion:latest .
 	@echo "Locomotion image built: krabby-locomotion:latest"
 
 .PHONY: build-test-image-arm

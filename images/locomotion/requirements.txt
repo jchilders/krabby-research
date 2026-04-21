@@ -35,3 +35,7 @@ PyYAML>=6.0.0
 pyserial>=3.5
 keyboard>=0.13.0
 
+# MaixSense HTTP RGB-D support (decode + transport)
+requests>=2.31.0
+opencv-python-headless>=4.8.0
+

@@ -49,7 +49,7 @@ from controller.control_loop import ControlLoop, ControlLoopConfig, ControlMode
 from hal.client.config import HalClientConfig
 from hal.server import HalServerConfig
 from hal.server.isaac import IsaacSimHalServer
-from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+from hal.server.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
 
 # Configure logging
 logging.basicConfig(
@@ -112,7 +112,7 @@ def create_mock_isaac_env():
     # Mock observation manager
     env.observation_manager = MagicMock()
     from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
-    from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+    from hal.server.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
     obs_dims = PARKOUR_MODEL_OBSERVATION_DEFINITION.get_observation_dimensions(
         KRABBY_QUAD_DEFINITION
     )

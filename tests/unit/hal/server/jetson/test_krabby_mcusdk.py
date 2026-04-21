@@ -19,7 +19,7 @@ from hal.server.jetson.krabby_mcusdk import (
     _map_mcu_joints_to_normalized,
     _rad_to_pwm,
 )
-from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 
 class TestHalToFirmwareName:

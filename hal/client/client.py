@@ -87,7 +87,7 @@ class HalClient:
             self.context = None
 
         self._initialized = False
-        logger.info("HAL client closed")
+        logger.info("HAL client closed: %s", self.__class__.__name__)
 
     def __enter__(self):
         """Context manager entry."""

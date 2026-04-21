@@ -14,7 +14,7 @@ from hal.client.config import HalClientConfig, HalServerConfig
 from hal.client.observation.types import NavigationCommand
 from hal.client.data_structures.hardware import HardwareObservations
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
-from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 from compute.testing.inference_test_runner import InferenceTestRunner
 from tests.helpers import create_dummy_hw_obs
 

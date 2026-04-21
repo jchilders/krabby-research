@@ -71,9 +71,7 @@ python -m hal.server.jetson.main --checkpoint /path/to/model.pt
 - `--checkpoint`: Path to model checkpoint file
 
 **Optional:**
-- `--inference_device`: Device for inference, `cuda` or `cpu` (default: cuda)
-- `--observation_bind`: Observation endpoint (default: `inproc://hal_observation`)
-- `--command_bind`: Command endpoint (default: `inproc://hal_commands`)
+- `--log-level`: Python logging level for this process (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`; default: `INFO`)
 
 ## Components
 

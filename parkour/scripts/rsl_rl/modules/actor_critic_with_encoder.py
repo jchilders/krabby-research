@@ -166,8 +166,6 @@ class ActorCriticRMA(nn.Module):
                 critic_layers.append(activation)
         self.critic = nn.Sequential(*critic_layers)
 
-        print(f"Actor MLP: {self.actor}")
-        print(f"Critic MLP: {self.critic}")
 
         self.noise_std_type = noise_std_type
         if self.noise_std_type == "scalar":

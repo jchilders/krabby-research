@@ -35,11 +35,13 @@ async def portal_client_loop(
     session = aiohttp.ClientSession()
     connect_url = server_signaling_ws_url_with_token(url, teleop_edge_settings)
     reconnect_s = teleop_edge_settings.server_reconnect_s
+    last_disconnect_reason: str | None = None
     try:
         while True:
             try:
                 async with session.ws_connect(connect_url, heartbeat=30.0) as ws:
                     logger.info("teleop server signaling connected: %s", connect_url)
+                    last_disconnect_reason = None
                     await run_robot_signaling_loop(
                         ws,
                         teleop_settings=teleop_edge_settings,
@@ -49,11 +51,20 @@ async def portal_client_loop(
             except asyncio.CancelledError:
                 break
             except aiohttp.ClientError as e:
-                logger.warning(
-                    "teleop server signaling disconnected (%s); retry in %ss",
-                    e,
-                    reconnect_s,
-                )
+                reason = str(e)
+                if reason != last_disconnect_reason:
+                    logger.warning(
+                        "teleop server signaling disconnected (%s); retry in %ss",
+                        e,
+                        reconnect_s,
+                    )
+                    last_disconnect_reason = reason
+                else:
+                    logger.debug(
+                        "teleop server signaling still disconnected (%s); retry in %ss",
+                        e,
+                        reconnect_s,
+                    )
             try:
                 await asyncio.sleep(reconnect_s)
             except asyncio.CancelledError:

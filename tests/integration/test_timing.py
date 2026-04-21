@@ -10,7 +10,7 @@ from hal.server import HalServerBase
 from hal.client.config import HalClientConfig, HalServerConfig
 from hal.client.observation.types import NavigationCommand
 from hal.client.data_structures.hardware import HardwareObservations
-from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+from hal.server.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 from compute.testing.inference_test_runner import InferenceTestRunner
 from tests.helpers import create_dummy_hw_obs

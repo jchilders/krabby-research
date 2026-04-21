@@ -24,7 +24,7 @@ from hal.client.observation.types import NavigationCommand
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 from compute.parkour.parkour_types import ParkourObservation
 from compute.parkour.policy_interface import ModelWeights, ParkourPolicyModel
-from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 from compute.testing.inference_test_runner import InferenceTestRunner
 from tests.helpers import create_dummy_hw_obs
 

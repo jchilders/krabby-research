@@ -22,7 +22,7 @@ from hal.server.robot_definition import (
     ObservationScalingDefinition,
     RobotDefinition,
 )
-from hal.server.isaac.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
+from hal.server.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
 
 _TEST_ROBOT = RobotDefinition(
     name="test_robot",

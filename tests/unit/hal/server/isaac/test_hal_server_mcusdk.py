@@ -20,7 +20,7 @@ from hal.client.data_structures.hardware import JointCommand
 from hal.server import HalServerConfig
 from hal.server.isaac.hal_server import IsaacSimHalServer
 from hal.server.isaac.isaacsim_mcusdk import IsaacSimMCUSDK
-from hal.server.isaac.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
+from hal.server.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 
 

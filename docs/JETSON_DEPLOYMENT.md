@@ -106,6 +106,27 @@ ssh <username>@<hostname-or-ip>
 - Ensure the SSH server is running on the Jetson: `sudo systemctl status ssh`.
 - Check that the firewall allows SSH (port 22).
 
+### 1.1 DNS note for `.local` hostnames on Linux
+
+Use this when the Jetson needs to connect to an external host by DNS name (for example, a teleop/relay service) and your network uses `*.local` records. This may be unnecessary for field deployments that do not depend on external hostname-based connectivity.
+
+If your network DNS authority serves names like `host.local` but the Jetson still cannot resolve them, Linux NSS may be stopping at mDNS before trying normal DNS. A common default is:
+
+`hosts: files mdns4_minimal [NOTFOUND=return] dns`
+
+The `[NOTFOUND=return]` part can prevent DNS lookups for `.local` when mDNS does not answer. On Jetson/Linux, you can make DNS fallback work by removing that early return:
+
+```bash
+sudo sed -i 's/^hosts:.*/hosts:          files mdns4_minimal dns/' /etc/nsswitch.conf
+```
+
+Why this is needed:
+- It keeps mDNS support but allows fallback to configured DNS servers when mDNS has no answer.
+
+Scope of this fix:
+- This addresses `*.local` name resolution via DNS fallback.
+- It does **not** make bare hostnames (for example `host`) resolve by itself; bare names still require a DNS search domain or using the FQDN directly (`host.local`).
+
 ### 2. Docker Installation
 
 Docker is required for running the locomotion container.
@@ -122,9 +143,7 @@ sudo mkdir -p /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
 # Set up the repository
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 # Install Docker Engine
 sudo apt-get update
@@ -158,17 +177,11 @@ sudo apt-get install -y curl
 
 # Configure repository
 curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list |  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' |  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
 # Install nvidia-container-toolkit packages
 sudo apt-get update
-sudo apt-get install -y \
-    nvidia-container-toolkit \
-    nvidia-container-toolkit-base \
-    libnvidia-container-tools \
-    libnvidia-container1
+sudo apt-get install -y  nvidia-container-toolkit  nvidia-container-toolkit-base  libnvidia-container-tools  libnvidia-container1
 
 # Configure Docker to use nvidia runtime
 sudo nvidia-ctk runtime configure --runtime=docker
@@ -177,10 +190,10 @@ sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 
 # Verify configuration
-docker info | grep -i runtime
+sudo docker info | grep -i runtime
 ```
 
-**Note**: The NVIDIA runtime should appear as `nvidia` in the Docker info output. If it doesn't, verify the configuration was applied correctly.
+**Note**: `nvidia` should appear in the `Runtimes:` list. `Default Runtime` may still be `runc` (this is common and OK); on Jetson, run containers with `--runtime=nvidia` as shown below.
 
 ### 4. Power and performance mode (optional)
 
@@ -225,14 +238,34 @@ After the next reboot, the service will set max power mode and lock clocks. To r
 
 ### 5. ZED 2i Camera (Optional — Host Verification)
 
-Optional: verify the ZED 2i on the host before using it in the container.
+**Required once per Jetson before production runs (recommended order):**
 
-1. **Match L4T**: Check your L4T version (`cat /etc/nv_tegra_release`) and download the matching ZED SDK installer from [Stereolabs](https://www.stereolabs.com/developers/release/) (e.g. L4T 36.4 → `ZED_SDK_Tegra_L4T36.4_*.zstd.run`).
-2. **Install**: `sudo apt-get install -y zstd` then run the `.zstd.run` installer.
-3. **Verify USB**: `lsusb | grep -i zed` — device must appear on a USB 3.0 port.
-4. **Run diagnostics**: `ZED_Diagnostic -c -d`
+1. **Verify USB**: `lsusb | grep -i zed` — device must appear on a USB 3.0 port.
+2. **Run initial diagnostics in container**: `sudo docker run --rm --runtime=nvidia --network host -v /dev:/dev --privileged -v ~/zed-resources:/usr/local/zed/resources --entrypoint ZED_Diagnostic krabby-locomotion:latest -c -d`
 
-   You should see **OK** for: ZED SDK Diagnostic, Processor, Graphics Card, and CUDA Operations. Under **AI Models Diagnostic**, detection models (MULTI CLASS, HUMAN BODY, PERSON HEAD, REID) may show "not optimized" — that is normal and not used by the HAL RGB/depth pipeline. For depth, ensure **NEURAL LIGHT DEPTH**, **NEURAL DEPTH**, and **NEURAL PLUS DEPTH** show "optimized" (run the pre-optimization step below if needed).
+   You should see **OK** for: ZED SDK Diagnostic, Processor, Graphics Card, and CUDA Operations. Under **AI Models Diagnostic**, detection models (MULTI CLASS, HUMAN BODY, PERSON HEAD, REID) may show "not optimized" - that is normal and not used by the HAL RGB/depth pipeline. On this initial diagnostic pass, depth models may still show "not optimized".
+
+3. **One-time optimization of all neural depth models**:
+
+```bash
+yes | sudo docker run --rm --runtime=nvidia --network host -v /dev:/dev --privileged -v ~/zed-resources:/usr/local/zed/resources --entrypoint ZED_Diagnostic krabby-locomotion:latest -nrlo_all
+```
+
+4. **Rerun diagnostics**: `sudo docker run --rm --runtime=nvidia --network host -v /dev:/dev --privileged -v ~/zed-resources:/usr/local/zed/resources --entrypoint ZED_Diagnostic krabby-locomotion:latest -c -d`
+
+   After optimization, verify **NEURAL LIGHT DEPTH**, **NEURAL DEPTH**, and **NEURAL PLUS DEPTH** show "optimized".
+
+Then keep the same mount on subsequent runs:
+
+```bash
+sudo docker run --rm --runtime=nvidia --network host -v /path/to/checkpoints:/workspace/checkpoints -v /dev:/dev --privileged -v ~/zed-resources:/usr/local/zed/resources krabby-locomotion:latest --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
+```
+
+Optional camera validation using the Docker image:
+
+1. **Validate camera output with ZED_Explorer (local desktop/X11 only)**:
+   - `xhost +local:root`
+   - `sudo docker run --rm --runtime=nvidia --network host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix -v /dev:/dev --privileged -v ~/zed-resources:/usr/local/zed/resources --entrypoint ZED_Explorer -it krabby-locomotion:latest`
 
 **If the SDK can’t open the camera** (appears in `lsusb` but diagnostic fails), install udev rules:
 
@@ -245,24 +278,19 @@ Unplug and replug the ZED, then retry.
 
 **Two ZED units:** the default catalog’s second RGB-D row is **`side_rgbd`** (policy side slot when `policy_scan_slot="side"`). For that row, set **`KRABBY_SIDE_ZED_USB_SERIAL`** to the **integer USB serial** of the side ZED so HAL selects the correct device; the primary `front_rgbd` ZED can use the first enumerated device when no serial is set there.
 
+**Container requirements for ZED on Jetson:** ZED uses USB/libusb access, so run the locomotion container with `-v /dev:/dev` and `--privileged` (using only `--device /dev/video0` is insufficient).
+
 ### MaixSense-A075V (optional host bring-up)
 
 Optional RGB-D over **HTTP** (no Stereolabs SDK). Use as the primary `front_rgbd` driver or as extra `rgbd` catalog rows. Official docs: [MaixSense-A075V – Sipeed Wiki](https://wiki.sipeed.com/hardware/en/maixsense/maixsense-a075v/maixsense-a075v.html).
 
 1. **USB / link**: Often **`0525:a4a2`** (Linux RNDIS). The module is **`192.168.233.1`** on the USB Ethernet link by default.
-2. **Jetson IP**: Put **`192.168.233.2/24`** on the RNDIS interface only. Find the iface with `ip -br link` (commonly **`enx…`**, not always `usb0`). Do not attach **`192.168.233.0/24`** to another NIC.
-3. **Check reachability**: `ip route get 192.168.233.1` must show the RNDIS device and `src 192.168.233.2`; then `ping -c 3 192.168.233.1` and `curl -sS -o /dev/null -w '%{http_code}\n' http://192.168.233.1/`.
-4. **NetworkManager** (replace `IFACE`):
-
-```bash
-sudo nmcli connection add type ethernet ifname IFACE con-name maixsense-rndis \
-  ipv4.method manual ipv4.addresses 192.168.233.2/24 \
-  ipv6.method ignore connection.autoconnect yes
-sudo nmcli connection up maixsense-rndis
-```
+2. **Jetson IP / routing pitfall**: If multiple host interfaces are attached to **`192.168.233.0/24`**, routing to the MaixSense default address **`192.168.233.1`** can become ambiguous and cause intermittent timeouts / unreachable camera behavior.
+3. **Check reachability**: Run `ip route get 192.168.233.1` and confirm that traffic to the camera goes out through the USB network interface used by that camera and uses the expected source IP on that link. Then verify connectivity with `ping -c 3 192.168.233.1` and `curl -sS -o /dev/null -w '%{http_code}\n' http://192.168.233.1/`.
+4. **Host network config**: Ensure the USB network interface for the camera is configured persistently on the host (for example via NetworkManager) with an address in the camera subnet, and that this interface comes up automatically after reboot.
 
 5. **Web UI**: `http://192.168.233.1` (~10–15 s after power-on). Remote browser via Jetson: `ssh -N -L 8080:192.168.233.1:80 USER@JETSON` then open `http://127.0.0.1:8080`.
-6. **Driver problems**: [Sipeed install / driver notes](https://wiki.sipeed.com/hardware/en/maixsense/maixsense-a075v/install_drivers.html).
+6. **If needed (troubleshooting only)**: Driver install notes from Sipeed are available here: [Sipeed install / driver notes](https://wiki.sipeed.com/hardware/en/maixsense/maixsense-a075v/install_drivers.html). For this Jetson production deployment, camera access uses USB networking; use the driver steps only if that USB network path is not detected or reachable.
 
 **HAL wiring**
 
@@ -272,6 +300,14 @@ sudo nmcli connection up maixsense-rndis
 - **Hardware smoke test**: `scripts/run_jetson_maixsense_hal_hw_test.sh` (expects Docker image `krabby-locomotion:latest`, **`--network host`**, and **`KRABBY_MAIXSENSE_LIVE_TEST_HOST`** set to the module IP; optional **`KRABBY_MAIXSENSE_LIVE_TEST_PORT`**).
 
 **Docker**: No ZED-style USB passthrough for HTTP; the container must reach each module’s IP (**`--network host`** on Jetson is typical). For every MaixSense row, the catalog’s **`maixsense_host_env`** / **`maixsense_port_env`** name the variables you set at **`docker run`** (**`-e NAME=value`**, one pair per module)—same pattern as multiple ZED serial envs.
+
+**Runtime example (MaixSense over HTTP):**
+
+```bash
+sudo docker run --rm --runtime=nvidia --network host -v /path/to/checkpoints:/workspace/checkpoints -e KRABBY_JETSON_MAIXSENSE_SIDE_HOST=192.168.233.1 krabby-locomotion:latest --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
+```
+
+Add more `-e ...` entries (and optional `-e ..._PORT=...`) for each additional MaixSense catalog row.
 
 **HAL front camera (camera_rgb / camera_depth)**  
 The Jetson HAL fills `HardwareObservations.camera_rgb` and `camera_depth` from the **front RGB-D observation camera** defined in **`JETSON_SENSOR_CATALOG`**: the row with **`id="front_rgbd"`** and **`is_primary=True`** sets **`camera_driver`** (e.g. **`zed`** or **`maixsense_a075v`**), **resolution**, and **fps**. Optional constructor overrides: **`camera_resolution`**, **`camera_fps`**, **`camera_driver`**. **`depth_mode`** applies to **ZED** only. **Policy scan** (`scan_features`, optional **`side_*`**) comes from the configured depth streams; **every opened RGB-D row** also appears under **`rgbd_by_catalog_id`**. GStreamer IDs, ZED install, and MaixSense networking: **SENSOR_INTERFACE.md**, ZED section above, and [MaixSense-A075V (optional host bring-up)](#maixsense-a075v-optional-host-bring-up). Wire format: **HAL_GUIDE.md** and `hal/client/data_structures/hardware.py`.
@@ -284,6 +320,10 @@ The Docker image must be available on the Jetson device. Pull it from your conta
 
 **Important**: Checkpoint files are not included in the Docker image. You must mount your checkpoint directory as a volume using `-v /path/to/checkpoints:/workspace/checkpoints`. All examples below assume checkpoints are mounted at `/workspace/checkpoints` inside the container.
 
+**Camera-specific mounts**:
+- If the active front camera driver is `zed`, include `-v ~/zed-resources:/usr/local/zed/resources` on runs after pre-optimization.
+- If the active front camera driver is `maixsense_a075v`, that ZED resources mount is not required.
+
 **Optional: Enable data collection with host persistence**
 
 Create the host folder first:
@@ -295,14 +335,7 @@ mkdir -p /path/to/krabby_bags
 Set `--data-collector-output-dir` to enable recording. The mount target must match the same container path:
 
 ```bash
-docker run --rm --runtime=nvidia \
-    -v /path/to/checkpoints:/workspace/checkpoints \
-    -v /path/to/krabby_bags:/workspace/bags \
-    -v /dev:/dev \
-    --privileged \
-    krabby-locomotion:latest \
-    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --data-collector-output-dir /workspace/bags
+sudo docker run --rm --runtime=nvidia  -v /path/to/checkpoints:/workspace/checkpoints  -v /path/to/krabby_bags:/workspace/bags  -v /dev:/dev  --privileged  krabby-locomotion:latest  --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt  --data-collector-output-dir /workspace/bags
 ```
 
 ### Important: GPU Runtime Flag
@@ -311,7 +344,7 @@ docker run --rm --runtime=nvidia \
 
 ```bash
 # Correct for Jetson
-docker run --rm --runtime=nvidia <image> <command>
+sudo docker run --rm --runtime=nvidia <image> <command>
 
 # If you get "unknown or invalid runtime name: nvidia", reconfigure:
 sudo nvidia-ctk runtime configure --runtime=docker
@@ -323,125 +356,14 @@ sudo systemctl restart docker
 Run the production inference runner:
 
 ```bash
-docker run --rm --runtime=nvidia \
-    -v /path/to/checkpoints:/workspace/checkpoints \
-    -v /dev:/dev \
-    krabby-locomotion:latest \
-    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
+sudo docker run --rm --runtime=nvidia  -v /path/to/checkpoints:/workspace/checkpoints  -v /dev:/dev  krabby-locomotion:latest  --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
 ```
 
 **Note**: 
 - The container entrypoint is `hal.server.jetson.main`, so you can pass arguments directly without specifying the Python module.
 - Replace `/path/to/checkpoints` with the actual path to your checkpoint directory on the host.
 - Ensure the checkpoint file exists at the specified path (e.g., `/path/to/checkpoints/unitree_go2_parkour_teacher.pt` must exist on the host).
-
-### With ZED 2i Camera
-
-The ZED SDK accesses the camera over USB (libusb). `--device /dev/video0` alone is not enough; the container requires `-v /dev:/dev` and `--privileged`:
-
-```bash
-docker run --rm --runtime=nvidia \
-    -v /path/to/checkpoints:/workspace/checkpoints \
-    -v /dev:/dev \
-    --privileged \
-    krabby-locomotion:latest \
-    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
-```
-
-**Note**: On first use the ZED SDK downloads and optimizes NEURAL depth models, adding several minutes to startup. Pre-optimize using the section below to avoid this.
-
-### With MaixSense-A075V (HTTP in container)
-
-Configure RNDIS on the **Jetson host** first ([MaixSense-A075V (optional host bring-up)](#maixsense-a075v-optional-host-bring-up)). The container must reach **every** module IP you use; **`--network host`** is typical.
-
-**Example (`docker run`):** use **`--network host`** so the container can reach each module. Each **`-e`** name must match that row’s **`maixsense_host_env`** (and port env if **`maixsense_port_env`** is set) in **`JETSON_SENSOR_CATALOG`**. Below uses illustrative host env names for a **front** + **side** pair; rename them in the catalog and in **`docker run`** if you prefer other strings.
-
-```bash
-docker run --rm --runtime=nvidia --network host \
-    -v /path/to/checkpoints:/workspace/checkpoints \
-    -e KRABBY_JETSON_MAIXSENSE_FRONT_HOST=192.168.233.1 \
-    -e KRABBY_JETSON_MAIXSENSE_SIDE_HOST=192.168.234.1 \
-    krabby-locomotion:latest \
-    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
-```
-
-Add more **`-e …`** (and optional **`-e …_PORT=…`**) for every MaixSense row you open. Third-party USB–Ethernet links may use different subnets—set values accordingly.
-
-### Pre-optimizing ZED NEURAL depth models
-
-Optimization is GPU-specific and must run on the target Jetson. Use a persistent volume to avoid re-downloading on every run:
-
-1. Run the image once to download and optimize the models:
-
-   ```bash
-   yes | docker run --rm --runtime=nvidia -v /dev:/dev --privileged \
-       -v ~/zed-resources:/usr/local/zed/resources \
-       -i krabby-locomotion:latest \
-       bash -c "ZED_Diagnostic -nrlo && ZED_Diagnostic -nrlo_plus"
-   ```
-
-   This takes several minutes. The models are saved to `~/zed-resources` on the host.
-
-2. Mount the same directory on subsequent runs:
-
-   ```bash
-   docker run --rm --runtime=nvidia \
-       -v /path/to/checkpoints:/workspace/checkpoints \
-       -v /dev:/dev --privileged \
-       -v ~/zed-resources:/usr/local/zed/resources \
-       krabby-locomotion:latest \
-       --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
-   ```
-
-### In-Process Mode (Default - Recommended for Production)
-
-By default, the inference runner uses in-process communication (`inproc://`) which is more efficient for single-container deployment:
-
-```bash
-docker run --rm --runtime=nvidia \
-    -v /path/to/checkpoints:/workspace/checkpoints \
-    -v /dev:/dev \
-    krabby-locomotion:latest \
-    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
-```
-
-**Note**: In-process mode (`inproc://`) provides zero-copy communication and lowest latency. This is the recommended mode for production deployment.
-
-### Network Mode (Cross-Container Communication)
-
-For running HAL server and client in separate containers:
-
-**HAL Server Container:**
-```bash
-docker run --rm --runtime=nvidia \
-    -v /path/to/checkpoints:/workspace/checkpoints \
-    -v /dev:/dev \
-    -p 6001:6001 -p 6002:6002 \
-    --name hal-server \
-    krabby-locomotion:latest \
-    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --observation_bind tcp://*:6001 \
-    --command_bind tcp://*:6002
-```
-
-**HAL Client Container (on same or different machine):**
-```bash
-docker run --rm --runtime=nvidia \
-    -v /path/to/checkpoints:/workspace/checkpoints \
-    --name hal-client \
-    krabby-locomotion:latest \
-    --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
-    --observation_endpoint tcp://hal-server:6001 \
-    --command_endpoint tcp://hal-server:6002
-```
-
-**Note**: Network mode is useful for debugging and multi-container setups, but has higher latency than in-process mode. Both containers require checkpoint volume mounts.
-
-## Environment Variables
-
-- `CUDA_VISIBLE_DEVICES`: Control which GPU to use (default: all)
-- `HAL_BASE_PORT`: Base port for HAL endpoints (default: 6000)
-- `LOG_LEVEL`: Logging level (default: INFO)
+- Optional: set process logging verbosity with `--log-level` (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`), for example `--log-level DEBUG`.
 
 ## Troubleshooting
 
@@ -458,7 +380,7 @@ If you get "unknown or invalid runtime name: nvidia":
 1. Verify nvidia-container-toolkit is installed: `which nvidia-ctk`
 2. Reconfigure: `sudo nvidia-ctk runtime configure --runtime=docker`
 3. Restart Docker: `sudo systemctl restart docker`
-4. Verify: `docker info | grep -i runtime`
+4. Verify: `sudo docker info | grep -i runtime`
 
 ### Docker iptables / networking errors
 
@@ -477,55 +399,14 @@ If you encounter CUDA OOM errors:
 - Verify camera is connected: `lsusb | grep ZED`
 - The ZED SDK uses USB (not only V4L2). Ensure the container is run with `-v /dev:/dev` and `--privileged` so it can access `/dev/bus/usb`. `--device /dev/video0` alone is often insufficient.
 
-### High Latency
-
-- Verify GPU is being used: Check logs for "CUDA available" and device name
-- Consider TensorRT export for optimization
-- Check system load and thermal throttling: `tegrastats`
-- Ensure using `--runtime=nvidia` for GPU access
-
-## Performance Tuning
-
-### TensorRT Optimization
-
-For faster inference, export the model to TensorRT format. This requires first exporting to ONNX, then converting to TensorRT:
-
-1. **Export to ONNX**: Use the training scripts to export the model to ONNX format (see `parkour/scripts/rsl_rl/play.py` for ONNX export functionality).
-
-2. **Convert ONNX to TensorRT**: Use TensorRT's `trtexec` tool or Python API to convert the ONNX model to TensorRT engine format.
-
-**Note**: TensorRT optimization can significantly reduce inference latency on Jetson devices. The exact conversion process depends on your model architecture and TensorRT version. Refer to NVIDIA's TensorRT documentation for detailed conversion steps.
-
-### Control Loop Rate
-
-The HAL runtime currently uses a fixed in-code control loop rate of 100 Hz.
-
 ## Production Deployment Notes
 
-### System Configuration
+This section lists Jetson production runtime readiness checks for hardware deployment:
 
-- **JetPack Version**: 6.1/6.2 (L4T 36.4) or later recommended
-- **Docker**: Use **`--network host`** on the `docker run` line when needed for Jetson networking/iptables limitations (see **Docker iptables / networking errors** under Troubleshooting below).
-- **NVIDIA Runtime**: Must be configured for GPU access (`--runtime=nvidia`)
-- **User Permissions**: User must be in docker group to run containers without sudo
+- **JetPack/L4T**: Use a JetPack release compatible with the container assumptions in this repo (6.1/6.2 with L4T 36.4 is the tested baseline).
+- **Container runtime**: Use `--runtime=nvidia`; use `--network host` when required by your Jetson networking setup (see Docker iptables / networking errors above).
+- **Permissions**: Ensure the deployment user can run Docker commands without interactive escalation.
+- **Camera reachability**: Confirm each required camera endpoint is reachable from the Jetson host before starting the container.
+- **Checkpoint + storage**: Ensure checkpoint and bag output mounts exist on the host before launch.
 
-### Performance Considerations
-
-- **GPU Usage**: Always use `--runtime=nvidia` for GPU-accelerated inference
-- **Communication Mode**: Use in-process mode (`inproc://`) for production (lowest latency)
-- **Camera**: ZED camera initialization is required for production (not optional)
-- **TensorRT**: Consider TensorRT export for optimized inference performance
-
-### Important Notes
-
-- **Camera**: ZED camera must be initialized for production deployment to provide valid depth/scan features for inference.
-
-## Isaac Sim synthetic front camera
-
-When running the HAL server in Isaac Sim, the **synthetic front camera** is used: the first camera in `scene.sensors` that provides depth/RGB is used to fill `camera_rgb` and `camera_depth` (same as `rgb_camera_1` and `depth_map`). Add a camera in the scene that approximates the real ZED (position and FOV) and attach it to the robot or a fixed frame. Resolution is 480×640 in the current implementation. Validate by connecting a HAL client to the Isaac HAL observation endpoint and verifying `camera_rgb` and `camera_depth` in the observations.
-
-## Additional Resources
-
-- Docker dependencies: See `docs/DOCKER_DEPENDENCIES.md`
-- HAL architecture and observation format: See `docs/HAL_GUIDE.md`
 

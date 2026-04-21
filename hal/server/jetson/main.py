@@ -25,7 +25,7 @@ from hal.server.jetson import JetsonHalServer
 from compute.parkour.inference_client import ParkourInferenceClient
 from compute.parkour.policy_interface import ModelWeights
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
-from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+from hal.server.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,6 +33,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 CONTROL_RATE_HZ = 100.0
+OBSERVATION_ENDPOINT = "inproc://hal_observation"
+COMMAND_ENDPOINT = "inproc://hal_commands"
 
 
 def main():
@@ -42,26 +44,13 @@ def main():
     # Model arguments
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
     parser.add_argument(
-        "--inference_device",
+        "--log-level",
         type=str,
-        default="cuda",
-        choices=["cuda", "cpu"],
-        help="Device for inference",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Python logging level for this process (default: INFO)",
     )
 
-    # HAL endpoints (inproc for same-process communication)
-    parser.add_argument(
-        "--observation_bind",
-        type=str,
-        default="inproc://hal_observation",
-        help="Observation endpoint (inproc for same-process)",
-    )
-    parser.add_argument(
-        "--command_bind",
-        type=str,
-        default="inproc://hal_commands",
-        help="Command endpoint (inproc for same-process)",
-    )
     parser.add_argument(
         "--data-collector-output-dir",
         type=str,
@@ -81,9 +70,12 @@ def main():
     )
 
     args = parser.parse_args()
+    logging.getLogger().setLevel(getattr(logging, args.log_level))
+    logger.setLevel(getattr(logging, args.log_level))
 
     model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
-    robot_definition = KRABBY_HEX_DEFINITION
+    # Use the quad Unitree-Go2 definition for parkour teacher/student checkpoints.
+    robot_definition = UNITREE_GO2_DEFINITION
     observation_dimensions = model_definition.get_observation_dimensions(robot_definition)
 
     # Running flag for graceful shutdown
@@ -109,8 +101,8 @@ def main():
     try:
         # Create HAL server config (inproc for production)
         hal_server_config = HalServerConfig(
-            observation_bind=args.observation_bind,
-            command_bind=args.command_bind,
+            observation_bind=OBSERVATION_ENDPOINT,
+            command_bind=COMMAND_ENDPOINT,
         )
 
         # Create and initialize HAL server
@@ -152,8 +144,8 @@ def main():
 
         # Create HAL client config
         hal_client_config = HalClientConfig(
-            observation_endpoint=args.observation_bind,
-            command_endpoint=args.command_bind,
+            observation_endpoint=OBSERVATION_ENDPOINT,
+            command_endpoint=COMMAND_ENDPOINT,
         )
 
         if teleop_sensor_ids is not None:
@@ -185,7 +177,7 @@ def main():
             observation_dimensions=observation_dimensions,
             robot_definition=robot_definition,
             control_rate=CONTROL_RATE_HZ,
-            device=args.inference_device,
+            device="cuda",
             transport_context=transport_context,
         )
         parkour_client.initialize()
@@ -196,8 +188,8 @@ def main():
 
         if args.data_collector_output_dir is not None:
             dc_cfg = build_data_collector_config(
-                observation_endpoint=args.observation_bind,
-                command_endpoint=args.command_bind,
+                observation_endpoint=OBSERVATION_ENDPOINT,
+                command_endpoint=COMMAND_ENDPOINT,
                 output_dir=args.data_collector_output_dir,
             )
             collector_stop = threading.Event()
@@ -212,6 +204,7 @@ def main():
 
         logger.info(f"Starting production loop at {CONTROL_RATE_HZ} Hz")
         period_s = 1.0 / CONTROL_RATE_HZ
+        lag_warning_count = 0
 
         # Main loop: HAL server operations
         try:
@@ -239,13 +232,19 @@ def main():
 
                 if sleep_time > 0:
                     time.sleep(sleep_time)
+                    lag_warning_count = 0
                 else:
                     if loop_duration_s > period_s * 1.1:
-                        logger.warning(
-                            f"Loop unable to keep up! "
-                            f"Frame time: {loop_duration_s*1000:.2f}ms "
-                            f"exceeds target: {period_s*1000:.2f}ms"
-                        )
+                        lag_warning_count += 1
+                        if lag_warning_count == 1 or lag_warning_count % 100 == 0:
+                            logger.warning(
+                                "Loop unable to keep up! Frame time: %.2fms exceeds target: %.2fms (count=%d)",
+                                loop_duration_s * 1000.0,
+                                period_s * 1000.0,
+                                lag_warning_count,
+                            )
+                    else:
+                        lag_warning_count = 0
 
         except KeyboardInterrupt:
             logger.info("Interrupted by user")

@@ -104,7 +104,7 @@ def main():
             logger.info("Using shared ZMQ context for inproc connections")
 
         from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
-        from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+        from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
         model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
         robot_definition = KRABBY_HEX_DEFINITION
         observation_dimensions = model_definition.get_observation_dimensions(robot_definition)

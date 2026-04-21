@@ -24,7 +24,7 @@ if _project_root not in sys.path:
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 from hal.server import HalServerConfig
 from hal.server.jetson import JetsonHalServer
-from hal.server.jetson.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
+from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
 logging.basicConfig(
     level=logging.INFO,

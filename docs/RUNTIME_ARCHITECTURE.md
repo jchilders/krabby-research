@@ -1,190 +1,161 @@
 # Runtime Architecture Diagram
 
-This document provides a visual representation of the containerization and communication architecture for the parkour policy runtime system.
+This document provides a visual representation of the current containerization and communication architecture for the parkour runtime.
 
 ## System Overview
 
-The system implements a containerized architecture with four distinct container types:
+The runtime currently uses four main container patterns:
 
-1. **IsaacSim container** (x86): Combined inference logic + IsaacSim HAL server for simulation testing (inproc ZMQ)
-2. **Testing container (x86)**: Combined inference logic + game loop test script for x86 testing (inproc ZMQ)
-3. **Testing container (ARM)**: Combined inference logic + game loop test script for ARM-specific testing (inproc ZMQ)
-4. **Locomotion container** (Jetson/ARM): Combined inference logic + HAL server for robot deployment (inproc ZMQ) - **Production**
+1. **IsaacSim container** (x86): IsaacSim HAL server + inference client in one process (inproc ZMQ)
+2. **Testing container (x86)**: mock HAL server + inference test runner in one process (inproc ZMQ)
+3. **Testing container (ARM)**: mock HAL server + inference test runner in one process (inproc ZMQ)
+4. **Locomotion container** (Jetson/ARM): Jetson HAL server + inference client in one process (inproc ZMQ) - **Production**
 
-All containers use inproc ZMQ for communication within the same process. The parkour policy inference logic (`compute/parkour/`) is shared across all containers.
+The policy runtime (`compute/parkour/`) is shared across simulation, testing, and production. In production, `python -m hal.server.jetson.main` drives the full loop and can also start optional collector and teleop threads.
 
 ## Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         Development Machine (x86)                        │
-│                                                                           │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │              IsaacSim Container (inference + HAL server)          │  │
-│  │                                                                   │  │
-│  │  ┌────────────────────────────────────────────────────────────┐ │  │
-│  │  │  IsaacSimHalServer                                          │ │  │
-│  │  │  - Publishes: camera frames, robot state                    │ │  │
-│  │  │  - Receives: joint commands                                 │ │  │
-│  │  │  - Applies commands to IsaacSim environment                 │ │  │
-│  │  └────────────────────────────────────────────────────────────┘ │  │
-│  │                          │                                       │  │
-│  │                          │ ZMQ inproc:// (same process)          │  │
-│  │                          ▼                                       │  │
-│  │  ┌────────────────────────────────────────────────────────────┐ │  │
-│  │  │  InferenceRunner + ParkourPolicyModel                       │ │  │
-│  │  │  - Polls HAL server for sensor data                         │ │  │
-│  │  │  - Builds observation tensor                                │ │  │
-│  │  │  - Runs policy inference                                    │ │  │
-│  │  │  - Sends joint commands to HAL server                       │ │  │
-│  │  └────────────────────────────────────────────────────────────┘ │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                           │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │         Testing Container - x86 (inference + game loop)           │  │
-│  │                    (TESTING/DEVELOPMENT ONLY)                      │  │
-│  │                                                                   │  │
-│  │  ┌────────────────────────────────────────────────────────────┐ │  │
-│  │  │  Game Loop Test Script                                      │ │  │
-│  │  │  - Simulates sensor messages (test data)                    │ │  │
-│  │  │  - Publishes: simulated camera frames, robot state           │ │  │
-│  │  │  - Receives: joint commands                                 │ │  │
-│  │  └────────────────────────────────────────────────────────────┘ │  │
-│  │                          │                                       │  │
-│  │                          │ ZMQ inproc:// (same process)          │  │
-│  │                          ▼                                       │  │
-│  │  ┌────────────────────────────────────────────────────────────┐ │  │
-│  │  │  HalClient + ParkourPolicyModel                             │ │  │
-│  │  │  - Receives simulated sensor messages                       │ │  │
-│  │  │  - Builds observation tensor                                │ │  │
-│  │  │  - Runs policy inference                                    │ │  │
-│  │  │  - Sends joint commands to game loop                        │ │  │
-│  │  └────────────────────────────────────────────────────────────┘ │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                           │
-└─────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                         Development Machine (x86)                              │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐  │
+│  │              IsaacSim Container (inference + HAL server)               │  │
+│  │                                                                         │  │
+│  │  ┌───────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ IsaacSimHalServer                                                 │  │  │
+│  │  │ - Reads simulator sensors                                         │  │  │
+│  │  │ - Publishes HAL observation                                       │  │  │
+│  │  │ - Receives and applies joint commands                             │  │  │
+│  │  └───────────────────────────────────────────────────────────────────┘  │  │
+│  │                               │                                         │  │
+│  │                               │ inproc://hal_observation /              │  │
+│  │                               │ inproc://hal_commands                   │  │
+│  │                               ▼                                         │  │
+│  │  ┌───────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ ParkourInferenceClient + ParkourPolicyModel                      │  │  │
+│  │  │ - Polls HAL observations                                          │  │  │
+│  │  │ - Builds model observation tensors                                │  │  │
+│  │  │ - Runs inference and sends JointCommand                           │  │  │
+│  │  └───────────────────────────────────────────────────────────────────┘  │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐  │
+│  │           Testing Container - x86 (mock HAL + inference test)          │  │
+│  │                         (TESTING / DEVELOPMENT)                         │  │
+│  │                                                                         │  │
+│  │  ┌───────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ MockHalServer                                                     │  │  │
+│  │  │ - Publishes synthetic HardwareObservations                        │  │  │
+│  │  │ - Receives JointCommand for validation/stats                      │  │  │
+│  │  └───────────────────────────────────────────────────────────────────┘  │  │
+│  │                               │                                         │  │
+│  │                               │ inproc://hal_observation /              │  │
+│  │                               │ inproc://hal_commands                   │  │
+│  │                               ▼                                         │  │
+│  │  ┌───────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ Inference test runner + ParkourInferenceClient                   │  │  │
+│  │  │ - Exercises the same inference loop used in production            │  │  │
+│  │  └───────────────────────────────────────────────────────────────────┘  │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    Jetson Orin (ARM64)                                    │
-│                                                                           │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │         Locomotion Container (inference + HAL server)             │  │
-│  │                         PRODUCTION                                │  │
-│  │                                                                   │  │
-│  │  ┌────────────────────────────────────────────────────────────┐ │  │
-│  │  │  JetsonHalServer                                            │ │  │
-│  │  │  - ZED 2i Camera → depth features                           │ │  │
-│  │  │  - IMU/Encoders → robot state                               │ │  │
-│  │  │  - Publishes: camera frames, robot state                    │ │  │
-│  │  │  - Receives: joint commands                                 │ │  │
-│  │  │  - Forwards to: motor controllers                            │ │  │
-│  │  └────────────────────────────────────────────────────────────┘ │  │
-│  │                          │                                       │  │
-│  │                          │ ZMQ inproc:// (same process)          │  │
-│  │                          ▼                                       │  │
-│  │  ┌────────────────────────────────────────────────────────────┐ │  │
-│  │  │  InferenceRunner                                            │ │  │
-│  │  │  - Polls HAL server for sensor data                         │ │  │
-│  │  │  - Builds observation tensor                                │ │  │
-│  │  │  - Runs policy inference                                    │ │  │
-│  │  │  - Sends joint commands to HAL server                       │ │  │
-│  │  └────────────────────────────────────────────────────────────┘ │  │
-│  │                          │                                       │  │
-│  │                          ▼                                       │  │
-│  │  ┌────────────────────────────────────────────────────────────┐ │  │
-│  │  │  ParkourPolicyModel (compute/parkour/)                     │ │  │
-│  │  │  - Loads checkpoint                                        │ │  │
-│  │  │  - Runs inference (100+ Hz)                                 │ │  │
-│  │  └────────────────────────────────────────────────────────────┘ │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                           │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │         Testing Container - ARM (inference + game loop)           │  │
-│  │                    (TESTING/DEVELOPMENT ONLY)                      │  │
-│  │                                                                   │  │
-│  │  ┌────────────────────────────────────────────────────────────┐ │  │
-│  │  │  Game Loop Test Script                                      │ │  │
-│  │  │  - Simulates sensor messages (test data)                    │ │  │
-│  │  │  - Publishes: simulated camera frames, robot state           │ │  │
-│  │  │  - Receives: joint commands                                 │ │  │
-│  │  └────────────────────────────────────────────────────────────┘ │  │
-│  │                          │                                       │  │
-│  │                          │ ZMQ inproc:// (same process)          │  │
-│  │                          ▼                                       │  │
-│  │  ┌────────────────────────────────────────────────────────────┐ │  │
-│  │  │  HalClient + ParkourPolicyModel                             │ │  │
-│  │  │  - Receives simulated sensor messages                       │ │  │
-│  │  │  - Builds observation tensor                                │ │  │
-│  │  │  - Runs policy inference                                    │ │  │
-│  │  │  - Sends joint commands to game loop                        │ │  │
-│  │  └────────────────────────────────────────────────────────────┘ │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                           │
-└─────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────┐
+│                           Jetson Orin (ARM64)                                 │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐  │
+│  │             Locomotion Container (inference + HAL server)              │  │
+│  │                              PRODUCTION                                 │  │
+│  │                                                                         │  │
+│  │  ┌───────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ JetsonHalServer                                                   │  │  │
+│  │  │ - Reads real sensors (RGB-D + robot state)                        │  │  │
+│  │  │ - Publishes one HAL observation stream                            │  │  │
+│  │  │ - Receives and applies joint commands                             │  │  │
+│  │  └───────────────────────────────────────────────────────────────────┘  │  │
+│  │                               │                                         │  │
+│  │                               │ inproc://hal_observation /              │  │
+│  │                               │ inproc://hal_commands                   │  │
+│  │                               ▼                                         │  │
+│  │  ┌───────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ ParkourInferenceClient + ParkourPolicyModel                      │  │  │
+│  │  │ - Uses Go2 robot definition for current Jetson runtime            │  │  │
+│  │  │ - Runs on CUDA and emits JointCommand                             │  │  │
+│  │  └───────────────────────────────────────────────────────────────────┘  │  │
+│  │                               │                                         │  │
+│  │                               ├─ Optional: HalDataCollector thread      │  │
+│  │                               └─ Optional: teleop signaling thread      │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐  │
+│  │           Testing Container - ARM (mock HAL + inference test)          │  │
+│  │                         (TESTING / DEVELOPMENT)                         │  │
+│  │                                                                         │  │
+│  │  ┌───────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ MockHalServer                                                     │  │  │
+│  │  │ - Synthetic observations at control rate                           │  │  │
+│  │  │ - Command receive path for ARM validation                           │  │  │
+│  │  └───────────────────────────────────────────────────────────────────┘  │  │
+│  │                               │                                         │  │
+│  │                               │ inproc://hal_observation /              │  │
+│  │                               │ inproc://hal_commands                   │  │
+│  │                               ▼                                         │  │
+│  │  ┌───────────────────────────────────────────────────────────────────┐  │  │
+│  │  │ Inference test runner + ParkourInferenceClient                   │  │  │
+│  │  └───────────────────────────────────────────────────────────────────┘  │  │
+│  └─────────────────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Communication Layers
 
 ### Layer 1: ZMQ Transport Layer
 
-**Purpose**: Low-level message transport between containers/processes
+**Purpose**: Low-level transport between server/client components.
 
 **Transports**:
-- `inproc://` - In-process communication (for unit tests, same-container deployment)
-- `tcp://host:port` - Network communication (for cross-container, cross-machine)
+- `inproc://` for same-process runtime (default in Jetson production and most tests)
+- `tcp://host:port` for cross-process or cross-machine integration when explicitly configured
 
-**Endpoints** (configurable via `HAL_BASE_PORT`, default 6000):
-- Camera: `tcp://host:6000` (PUB/SUB)
-- State: `tcp://host:6001` (PUB/SUB)
-- Commands: `tcp://host:6002` (PUSH/PULL)
+**Runtime endpoints**:
+- Observation endpoint: `inproc://hal_observation` in Jetson production entrypoint
+- Command endpoint: `inproc://hal_commands` in Jetson production entrypoint
 
 ### Layer 2: HAL Contract Layer
 
-**Purpose**: Defines message formats and semantics
+**Purpose**: Defines message shapes and semantics shared by all runtimes.
 
-**Message Types**:
+**Message types**:
 
-1. **Camera Observation** (PUB/SUB, topic: `"camera"`)
-   - Format: Topic-prefixed multipart message
-   - Payload: `float32[N]` array (depth features)
-   - Rate: 30-60 Hz
+1. **Observation** (PUB/SUB, topic prefix: `"observation"`)
+   - Format: single ZMQ frame containing topic prefix + serialized `HardwareObservations`
+   - Payload includes required robot state arrays and optional camera/depth data
+   - Semantics: latest-only (`SNDHWM=1` on server, `RCVHWM=1` + `CONFLATE=1` on client)
 
-2. **State Observation** (PUB/SUB, topic: `"state"`)
-   - Format: Topic-prefixed multipart message
-   - Payload: `float32[M]` array containing:
-     - Base position (3), quaternion (4)
-     - Base linear velocity (3), angular velocity (3)
-     - Joint positions (ACTION_DIM), joint velocities (ACTION_DIM)
-   - Rate: 100+ Hz
-
-3. **Joint Commands** (PUSH/PULL)
-   - Message: `float32[ACTION_DIM]` (desired joint positions)
-   - Semantics: FIFO ordering with backpressure (HWM=5)
-   - Rate: 100+ Hz
+2. **Joint Commands** (PUSH/PULL)
+   - Format: serialized `JointCommand` blob
+   - Semantics: ordered command stream with backpressure (`HWM=5`)
 
 ### Layer 3: Application Layer
 
-**Purpose**: Business logic and policy inference
+**Purpose**: Runtime behavior, model inference, and hardware/simulator adaptation.
 
 **Components**:
 
-1. **HalClient** (`locomotion/interfaces/hal/client.py`)
-   - Subscribes to camera and state topics
-   - Maintains latest-only buffers
-   - Sends joint commands via PUSH/PULL
-   - Builds model input dataclass
+1. **HAL server implementations** (`hal/server/*`)
+   - `JetsonHalServer` for robot hardware
+   - `IsaacSimHalServer` for simulation
+   - `MockHalServer` for inference tests
 
-2. **Policy Model** (`locomotion/runtime/policy_wrapper.py`)
-   - Loads trained checkpoint
-   - Converts model input → observation tensor
-   - Runs policy inference
-   - Returns `JointCommand`
+2. **HAL client interface** (`hal/client/client.py`)
+   - Polls latest `HardwareObservations`
+   - Sends `JointCommand`
+   - Shares server context when using inproc
 
-3. **Game Loop** (`locomotion/runtime/game_loop.py`)
-   - Runs at 100+ Hz
-   - Polls HAL for latest data
-   - Calls policy inference
-   - Sends commands back to HAL
+3. **Inference runtime** (`compute/parkour/inference_client.py`)
+   - Maps HAL observations to model inputs
+   - Runs `ParkourPolicyModel`
+   - Maps inference output back to `JointCommand`
 
 ## Container Communication Patterns
 
@@ -193,133 +164,117 @@ All containers use inproc ZMQ for communication within the same process. The par
 ```
 IsaacSim Container (x86)
     ├─ IsaacSimHalServer
-    │   │
-    │   │ ZMQ inproc:// (same process)
-    │   │
-    │   ▼
-    └─ InferenceRunner + ParkourPolicyModel
+    │    │
+    │    │ inproc://hal_observation / inproc://hal_commands
+    │    ▼
+    └─ ParkourInferenceClient + ParkourPolicyModel
 ```
 
-**Use Case**: Testing inference logic with IsaacSim simulation - inference and HAL server in same container
+**Use case**: Simulation validation with the same HAL contract used in production.
 
-### Pattern 2: Testing Container - x86 (Game Loop Testing)
+### Pattern 2: Testing Container - x86 (Inference Test Loop)
 
 ```
 Testing Container - x86
-    ├─ Game Loop Test Script
-    │   │
-    │   │ ZMQ inproc:// (same process)
-    │   │
-    │   ▼
-    └─ HalClient + ParkourPolicyModel
+    ├─ MockHalServer
+    │    │
+    │    │ inproc://hal_observation / inproc://hal_commands
+    │    ▼
+    └─ Inference test runner + ParkourInferenceClient
 ```
 
-**Use Case**: Testing inference logic with simulated sensor messages (game loop) - inference and game loop in same container
+**Use case**: Fast inference validation without IsaacSim or robot hardware.
 
-### Pattern 3: Testing Container - ARM (ARM-Specific Testing)
+### Pattern 3: Testing Container - ARM (ARM-Specific Validation)
 
 ```
-Testing Container - ARM (Jetson)
-    ├─ Game Loop Test Script
-    │   │
-    │   │ ZMQ inproc:// (same process)
-    │   │
-    │   ▼
-    └─ HalClient + ParkourPolicyModel
+Testing Container - ARM
+    ├─ MockHalServer
+    │    │
+    │    │ inproc://hal_observation / inproc://hal_commands
+    │    ▼
+    └─ Inference test runner + ParkourInferenceClient
 ```
 
-**Use Case**: Testing ARM-specific inference behavior with simulated sensor messages - inference and game loop in same container
+**Use case**: ARM-specific runtime checks with synthetic observations.
 
 ### Pattern 4: Locomotion Container (Production)
 
 ```
-Locomotion Container (Jetson Orin)
-    ├─ JetsonHalServer (real sensors)
-    │   │
-    │   │ ZMQ inproc:// (same process)
-    │   │
-    │   ▼
-    └─ InferenceRunner + ParkourPolicyModel
+Locomotion Container (Jetson)
+    ├─ JetsonHalServer
+    │    │
+    │    │ inproc://hal_observation / inproc://hal_commands
+    │    ▼
+    └─ ParkourInferenceClient + ParkourPolicyModel
 ```
 
-**Use Case**: Production deployment on robot - inference and HAL server in same container
+**Use case**: Robot deployment with real sensors and actuators.
 
 ## Data Flow
 
-### Forward Path (Observation → Action)
+### Forward Path (Observation -> Action)
 
-**For Production Container (Locomotion) and IsaacSim Container:**
+**For production (Jetson) and simulation (IsaacSim):**
 ```
-1. HAL Server (IsaacSimHalServer or JetsonHalServer)
-   └─> Publishes camera frame (ZMQ PUB inproc, topic: "camera")
-   └─> Publishes robot state (ZMQ PUB inproc, topic: "state")
+1. HAL server
+   -> publish HardwareObservations on observation channel
 
-2. InferenceRunner
-   └─> Receives camera frame (ZMQ SUB inproc)
-   └─> Receives robot state (ZMQ SUB inproc)
-   └─> Builds observation tensor
+2. ParkourInferenceClient
+   -> poll latest HardwareObservations
+   -> map to model observation tensors
 
 3. ParkourPolicyModel
-   └─> Runs policy forward pass
-   └─> Returns JointCommand
+   -> run forward pass
+   -> produce action tensor
 
-4. InferenceRunner
-   └─> Sends JointCommand to HAL (ZMQ PUSH inproc)
+4. ParkourInferenceClient
+   -> map action tensor to JointCommand
+   -> send JointCommand to command channel
 
-5. HAL Server
-   └─> Receives command (ZMQ PULL inproc)
-   └─> Applies to simulator/hardware
+5. HAL server
+   -> receive JointCommand
+   -> apply to simulator or hardware actuators
 ```
 
-**For Testing Containers (x86 and ARM):**
+**For testing containers (x86 and ARM):**
 ```
-1. Game Loop Test Script
-   └─> Publishes simulated camera frame (ZMQ PUB inproc, topic: "camera")
-   └─> Publishes simulated robot state (ZMQ PUB inproc, topic: "state")
+1. MockHalServer
+   -> publish synthetic HardwareObservations
 
-2. HalClient
-   └─> Receives camera frame (ZMQ SUB inproc)
-   └─> Receives robot state (ZMQ SUB inproc)
-   └─> Builds model input dataclass
+2. Inference test runner / ParkourInferenceClient
+   -> poll, infer, and send JointCommand
 
-3. ParkourPolicyModel
-   └─> Converts model input → observation tensor
-   └─> Runs policy forward pass
-   └─> Returns JointCommand
-
-4. HalClient
-   └─> Sends JointCommand to game loop (ZMQ PUSH inproc)
-
-5. Game Loop Test Script
-   └─> Receives command (ZMQ PULL inproc)
-   └─> Logs/validates command
+3. MockHalServer
+   -> receive JointCommand for validation/stats
 ```
 
 ### Control Loop Timing
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Game Loop Tick (10ms target, 100 Hz)                   │
-│                                                           │
-│  t=0ms:   Poll HAL for latest camera/state              │
-│  t=1ms:   Assemble observation tensor                    │
-│  t=2ms:   Policy inference (< 15ms target)             │
-│  t=3ms:   Send joint command to HAL                      │
-│  t=4-10ms: Wait for next tick                            │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  Main loop tick (10 ms target, 100 Hz)                          │
+│                                                                  │
+│  t=0ms    HAL publishes newest observation                       │
+│  t=1-3ms  inference client maps + runs model                     │
+│  t=3-5ms  command sent and consumed by HAL                       │
+│  t=5-10ms scheduler slack (or overrun if system is saturated)    │
+└──────────────────────────────────────────────────────────────────┘
 ```
+
+Actual timings depend on sensor IO, model latency, and device load; the runtime logs lag when loop duration exceeds target.
 
 ## High-Watermark and Backpressure
 
-- **HWM = 1**: Only latest message is kept, older messages are dropped
-- **Latest-only semantics**: Client always gets most recent camera/state frame
-- **No queue overflow**: ZMQ automatically drops old messages when HWM is reached
-- **Control rate**: 100+ Hz ensures commands are consumed faster than produced
+- **Observation HWM = 1**: stale observations are dropped in favor of the latest frame
+- **Client CONFLATE = 1**: if multiple observations arrive before polling, only the newest is retained
+- **Command HWM = 5**: commands use bounded queueing to preserve ordering without unbounded growth
+- **Runtime goal**: keep the command path near real-time while preventing memory/queue buildup
 
 ## Security and Isolation
 
-- **Container isolation**: Each container type runs independently
-- **Process isolation**: `inproc://` transport for same-container communication (all containers use inproc)
-- **No shared state**: All communication is message-based via ZMQ
-- **Architecture isolation**: Testing containers are separate from production containers
+- **Container isolation**: simulation/testing/production images remain separately deployable
+- **Process-local default**: production loop uses inproc endpoints within one process
+- **Message-only boundaries**: HAL server/client communicate strictly via serialized messages
+- **Optional network mode**: TCP endpoints are available for explicit cross-process integration, not default production path
 

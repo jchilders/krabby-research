@@ -148,6 +148,8 @@ class JetsonHalServer(HalServerBase):
         self._hal_rgbd_cameras: dict[str, RgbDepthCamera] = {}
         self._primary_catalog_id: str = front_observation_camera_catalog_entry().id
         self._side_catalog_id: Optional[str] = None
+        self._primary_chunk_missing_warned: bool = False
+        self._rgbd_no_frame_logged: dict[str, bool] = {}
         for row in JETSON_SENSOR_CATALOG:
             if row.policy_scan_slot == "side":
                 self._side_catalog_id = row.id
@@ -200,6 +202,7 @@ class JetsonHalServer(HalServerBase):
         for cam in self._hal_rgbd_cameras.values():
             cam.close()
         self._hal_rgbd_cameras.clear()
+        self._rgbd_no_frame_logged.clear()
 
         logger.info(
             "Initializing HAL RGB-D cameras from catalog (primary driver=%s)...",
@@ -242,6 +245,8 @@ class JetsonHalServer(HalServerBase):
                 fps=fps,
                 depth_mode=self._depth_mode,
                 zed_serial_number=zed_serial,
+                maixsense_host=entry.maixsense_host,
+                maixsense_port=entry.maixsense_port,
                 maixsense_host_env=entry.maixsense_host_env,
                 maixsense_port_env=entry.maixsense_port_env,
             )
@@ -498,19 +503,22 @@ class JetsonHalServer(HalServerBase):
 
             placeholder = False
             if rgb_frame is None or depth_frame is None:
-                logger.error(
-                    "HAL RGB-D catalog %s: no frame from camera (rgb_ok=%s depth_ok=%s); "
-                    "using zero tensors shaped rgb=%s depth=%s",
-                    cid,
-                    rgb_frame is not None,
-                    depth_frame is not None,
-                    exp_rgb_shape,
-                    exp_depth_shape,
-                )
+                if not self._rgbd_no_frame_logged.get(cid, False):
+                    logger.error(
+                        "HAL RGB-D catalog %s: no frame from camera (rgb_ok=%s depth_ok=%s); "
+                        "using zero tensors shaped rgb=%s depth=%s",
+                        cid,
+                        rgb_frame is not None,
+                        depth_frame is not None,
+                        exp_rgb_shape,
+                        exp_depth_shape,
+                    )
+                    self._rgbd_no_frame_logged[cid] = True
                 rgb_u8 = np.zeros(exp_rgb_shape, dtype=np.uint8)
                 depth_f = np.zeros(exp_depth_shape, dtype=np.float32)
                 placeholder = True
             else:
+                self._rgbd_no_frame_logged[cid] = False
                 rgb_u8 = np.asarray(rgb_frame, dtype=np.uint8)
                 depth_f = np.asarray(depth_frame, dtype=np.float32)
                 if (
@@ -550,12 +558,15 @@ class JetsonHalServer(HalServerBase):
         scan_features: Optional[np.ndarray] = None
         chunk_p = rgbd_by_catalog_id.get(self._primary_catalog_id)
         if chunk_p is None:
-            logger.warning(
-                "Primary catalog %s: no HAL RGB-D chunk (camera not opened); "
-                "camera_rgb / camera_depth omitted",
-                self._primary_catalog_id,
-            )
+            if not self._primary_chunk_missing_warned:
+                logger.warning(
+                    "Primary catalog %s: no HAL RGB-D chunk (camera not opened); "
+                    "camera_rgb / camera_depth omitted",
+                    self._primary_catalog_id,
+                )
+                self._primary_chunk_missing_warned = True
         else:
+            self._primary_chunk_missing_warned = False
             if chunk_p.rgb.shape != expected_rgb_shape:
                 raise RuntimeError(
                     f"Primary catalog {self._primary_catalog_id!r}: rgb shape "

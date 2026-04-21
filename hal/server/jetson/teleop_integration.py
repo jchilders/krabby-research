@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 import numpy as np
 import zmq
+from zmq.error import ContextTerminated
 
 from hal.client.client import HalClient
 from hal.client.config import HalClientConfig
@@ -92,6 +93,10 @@ def start_jetson_teleop_signaling_thread(
                 while not poll_stop.is_set():
                     try:
                         obs = hal_teleop.poll(timeout_ms=15)
+                    except ContextTerminated:
+                        # Normal during shutdown when the shared ZMQ context is closed first.
+                        logger.debug("teleop HAL client poll stopped (ZMQ context terminated)")
+                        break
                     except Exception:
                         logger.warning(
                             "teleop HAL client poll failed; retrying",

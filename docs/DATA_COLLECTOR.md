@@ -57,11 +57,11 @@ If you launch from an interactive shell inside a running container (instead of `
 
 ## Configuration (Python)
 
-Recording parameters live in **`data_collection/collector_settings.py`**. The entrypoint calls **`build_data_collector_config(observation_endpoint=..., command_endpoint=..., output_dir=...)`** so ZMQ strings match **`--observation_bind`** / **`--command_bind`** (or their defaults). The dataclass shape is **`DataCollectorConfig`** in **`data_collection/config.py`**; **`DataCollectorConfig.from_dict`** / **`load_config`** remain for tests or ad hoc YAML if you build your own loader.
+Recording parameters live in **`data_collection/collector_settings.py`**. The entrypoint calls **`build_data_collector_config(observation_endpoint=..., command_endpoint=..., output_dir=...)`** so collector endpoints match the primary HAL client endpoints. On Jetson (`hal.server.jetson.main`), these are fixed in-process endpoints; on Isaac (`hal.server.isaac.main`), they may come from CLI bind args. The dataclass shape is **`DataCollectorConfig`** in **`data_collection/config.py`**; **`DataCollectorConfig.from_dict`** / **`load_config`** remain for tests or ad hoc YAML if you build your own loader.
 
 | Area | Where it is set |
 |------|-----------------|
-| HAL transport | From server CLI binds via **`build_data_collector_config`** (must match primary `HalClientConfig`). |
+| HAL transport | From the server's configured endpoints via **`build_data_collector_config`** (must match primary `HalClientConfig`; Jetson uses fixed inproc endpoints). |
 | Output | **`DEFAULT_OUTPUT_DIR`**, **`MAX_DISK_USAGE_FRACTION`**, **`ROTATION_MAX_BYTES`**, **`ROTATION_MAX_MINUTES`** in **`collector_settings.py`**; override directory with **`--data-collector-output-dir`**. |
 | Rates | **`RECORDING_RATES`** — wall-clock caps; actual rate is still bounded by HAL publish rate and **latest-only** `poll()` semantics. |
 | Topics | **`TOPIC_ENABLE`** — booleans per ROS topic (see table below). |
