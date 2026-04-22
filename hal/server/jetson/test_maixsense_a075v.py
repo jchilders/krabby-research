@@ -6,7 +6,10 @@ import numpy as np
 import pytest
 
 from hal.server.jetson.maixsense_a075v import (
+    A075V_UINT16_RAW_TO_METERS,
     MaixSenseA075VClient,
+    a075v_depth_raw_to_meters,
+    a075v_set_cfg_bytes_hal,
     frame_config_decode,
     frame_config_encode,
     peek_frame_config_from_getdeep_body,
@@ -18,6 +21,29 @@ def test_frame_config_roundtrip() -> None:
     cfg = frame_config_encode(1, 1, 255, 0, 2, 7, 1, 0, 0)
     assert len(cfg) == 12
     assert frame_config_decode(cfg) == (1, 1, 255, 0, 2, 7, 1, 0, 0)
+
+
+def test_a075v_hal_set_cfg_matches_tutorial() -> None:
+    assert a075v_set_cfg_bytes_hal() == frame_config_encode(1, 0, 255, 0, 2, 7, 1, 0, 0)
+    assert frame_config_decode(a075v_set_cfg_bytes_hal()) == (1, 0, 255, 0, 2, 7, 1, 0, 0)
+
+
+def test_a075v_depth_to_meters_uint16() -> None:
+    z = np.array([[4000, 0], [0, 2000]], dtype=np.uint16)
+    m = a075v_depth_raw_to_meters(z)
+    assert m.dtype == np.float32
+    assert np.isclose(m[0, 0], 1.0)
+    assert m[0, 0] == 4000.0 * A075V_UINT16_RAW_TO_METERS
+    assert np.isclose(m[1, 1], 0.5)
+
+
+def test_a075v_depth_to_meters_uint8_nonlinear() -> None:
+    u8 = np.array([[0, 255]], dtype=np.uint8)
+    m = a075v_depth_raw_to_meters(u8)
+    mm0 = 0.0
+    mm1 = (255.0 / 5.1) ** 2
+    assert float(m[0, 0]) == pytest.approx(mm0 / 1000.0)
+    assert float(m[0, 1]) == pytest.approx(mm1 / 1000.0)
 
 
 def test_rgb_resolution_hint_and_peek() -> None:

@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
+from hal.server.jetson.front_camera_factory import FRONT_RGB_DEPTH_CAMERA_FACTORIES
 from hal.server.sensor_interface import (
     GStreamerHandle,
     SensorInfo,
@@ -98,7 +99,7 @@ JETSON_SENSOR_CATALOG: tuple[JetsonSensorCatalogEntry, ...] = (
         maixsense_port_env="KRABBY_JETSON_MAIXSENSE_SIDE_PORT",
         maixsense_host="192.168.233.1",
         maixsense_port=80,
-        gst_depth_quant_range_m=(0.15, 12.0),
+        gst_depth_quant_range_m=(0.15, 1.5),
     ),
 )
 
@@ -114,8 +115,6 @@ JETSON_SENSOR_CATALOG_BY_ID: dict[str, JetsonSensorCatalogEntry] = {
 
 def assert_hal_rgbd_catalog_config() -> None:
     """Validate rgbd HAL-related catalog rows (call before opening cameras)."""
-    from hal.server.jetson.front_camera_factory import FRONT_RGB_DEPTH_CAMERA_FACTORIES
-
     primary_rgbd = [
         e
         for e in JETSON_SENSOR_CATALOG
@@ -158,8 +157,6 @@ def assert_hal_rgbd_catalog_config() -> None:
 
 def front_observation_camera_catalog_entry() -> JetsonSensorCatalogEntry:
     """The unique catalog row with ``is_primary`` True (HAL front RGB-D defaults + driver id)."""
-    from hal.server.jetson.front_camera_factory import FRONT_RGB_DEPTH_CAMERA_FACTORIES
-
     primaries = [e for e in JETSON_SENSOR_CATALOG if e.is_primary]
     if len(primaries) != 1:
         raise RuntimeError(

@@ -66,8 +66,12 @@ class HalClient:
         self.command_socket.connect(self.config.command_endpoint)
 
         self._initialized = True
-        logger.info(f"HAL client initialized: observation={self.config.observation_endpoint}, "
-                   f"command={self.config.command_endpoint}")
+        logger.info(
+            "HAL client initialized: %s observation=%s, command=%s",
+            self.__class__.__name__,
+            self.config.observation_endpoint,
+            self.config.command_endpoint,
+        )
 
     def close(self) -> None:
         """Close all sockets and context. Blocks until sockets finish."""

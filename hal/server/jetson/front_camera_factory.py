@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from hal.server.jetson.maixsense_rgb_depth_camera import (
+    create_maixsense_a075v_rgb_depth_camera,
+)
 from hal.server.jetson.rgb_depth_camera import RgbDepthCamera
+from hal.server.jetson.zed_camera import create_zed_camera
 
 FrontRgbDepthCameraFactory = Callable[
     ...,
@@ -27,8 +31,6 @@ def _factory_zed(
     depth_mode: str,
     zed_serial_number: Optional[int] = None,
 ) -> Optional[RgbDepthCamera]:
-    from hal.server.jetson.zed_camera import create_zed_camera
-
     return create_zed_camera(
         resolution=resolution,
         fps=fps,
@@ -47,10 +49,6 @@ def _factory_maixsense_a075v(
     maixsense_host_env: Optional[str] = None,
     maixsense_port_env: Optional[str] = None,
 ) -> Optional[RgbDepthCamera]:
-    from hal.server.jetson.maixsense_rgb_depth_camera import (
-        create_maixsense_a075v_rgb_depth_camera,
-    )
-
     return create_maixsense_a075v_rgb_depth_camera(
         resolution=resolution,
         fps=fps,

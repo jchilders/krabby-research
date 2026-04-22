@@ -22,10 +22,12 @@ from data_collection.collector_settings import build_data_collector_config
 from hal.client.config import HalClientConfig
 from hal.server import HalServerConfig
 from hal.server.jetson import JetsonHalServer
+from hal.server.jetson.teleop_integration import start_jetson_teleop_signaling_thread
 from compute.parkour.inference_client import ParkourInferenceClient
 from compute.parkour.policy_interface import ModelWeights
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
 from hal.server.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
+from teleop.edge.robot_settings import build_teleop_edge_settings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -119,8 +121,6 @@ def main():
         hal_server.initialize_actuators()
         hal_server.initialize_cameras()
         if args.teleop:
-            from teleop.edge.robot_settings import build_teleop_edge_settings
-
             # Bootstrap HAL poll until the browser sends ``catalog_ids`` on hello/offer (portal viewer).
             teleop_sensor_ids = [hal_server._primary_catalog_id]
             _teleop_st = build_teleop_edge_settings()
@@ -149,8 +149,6 @@ def main():
         )
 
         if teleop_sensor_ids is not None:
-            from hal.server.jetson.teleop_integration import start_jetson_teleop_signaling_thread
-
             teleop_stop = threading.Event()
             teleop_thread = start_jetson_teleop_signaling_thread(
                 hal_client_config,
@@ -160,8 +158,11 @@ def main():
                 teleop_edge_settings=_teleop_st,
             )
             logger.info(
-                "Teleop outbound signaling started (bootstrap catalog ids=%s; viewer may override "
-                "via signaling ``catalog_ids``); URL from teleop.edge.robot_settings.SERVER_SIGNALING_WS_URL",
+                "Teleop outbound signaling started: mode=%s url=%s reconnect_s=%.1f "
+                "(bootstrap catalog ids=%s; viewer may override via signaling ``catalog_ids``)",
+                _teleop_st.mode,
+                _teleop_st.server_signaling_ws_url,
+                _teleop_st.server_reconnect_s,
                 teleop_sensor_ids,
             )
 

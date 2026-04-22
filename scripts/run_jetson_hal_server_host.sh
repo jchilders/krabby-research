@@ -28,7 +28,7 @@ for _dir in "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/parkour/assets/weights"; 
   fi
 done
 TASK_NAME="Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0"
-TELEOP_WS_URL="ws://grayside.local:9000/ws/robot"
+TELEOP_WS_URL="ws://10.0.0.130:9000/ws/robot"
 COLLECTOR_HOST_DIR="/tmp/krabby_bags"
 CONTAINER_COLLECTOR_DIR="/workspace/bags"
 ZED_RESOURCES_HOST_DIR="${HOME}/zed-resources"
@@ -74,7 +74,7 @@ import teleop.edge.robot_settings as teleop_settings
 from hal.server.jetson.sensor_backend_jetson import JETSON_SENSOR_CATALOG
 
 task_name = "Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0"
-teleop_url = "ws://grayside.local:9000/ws/robot"
+teleop_url = "ws://10.0.0.130:9000/ws/robot"
 
 if not teleop_url:
     raise SystemExit("KRABBY_TELEOP_SIGNALING_WS_URL is empty; refusing to launch teleop")
@@ -126,7 +126,7 @@ main()
 PYEOF
 )"
 
-exec docker run --rm --runtime=nvidia --network host \
+exec sudo docker run --rm --runtime=nvidia --network host \
   -v "$CHECKPOINT_HOST_DIR:/workspace/checkpoints" \
   -v "$COLLECTOR_HOST_DIR:$CONTAINER_COLLECTOR_DIR" \
   -v "$ZED_RESOURCES_HOST_DIR:$ZED_RESOURCES_CONTAINER_DIR" \

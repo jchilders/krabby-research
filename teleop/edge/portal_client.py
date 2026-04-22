@@ -36,12 +36,15 @@ async def portal_client_loop(
     connect_url = server_signaling_ws_url_with_token(url, teleop_edge_settings)
     reconnect_s = teleop_edge_settings.server_reconnect_s
     last_disconnect_reason: str | None = None
+    repeated_disconnect_count = 0
     try:
         while True:
+            logger.info("teleop signaling: connecting to %s", connect_url)
             try:
                 async with session.ws_connect(connect_url, heartbeat=30.0) as ws:
                     logger.info("teleop server signaling connected: %s", connect_url)
                     last_disconnect_reason = None
+                    repeated_disconnect_count = 0
                     await run_robot_signaling_loop(
                         ws,
                         teleop_settings=teleop_edge_settings,
@@ -53,6 +56,7 @@ async def portal_client_loop(
             except aiohttp.ClientError as e:
                 reason = str(e)
                 if reason != last_disconnect_reason:
+                    repeated_disconnect_count = 1
                     logger.warning(
                         "teleop server signaling disconnected (%s); retry in %ss",
                         e,
@@ -60,11 +64,21 @@ async def portal_client_loop(
                     )
                     last_disconnect_reason = reason
                 else:
-                    logger.debug(
-                        "teleop server signaling still disconnected (%s); retry in %ss",
-                        e,
-                        reconnect_s,
-                    )
+                    repeated_disconnect_count += 1
+                    if repeated_disconnect_count % 12 == 0:
+                        logger.info(
+                            "teleop server signaling still disconnected (%s); retry in %ss (attempt=%d)",
+                            e,
+                            reconnect_s,
+                            repeated_disconnect_count,
+                        )
+                    else:
+                        logger.debug(
+                            "teleop server signaling still disconnected (%s); retry in %ss (attempt=%d)",
+                            e,
+                            reconnect_s,
+                            repeated_disconnect_count,
+                        )
             try:
                 await asyncio.sleep(reconnect_s)
             except asyncio.CancelledError:

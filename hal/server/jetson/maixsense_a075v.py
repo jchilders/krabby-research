@@ -93,16 +93,21 @@ def peek_frame_config_from_getdeep_body(raw: bytes) -> tuple[int, ...]:
 
 def frame_config_encode(
     trigger_mode: int = 1,
-    deep_mode: int = 1,
+    deep_mode: int = 0,
     deep_shift: int = 255,
-    ir_mode: int = 1,
+    ir_mode: int = 0,
     status_mode: int = 2,
     status_mask: int = 7,
     rgb_mode: int = 1,
     rgb_res: int = 0,
     expose_time: int = 0,
 ) -> bytes:
-    """Build ``set_cfg`` POST body (12 bytes). Defaults match Sipeed ``stream.py``."""
+    """Build ``set_cfg`` POST body (12 bytes).
+
+    Defaults match the A075V tutorial's working example: 16-bit depth (``deep_mode=0``),
+    16-bit IR (``ir_mode=0``), JPG RGB (``rgb_mode=1``), and auto trigger
+    (see Sipeed ``metasense_075_tutorial`` / ``stream.py``).
+    """
     return struct.pack(
         "<BBBBBBBBi",
         trigger_mode,
@@ -115,6 +120,31 @@ def frame_config_encode(
         rgb_res,
         expose_time,
     )
+
+
+# A075V: Sipeed stream.py show_frame (comment) uses ``mm = raw / 4`` for 16-bit depth, i.e. 0.25 mm/LSB.
+# 8-bit mode uses a nonlinear display mapping: ``mm = (raw / 5.1) ** 2`` (not linear depth in mm).
+A075V_UINT16_LSB_MILLIMETERS = 0.25
+A075V_UINT16_RAW_TO_METERS = A075V_UINT16_LSB_MILLIMETERS / 1000.0
+# Nonlinear 8-bit depth scale from the same Sipeed show_frame example (``deep_mode==1``).
+A075V_UINT8_DISPLAY_DIVISOR = 5.1
+
+
+def a075v_set_cfg_bytes_hal() -> bytes:
+    """``/set_cfg`` body used for HAL: same tuple as the A075V network tutorial (16-bit depth)."""
+    return frame_config_encode(1, 0, 255, 0, 2, 7, 1, 0, 0)
+
+
+def a075v_depth_raw_to_meters(depth: np.ndarray) -> np.ndarray:
+    """Map MaixSense A075V ``/getdeep`` depth buffer to metric depth (meters)."""
+    d = np.asarray(depth)
+    if d.dtype == np.uint16:
+        return d.astype(np.float32) * float(A075V_UINT16_RAW_TO_METERS)
+    if d.dtype == np.uint8:
+        f = d.astype(np.float32)
+        mm = (f / float(A075V_UINT8_DISPLAY_DIVISOR)) ** 2
+        return mm / 1000.0
+    return d.astype(np.float32)
 
 
 def frame_payload_decode(
@@ -213,6 +243,7 @@ def decode_getdeep_response(frame_data: bytes) -> MaixSenseDecodedFrame:
     config = frame_config_decode(frame_data[16:28])
     frame_bytes = frame_payload_decode(frame_data[28:], config)
 
+    # Sipeed ``stream.py`` / ``frame_payload_decode``: first chunk = depth (``deep_mode``), second = IR (``ir_mode``).
     depth = (
         np.frombuffer(
             frame_bytes[0],
@@ -221,7 +252,6 @@ def decode_getdeep_response(frame_data: bytes) -> MaixSenseDecodedFrame:
         if frame_bytes[0]
         else None
     )
-
     ir = (
         np.frombuffer(
             frame_bytes[1],

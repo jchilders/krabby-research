@@ -5,7 +5,8 @@ or ``hal_open_rgbd`` side/extra). Configure either literal ``maixsense_host`` / 
 or env-var names ``maixsense_host_env`` / ``maixsense_port_env``. If no port is provided, **80** is
 used.
 
-Depth is converted to meters (uint16 → mm/1000; uint8 → coarse 0–5 m) then resized to the catalog
+Raw depth is converted to meters with Sipeed's A075V rules (16-bit: 0.25 mm/LSB; 8-bit: nonlinear
+``(u8/5.1)²`` mm then ÷1000, see their ``stream.py``/tutorial comments), then resized to the catalog
 resolution. Requires MaixSense extras (``requests``, ``cv2``).
 """
 
@@ -21,6 +22,11 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     requests_exceptions = None
 
+from hal.server.jetson.maixsense_a075v import (
+    MaixSenseA075VClient,
+    a075v_depth_raw_to_meters,
+    a075v_set_cfg_bytes_hal,
+)
 from hal.server.jetson.rgb_depth_camera import RgbDepthCamera
 
 logger = logging.getLogger(__name__)
@@ -53,6 +59,7 @@ class MaixSenseA075VRgbDepthCamera:
         self._last_rgb: Optional[np.ndarray] = None
         self._last_depth_m: Optional[np.ndarray] = None
         self._dependency_error_logged: bool = False
+        self._frame_config_logged: bool = False
 
         host = (maixsense_host or "").strip()
         host_key = (maixsense_host_env or "").strip()
@@ -90,11 +97,11 @@ class MaixSenseA075VRgbDepthCamera:
             port = 80
             port_key = "(default 80)"
 
-        from hal.server.jetson.maixsense_a075v import MaixSenseA075VClient
-
         self._client = MaixSenseA075VClient(host=host, port=port)
-        if not self._client.post_encode_config():
-            logger.warning("MaixSense post_encode_config failed; still attempting /getdeep")
+        if not self._client.post_encode_config(a075v_set_cfg_bytes_hal()):
+            raise RuntimeError(
+                "MaixSense post_encode_config failed; refusing to continue with unknown device output mode"
+            )
         self._initialized = True
         logger.info(
             "MaixSense A075V RGB-D ready (env_host=%s env_port=%s → %s:%s → %dx%d)",
@@ -107,11 +114,7 @@ class MaixSenseA075VRgbDepthCamera:
         )
 
     def _maix_depth_to_meters(self, depth: np.ndarray) -> np.ndarray:
-        if depth.dtype == np.uint16:
-            return depth.astype(np.float32) / 1000.0
-        if depth.dtype == np.uint8:
-            return depth.astype(np.float32) / 255.0 * 5.0
-        return depth.astype(np.float32)
+        return a075v_depth_raw_to_meters(depth)
 
     def _resize_pair(
         self, rgb: np.ndarray, depth_m: np.ndarray
@@ -142,6 +145,23 @@ class MaixSenseA075VRgbDepthCamera:
         except Exception as e:
             logger.warning("MaixSense fetch failed: %s", e)
             return False
+        if not self._frame_config_logged:
+            deep_mode = frame.config[1]
+            rgb_mode = frame.config[6]
+            logger.info(
+                "MaixSense frame config: deep_mode=%d (%s), rgb_mode=%d (%s), rgb_res=%d",
+                deep_mode,
+                "16-bit" if deep_mode == 0 else "8-bit",
+                rgb_mode,
+                "YUV" if rgb_mode == 0 else "JPG" if rgb_mode == 1 else "none",
+                frame.config[7],
+            )
+            self._frame_config_logged = True
+            if deep_mode != 0:
+                logger.warning(
+                    "MaixSense is not in 16-bit depth mode (deep_mode=%d); depth fidelity may be degraded",
+                    deep_mode,
+                )
         if frame.rgb is None:
             logger.warning("MaixSense frame has no RGB")
             return False
