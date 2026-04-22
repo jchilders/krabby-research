@@ -190,10 +190,9 @@ class HardwareObservations:
                     )
                 if obs.depth.dtype != np.float32:
                     obs.depth = obs.depth.astype(np.float32)
-                if obs.rgb.shape[:2] != obs.depth.shape:
-                    raise ValueError(
-                        f"rgbd_by_catalog_id[{cid!r}]: rgb H,W {obs.rgb.shape[:2]} != depth {obs.depth.shape}"
-                    )
+                # rgbd_by_catalog_id may intentionally carry mixed-resolution RGB/depth
+                # streams from certain camera drivers (for example MaixSense). Keep
+                # validation to rank/dtype and let per-stream consumers handle sizing.
                 if obs.scan_features is not None:
                     if obs.scan_features.ndim != 1:
                         raise ValueError(

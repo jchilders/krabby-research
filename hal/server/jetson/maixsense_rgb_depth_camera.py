@@ -2,12 +2,11 @@
 
 Use ``JETSON_SENSOR_CATALOG`` with ``camera_driver="maixsense_a075v"`` on any rgbd row (primary
 or ``hal_open_rgbd`` side/extra). Configure either literal ``maixsense_host`` / ``maixsense_port``
-or env-var names ``maixsense_host_env`` / ``maixsense_port_env``. If no port is provided, **80** is
-used.
+or env-var names ``maixsense_host_env`` / ``maixsense_port_env``.
 
 Raw depth is converted to meters with Sipeed's A075V rules (16-bit: 0.25 mm/LSB; 8-bit: nonlinear
-``(u8/5.1)²`` mm then ÷1000, see their ``stream.py``/tutorial comments), then resized to the catalog
-resolution. Requires MaixSense extras (``requests``, ``cv2``).
+``(u8/5.1)²`` mm then ÷1000, see their ``stream.py``/tutorial comments). Frames are emitted at
+native decoded sizes (no HAL resize step in this adapter). Requires MaixSense extras (``requests``).
 """
 
 from __future__ import annotations
@@ -31,20 +30,14 @@ from hal.server.jetson.rgb_depth_camera import RgbDepthCamera
 
 logger = logging.getLogger(__name__)
 
-try:
-    import cv2
-except ImportError:
-    cv2 = None  # type: ignore[misc, assignment]
-
-
 class MaixSenseA075VRgbDepthCamera:
     """HTTP MaixSense RGB-D from literal host/port or env-var names."""
 
     def __init__(
         self,
         resolution: tuple[int, int],
-        fps: int = 30,
-        depth_mode: str = "PERFORMANCE",
+        depth_mode: str,
+        fps: int,
         *,
         maixsense_host: Optional[str] = None,
         maixsense_port: Optional[int] = None,
@@ -94,8 +87,10 @@ class MaixSenseA075VRgbDepthCamera:
                     f"Environment variable {port_key!r} must be an integer, got {port_raw!r}"
                 ) from e
         else:
-            port = 80
-            port_key = "(default 80)"
+            raise RuntimeError(
+                "maixsense_a075v requires explicit port via maixsense_port (literal) "
+                "or maixsense_port_env (env var name)"
+            )
 
         self._client = MaixSenseA075VClient(host=host, port=port)
         if not self._client.post_encode_config(a075v_set_cfg_bytes_hal()):
@@ -115,21 +110,6 @@ class MaixSenseA075VRgbDepthCamera:
 
     def _maix_depth_to_meters(self, depth: np.ndarray) -> np.ndarray:
         return a075v_depth_raw_to_meters(depth)
-
-    def _resize_pair(
-        self, rgb: np.ndarray, depth_m: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        if cv2 is None:
-            raise RuntimeError(
-                "opencv (cv2) is required to resize MaixSense frames; "
-                "install jetson [maixsense] extras or opencv-python-headless"
-            )
-        th, tw = self._target_h, self._target_w
-        rgb_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        rgb_bgr_r = cv2.resize(rgb_bgr, (tw, th), interpolation=cv2.INTER_LINEAR)
-        rgb_out = cv2.cvtColor(rgb_bgr_r, cv2.COLOR_BGR2RGB)
-        depth_r = cv2.resize(depth_m, (tw, th), interpolation=cv2.INTER_NEAREST)
-        return np.ascontiguousarray(rgb_out.astype(np.uint8)), depth_r.astype(np.float32)
 
     def _fetch_and_process(self) -> bool:
         if self._client is None:
@@ -170,11 +150,8 @@ class MaixSenseA075VRgbDepthCamera:
             logger.warning("MaixSense frame has no depth payload (enable depth in device config)")
             return False
         depth_m = self._maix_depth_to_meters(np.asarray(frame.depth))
-        try:
-            self._last_rgb, self._last_depth_m = self._resize_pair(rgb, depth_m)
-        except Exception as e:
-            logger.error("MaixSense resize failed: %s", e)
-            return False
+        self._last_rgb = np.ascontiguousarray(rgb.astype(np.uint8))
+        self._last_depth_m = np.ascontiguousarray(depth_m.astype(np.float32))
         return True
 
     def get_camera_frames(self) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
@@ -196,9 +173,9 @@ class MaixSenseA075VRgbDepthCamera:
 
 
 def create_maixsense_a075v_rgb_depth_camera(
-    resolution: tuple[int, int] = (640, 480),
-    fps: int = 30,
-    depth_mode: str = "PERFORMANCE",
+    depth_mode: str,
+    resolution: tuple[int, int],
+    fps: int,
     *,
     maixsense_host: Optional[str] = None,
     maixsense_port: Optional[int] = None,

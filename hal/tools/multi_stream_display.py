@@ -218,7 +218,7 @@ def run_jetson_zed_display() -> int:
         driver,
         resolution=obs.resolution,
         fps=obs.fps,
-        depth_mode="PERFORMANCE",
+        depth_mode=obs.depth_mode,
         maixsense_host_env=obs.maixsense_host_env,
         maixsense_port_env=obs.maixsense_port_env,
     )

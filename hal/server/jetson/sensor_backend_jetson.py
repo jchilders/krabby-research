@@ -3,7 +3,7 @@
 Pipeline generation uses appsrc + nvenc (or software encode). ``JETSON_SENSOR_CATALOG``
 rows describe every logical sensor; rgbd rows can opt into HAL capture via ``hal_open_rgbd``,
 ``policy_scan_slot``, ``zed_usb_serial_env``, and (for MaixSense) ``maixsense_host_env`` /
-optional ``maixsense_port_env`` (see ``JetsonHalServer``).
+``maixsense_port_env`` (see ``JetsonHalServer``).
 """
 
 from __future__ import annotations
@@ -27,10 +27,14 @@ class JetsonSensorCatalogEntry:
     id: str
     type: str  # GStreamer branch: rgb, rgbd, radar (must match build_pipeline caps lookup)
     modality: str
-    resolution: tuple[int, int]
+    resolution: tuple[int, int]  # RGB resolution (W, H)
     fps: int
     pose: SensorPose
     appsrc_pixel_format: str  # caps: RGB or GRAY8 for appsrc (rgb/radar rows)
+    # Depth map resolution (W, H). Must be set explicitly for every catalog row.
+    depth_resolution: tuple[int, int]
+    # Depth mode for RGB-D driver initialization (e.g. ZED: NEURAL/QUALITY/ULTRA).
+    depth_mode: str
     is_primary: bool = False  # exactly one row: HAL front observation camera (resolution/fps defaults)
     # Required on ``is_primary`` rgbd rows: key in ``front_camera_factory.FRONT_RGB_DEPTH_CAMERA_FACTORIES``
     # (e.g. ``zed``, ``maixsense_a075v``). Other rows: logical capture id for listing/pipelines.
@@ -41,11 +45,11 @@ class JetsonSensorCatalogEntry:
     # Maps this row into legacy ``HardwareObservations`` policy scan slots (``scan_features`` /
     # ``side_scan_features``). Primary uses ``is_primary``; at most one other row may use ``"side"``.
     policy_scan_slot: Literal["side"] | None = None
-    # For ``camera_driver=="zed"``: read USB serial from this env var (int). Primary may omit (first ZED).
-    # Non-primary ZED rows with ``hal_open_rgbd`` should set this so the correct unit opens.
+    # For ``camera_driver=="zed"``: optional USB serial env var (int).
+    # If unset, runtime opens the first detected ZED.
     zed_usb_serial_env: str | None = None
     # For ``camera_driver=="maixsense_a075v"``: use either literal host/port or env-var names.
-    # If no port is provided, runtime defaults to 80.
+    # Port must be explicit (literal or env var).
     maixsense_host_env: str | None = None
     maixsense_port_env: str | None = None
     # Optional literal host/port values that launchers may use to populate runtime settings.
@@ -63,7 +67,9 @@ JETSON_SENSOR_CATALOG: tuple[JetsonSensorCatalogEntry, ...] = (
         id="front_rgbd",
         type="rgbd",
         modality="rgbd",
-        resolution=(640, 480),
+        # Native ZED stream observed in runtime logs for current Jetson stack.
+        resolution=(672, 376),
+        depth_resolution=(672, 376),
         fps=30,
         pose=SensorPose(
             x=0.33, y=0.0, z=0.08, qx=0.0, qy=0.0, qz=0.0, qw=1.0
@@ -71,6 +77,7 @@ JETSON_SENSOR_CATALOG: tuple[JetsonSensorCatalogEntry, ...] = (
         appsrc_pixel_format="RGB",
         is_primary=True,
         camera_driver="zed",
+        depth_mode="NEURAL_PLUS",
         gst_depth_quant_range_m=(0.2, 25.0),
     ),
     # Second RGB-D (policy side slot when ``policy_scan_slot="side"``): driver is per-row.
@@ -79,7 +86,10 @@ JETSON_SENSOR_CATALOG: tuple[JetsonSensorCatalogEntry, ...] = (
         id="side_rgbd",
         type="rgbd",
         modality="rgbd",
+        # MaixSense RGB is typically 640x480 for current config.
         resolution=(640, 480),
+        # MaixSense depth payload is native 320x240 (no resize in HAL path).
+        depth_resolution=(320, 240),
         fps=30,
         pose=SensorPose(
             x=0.0,
@@ -93,6 +103,7 @@ JETSON_SENSOR_CATALOG: tuple[JetsonSensorCatalogEntry, ...] = (
         appsrc_pixel_format="RGB",
         is_primary=False,
         camera_driver="maixsense_a075v",
+        depth_mode="NEURAL",
         hal_open_rgbd=True,
         policy_scan_slot="side",
         maixsense_host_env="KRABBY_JETSON_MAIXSENSE_SIDE_HOST",
@@ -143,6 +154,17 @@ def assert_hal_rgbd_catalog_config() -> None:
                 f"Catalog {e.id!r}: policy_scan_slot='side' requires hal_open_rgbd=True"
             )
     for e in JETSON_SENSOR_CATALOG:
+        w, h = e.resolution
+        dw, dh = e.depth_resolution
+        if w <= 0 or h <= 0:
+            raise RuntimeError(f"Catalog {e.id!r}: resolution must be positive, got {e.resolution!r}")
+        if dw <= 0 or dh <= 0:
+            raise RuntimeError(
+                f"Catalog {e.id!r}: depth_resolution must be positive, got {e.depth_resolution!r}"
+            )
+        if e.type == "rgbd" and not str(e.depth_mode).strip():
+            raise RuntimeError(f"Catalog {e.id!r}: depth_mode must be non-empty for rgbd rows")
+    for e in JETSON_SENSOR_CATALOG:
         if e.type != "rgbd" or e.camera_driver != "maixsense_a075v":
             continue
         has_host_literal = bool(e.maixsense_host and str(e.maixsense_host).strip())
@@ -152,6 +174,14 @@ def assert_hal_rgbd_catalog_config() -> None:
                 f"Catalog {e.id!r}: camera_driver='maixsense_a075v' requires "
                 f"either maixsense_host (literal host) or non-empty maixsense_host_env "
                 f"(env var name for HTTP host)"
+            )
+        has_port_literal = e.maixsense_port is not None
+        has_port_env = bool(e.maixsense_port_env and str(e.maixsense_port_env).strip())
+        if not (has_port_literal or has_port_env):
+            raise RuntimeError(
+                f"Catalog {e.id!r}: camera_driver='maixsense_a075v' requires "
+                f"either maixsense_port (literal port) or non-empty maixsense_port_env "
+                f"(env var name for HTTP port)"
             )
 
 

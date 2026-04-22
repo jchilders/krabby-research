@@ -21,7 +21,8 @@ def validate_depth_frame(depth_frame: np.ndarray) -> bool:
         logger.error("Invalid depth frame dimensions: %s, expected 2", depth_frame.ndim)
         return False
     if np.any(np.isnan(depth_frame)) or np.any(np.isinf(depth_frame)):
-        logger.warning("Depth frame contains NaN or Inf values")
+        # Hot path: avoid per-frame warning spam when upstream occasionally emits non-finite depth.
+        logger.debug("Depth frame contains NaN or Inf values")
         return False
     valid_mask = (depth_frame > 0.1) & (depth_frame < 10.0)
     valid_ratio = float(np.sum(valid_mask)) / float(depth_frame.size)

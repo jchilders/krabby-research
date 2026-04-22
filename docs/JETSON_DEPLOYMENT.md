@@ -241,31 +241,31 @@ After the next reboot, the service will set max power mode and lock clocks. To r
 **Required once per Jetson before production runs (recommended order):**
 
 1. **Verify USB**: `lsusb | grep -i zed` — device must appear on a USB 3.0 port.
-2. **Run initial diagnostics in container**: `sudo docker run --rm --runtime=nvidia --network host -v /dev:/dev --privileged -v ~/zed-resources:/usr/local/zed/resources --entrypoint ZED_Diagnostic krabby-locomotion:latest -c -d`
+2. **Run initial diagnostics in container**: `sudo docker run --rm --runtime=nvidia --network host -v /dev:/dev --privileged -v ~/zed-resources/resources:/usr/local/zed/resources -v ~/zed-resources/settings:/usr/local/zed/settings --entrypoint ZED_Diagnostic krabby-locomotion:latest -c -d`
 
    You should see **OK** for: ZED SDK Diagnostic, Processor, Graphics Card, and CUDA Operations. Under **AI Models Diagnostic**, detection models (MULTI CLASS, HUMAN BODY, PERSON HEAD, REID) may show "not optimized" - that is normal and not used by the HAL RGB/depth pipeline. On this initial diagnostic pass, depth models may still show "not optimized".
 
 3. **One-time optimization of all neural depth models**:
 
 ```bash
-yes | sudo docker run --rm --runtime=nvidia --network host -v /dev:/dev --privileged -v ~/zed-resources:/usr/local/zed/resources --entrypoint ZED_Diagnostic krabby-locomotion:latest -nrlo_all
+yes | sudo docker run --rm --runtime=nvidia --network host -v /dev:/dev --privileged -v ~/zed-resources/resources:/usr/local/zed/resources -v ~/zed-resources/settings:/usr/local/zed/settings --entrypoint ZED_Diagnostic krabby-locomotion:latest -nrlo_all
 ```
 
-4. **Rerun diagnostics**: `sudo docker run --rm --runtime=nvidia --network host -v /dev:/dev --privileged -v ~/zed-resources:/usr/local/zed/resources --entrypoint ZED_Diagnostic krabby-locomotion:latest -c -d`
+4. **Rerun diagnostics**: `sudo docker run --rm --runtime=nvidia --network host -v /dev:/dev --privileged -v ~/zed-resources/resources:/usr/local/zed/resources -v ~/zed-resources/settings:/usr/local/zed/settings --entrypoint ZED_Diagnostic krabby-locomotion:latest -c -d`
 
    After optimization, verify **NEURAL LIGHT DEPTH**, **NEURAL DEPTH**, and **NEURAL PLUS DEPTH** show "optimized".
 
-Then keep the same mount on subsequent runs:
+Then keep the same mounts on subsequent runs:
 
 ```bash
-sudo docker run --rm --runtime=nvidia --network host -v /path/to/checkpoints:/workspace/checkpoints -v /dev:/dev --privileged -v ~/zed-resources:/usr/local/zed/resources krabby-locomotion:latest --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
+sudo docker run --rm --runtime=nvidia --network host -v /path/to/checkpoints:/workspace/checkpoints -v /dev:/dev --privileged -v ~/zed-resources/resources:/usr/local/zed/resources -v ~/zed-resources/settings:/usr/local/zed/settings krabby-locomotion:latest --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt --robot go2
 ```
 
 Optional camera validation using the Docker image:
 
 1. **Validate camera output with ZED_Explorer (local desktop/X11 only)**:
    - `xhost +local:root`
-   - `sudo docker run --rm --runtime=nvidia --network host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix -v /dev:/dev --privileged -v ~/zed-resources:/usr/local/zed/resources --entrypoint ZED_Explorer -it krabby-locomotion:latest`
+   - `sudo docker run --rm --runtime=nvidia --network host -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix -v /dev:/dev --privileged -v ~/zed-resources/resources:/usr/local/zed/resources -v ~/zed-resources/settings:/usr/local/zed/settings --entrypoint ZED_Explorer -it krabby-locomotion:latest`
 
 **If the SDK can’t open the camera** (appears in `lsusb` but diagnostic fails), install udev rules:
 
@@ -276,7 +276,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 Unplug and replug the ZED, then retry.
 
-**Two ZED units:** the default catalog’s second RGB-D row is **`side_rgbd`** (policy side slot when `policy_scan_slot="side"`). For that row, set **`KRABBY_SIDE_ZED_USB_SERIAL`** to the **integer USB serial** of the side ZED so HAL selects the correct device; the primary `front_rgbd` ZED can use the first enumerated device when no serial is set there.
+**Two ZED units:** the default catalog’s second RGB-D row is **`side_rgbd`** (policy side slot when `policy_scan_slot="side"`). For deterministic selection, set **`KRABBY_SIDE_ZED_USB_SERIAL`** to the integer USB serial of the side ZED (and optionally set a front serial env on `front_rgbd` too). If no serial is configured, HAL opens the first detected ZED.
 
 **Container requirements for ZED on Jetson:** ZED uses USB/libusb access, so run the locomotion container with `-v /dev:/dev` and `--privileged` (using only `--device /dev/video0` is insufficient).
 
@@ -295,7 +295,7 @@ Optional RGB-D over **HTTP** (no Stereolabs SDK). Use as the primary `front_rgbd
 **HAL wiring**
 
 - Python extras: `pip install "krabby-hal-server-jetson[maixsense]"` (`requests`, `opencv-python-headless`).
-- Catalog: set **`camera_driver="maixsense_a075v"`** on each **`rgbd`** row that uses MaixSense (primary **`front_rgbd`** and/or extra rows with **`hal_open_rgbd=True`**). Each such row must set **`maixsense_host_env`** / optional **`maixsense_port_env`** to the **names** of env vars that hold that module’s HTTP host and port—**you choose those names** in **`JETSON_SENSOR_CATALOG`** (distinct per module). Deployment passes **one `-e`** (and optional port **`-e`**) per name.
+- Catalog: set **`camera_driver="maixsense_a075v"`** on each **`rgbd`** row that uses MaixSense (primary **`front_rgbd`** and/or extra rows with **`hal_open_rgbd=True`**). Each such row must set **`maixsense_host_env`** and **`maixsense_port_env`** (or literal `maixsense_host` + `maixsense_port`) to explicit HTTP endpoint values—**you choose those names** in **`JETSON_SENSOR_CATALOG`** (distinct per module). Deployment passes **one `-e`** host and one **`-e`** port per env-based row.
 - **Policy** uses **`camera_*`** / **`scan_features`** from the primary row; optional **`side_*`** when one row has **`policy_scan_slot="side"`** and the checkpoint uses **`num_side_scan`**. **Collision / extra streams**: read **`HardwareObservations.rgbd_by_catalog_id[id].rgb`** / **`.depth`** (each row’s own resolution). Implementation: `hal/server/jetson/maixsense_a075v.py`, `maixsense_rgb_depth_camera.py`, **`JETSON_SENSOR_CATALOG`** in `sensor_backend_jetson.py`.
 - **Hardware smoke test**: `scripts/run_jetson_maixsense_hal_hw_test.sh` (expects Docker image `krabby-locomotion:latest`, **`--network host`**, and **`KRABBY_MAIXSENSE_LIVE_TEST_HOST`** set to the module IP; optional **`KRABBY_MAIXSENSE_LIVE_TEST_PORT`**).
 
@@ -304,13 +304,13 @@ Optional RGB-D over **HTTP** (no Stereolabs SDK). Use as the primary `front_rgbd
 **Runtime example (MaixSense over HTTP):**
 
 ```bash
-sudo docker run --rm --runtime=nvidia --network host -v /path/to/checkpoints:/workspace/checkpoints -e KRABBY_JETSON_MAIXSENSE_SIDE_HOST=192.168.233.1 krabby-locomotion:latest --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
+sudo docker run --rm --runtime=nvidia --network host -v /path/to/checkpoints:/workspace/checkpoints -e KRABBY_JETSON_MAIXSENSE_SIDE_HOST=192.168.233.1 krabby-locomotion:latest --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt --robot go2
 ```
 
 Add more `-e ...` entries (and optional `-e ..._PORT=...`) for each additional MaixSense catalog row.
 
 **HAL front camera (camera_rgb / camera_depth)**  
-The Jetson HAL fills `HardwareObservations.camera_rgb` and `camera_depth` from the **front RGB-D observation camera** defined in **`JETSON_SENSOR_CATALOG`**: the row with **`id="front_rgbd"`** and **`is_primary=True`** sets **`camera_driver`** (e.g. **`zed`** or **`maixsense_a075v`**), **resolution**, and **fps**. Optional constructor overrides: **`camera_resolution`**, **`camera_fps`**, **`camera_driver`**. **`depth_mode`** applies to **ZED** only. **Policy scan** (`scan_features`, optional **`side_*`**) comes from the configured depth streams; **every opened RGB-D row** also appears under **`rgbd_by_catalog_id`**. GStreamer IDs, ZED install, and MaixSense networking: **SENSOR_INTERFACE.md**, ZED section above, and [MaixSense-A075V (optional host bring-up)](#maixsense-a075v-optional-host-bring-up). Wire format: **HAL_GUIDE.md** and `hal/client/data_structures/hardware.py`.
+The Jetson HAL fills `HardwareObservations.camera_rgb` and `camera_depth` from the **front RGB-D observation camera** defined in **`JETSON_SENSOR_CATALOG`**: the row with **`id="front_rgbd"`** and **`is_primary=True`** sets **`camera_driver`** (e.g. **`zed`** or **`maixsense_a075v`**), **resolution**, **depth_resolution**, **fps**, and **depth_mode**. **`depth_mode`** applies to **ZED** only. **Policy scan** (`scan_features`, optional **`side_*`**) comes from the configured depth streams; **every opened RGB-D row** also appears under **`rgbd_by_catalog_id`**. GStreamer IDs, ZED install, and MaixSense networking: **SENSOR_INTERFACE.md**, ZED section above, and [MaixSense-A075V (optional host bring-up)](#maixsense-a075v-optional-host-bring-up). Wire format: **HAL_GUIDE.md** and `hal/client/data_structures/hardware.py`.
 
 ## Obtaining the Docker Image
 
@@ -321,7 +321,7 @@ The Docker image must be available on the Jetson device. Pull it from your conta
 **Important**: Checkpoint files are not included in the Docker image. You must mount your checkpoint directory as a volume using `-v /path/to/checkpoints:/workspace/checkpoints`. All examples below assume checkpoints are mounted at `/workspace/checkpoints` inside the container.
 
 **Camera-specific mounts**:
-- If the active front camera driver is `zed`, include `-v ~/zed-resources:/usr/local/zed/resources` on runs after pre-optimization.
+- If the active front camera driver is `zed`, include both mounts on runs after pre-optimization and initial calibration fetch: `-v ~/zed-resources/resources:/usr/local/zed/resources -v ~/zed-resources/settings:/usr/local/zed/settings` (single host root with hardcoded subfolders).
 - If the active front camera driver is `maixsense_a075v`, that ZED resources mount is not required.
 
 **Optional: Enable data collection with host persistence**
@@ -335,7 +335,7 @@ mkdir -p /path/to/krabby_bags
 Set `--data-collector-output-dir` to enable recording. The mount target must match the same container path:
 
 ```bash
-sudo docker run --rm --runtime=nvidia  -v /path/to/checkpoints:/workspace/checkpoints  -v /path/to/krabby_bags:/workspace/bags  -v /dev:/dev  --privileged  krabby-locomotion:latest  --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt  --data-collector-output-dir /workspace/bags
+sudo docker run --rm --runtime=nvidia  -v /path/to/checkpoints:/workspace/checkpoints  -v /path/to/krabby_bags:/workspace/bags  -v /dev:/dev  --privileged  krabby-locomotion:latest  --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt  --robot go2  --data-collector-output-dir /workspace/bags
 ```
 
 ### Important: GPU Runtime Flag
@@ -356,7 +356,7 @@ sudo systemctl restart docker
 Run the production inference runner:
 
 ```bash
-sudo docker run --rm --runtime=nvidia  -v /path/to/checkpoints:/workspace/checkpoints  -v /dev:/dev  krabby-locomotion:latest  --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt
+sudo docker run --rm --runtime=nvidia  -v /path/to/checkpoints:/workspace/checkpoints  -v /dev:/dev  krabby-locomotion:latest  --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt  --robot go2
 ```
 
 **Note**: 

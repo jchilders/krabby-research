@@ -18,6 +18,7 @@ def test_create_front_unknown_driver_raises():
             "nope",
             resolution=(64, 48),
             fps=30,
+            depth_mode="NEURAL",
         )
 
 
@@ -27,11 +28,13 @@ def test_create_front_maixsense_requires_host_env_name():
             "maixsense_a075v",
             resolution=(64, 48),
             fps=30,
+            depth_mode="NEURAL",
         )
     with pytest.raises(ValueError, match="maixsense_host_env"):
         create_front_rgb_depth_camera(
             "maixsense_a075v",
             resolution=(64, 48),
             fps=30,
+            depth_mode="NEURAL",
             maixsense_host_env="   ",
         )

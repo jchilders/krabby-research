@@ -10,6 +10,8 @@ Fails fast if dependencies are missing.
 
 import logging
 import time
+import ctypes
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -17,6 +19,23 @@ import numpy as np
 from hal.server.jetson.rgb_depth_camera import RgbDepthCamera
 
 logger = logging.getLogger(__name__)
+_JETSON_NVJPEG_LIB = Path("/usr/lib/aarch64-linux-gnu/nvidia/libnvjpeg.so")
+
+
+def _preload_jetson_nvjpeg() -> None:
+    """Prefer Jetson camera-stack nvjpeg before importing pyzed.
+
+    On Jetson containers that also carry CUDA, both provide `libnvjpeg.so`.
+    ZED/Argus requires the Jetson camera-stack variant under
+    `/usr/lib/aarch64-linux-gnu/nvidia`. If the CUDA one is resolved first,
+    `import pyzed.sl` can fail with an undefined JPEG hardware symbol.
+    """
+    if not _JETSON_NVJPEG_LIB.exists():
+        return
+    try:
+        ctypes.CDLL(str(_JETSON_NVJPEG_LIB), mode=ctypes.RTLD_GLOBAL)
+    except OSError as e:
+        logger.debug("Could not preload Jetson nvjpeg library: %s", e)
 
 
 class ZedCamera(RgbDepthCamera):
@@ -27,9 +46,9 @@ class ZedCamera(RgbDepthCamera):
 
     def __init__(
         self,
-        resolution: tuple[int, int] = (640, 480),
-        fps: int = 30,
-        depth_mode: str = "PERFORMANCE",
+        depth_mode: str,
+        resolution: tuple[int, int],
+        fps: int,
         serial_number: Optional[int] = None,
     ):
         """Initialize ZED camera.
@@ -37,7 +56,8 @@ class ZedCamera(RgbDepthCamera):
         Args:
             resolution: Camera resolution (width, height). Default (640, 480)
             fps: Frames per second. Default 30
-            depth_mode: Depth mode ("PERFORMANCE", "QUALITY", "ULTRA"). Default "PERFORMANCE"
+            depth_mode: Depth mode (e.g. "NEURAL", "NEURAL_LIGHT", "NEURAL_PLUS",
+                "QUALITY", "ULTRA", "PERFORMANCE").
             serial_number: If set, open this USB ZED (Stereolabs serial). Default opens first device.
 
         Raises:
@@ -68,14 +88,15 @@ class ZedCamera(RgbDepthCamera):
         Raises:
             RuntimeError: If camera initialization fails or ZED SDK is not available
         """
+        _preload_jetson_nvjpeg()
         # Import ZED SDK - required for production
         try:
             import pyzed.sl as sl
             self._zed_module = sl
         except ImportError as e:
             raise RuntimeError(
-                "ZED SDK (pyzed) not available. "
-                "Install pyzed and ensure ZED SDK is installed on the system."
+                "ZED SDK (pyzed) import failed: "
+                f"{e}. Install pyzed and ensure ZED SDK/runtime libraries are installed."
             ) from e
 
         try:
@@ -92,13 +113,24 @@ class ZedCamera(RgbDepthCamera):
 
             init_params.camera_fps = self.fps
             depth_mode_map = {
-                "PERFORMANCE": self._zed_module.DEPTH_MODE.PERFORMANCE,
+                "NEURAL_LIGHT": getattr(
+                    self._zed_module.DEPTH_MODE, "NEURAL_LIGHT", self._zed_module.DEPTH_MODE.NEURAL
+                ),
+                "NEURAL": self._zed_module.DEPTH_MODE.NEURAL,
+                "NEURAL_PLUS": getattr(
+                    self._zed_module.DEPTH_MODE, "NEURAL_PLUS", self._zed_module.DEPTH_MODE.NEURAL
+                ),
                 "QUALITY": self._zed_module.DEPTH_MODE.QUALITY,
                 "ULTRA": self._zed_module.DEPTH_MODE.ULTRA,
+                "PERFORMANCE": self._zed_module.DEPTH_MODE.PERFORMANCE,
             }
-            init_params.depth_mode = depth_mode_map.get(
-                self.depth_mode, self._zed_module.DEPTH_MODE.PERFORMANCE
-            )
+            requested_depth_mode = str(self.depth_mode).upper()
+            if requested_depth_mode not in depth_mode_map:
+                raise RuntimeError(
+                    f"Unknown ZED depth_mode={self.depth_mode!r}. "
+                    f"Expected one of: {sorted(depth_mode_map)}"
+                )
+            init_params.depth_mode = depth_mode_map[requested_depth_mode]
             init_params.coordinate_units = self._zed_module.UNIT.METER
             init_params.coordinate_system = self._zed_module.COORDINATE_SYSTEM.RIGHT_HANDED_Y_UP
 
@@ -132,6 +164,16 @@ class ZedCamera(RgbDepthCamera):
             # Create depth and RGB image mats
             self.depth_image = self._zed_module.Mat()
             self._rgb_image = self._zed_module.Mat()
+            self._runtime_params = self._zed_module.RuntimeParameters()
+            # Most permissive confidence filtering: keep low-confidence points instead
+            # of dropping them, to maximize depth completeness.
+            if hasattr(self._runtime_params, "confidence_threshold"):
+                self._runtime_params.confidence_threshold = 100
+            if hasattr(self._runtime_params, "texture_confidence_threshold"):
+                self._runtime_params.texture_confidence_threshold = 100
+            logger.info(
+                "ZED runtime confidence thresholds set to 100 (most permissive)"
+            )
 
             self.initialized = True
             logger.info("ZED camera initialized successfully")
@@ -171,7 +213,7 @@ class ZedCamera(RgbDepthCamera):
         """
         if not self.initialized:
             return False
-        if self.camera.grab() != self._zed_module.ERROR_CODE.SUCCESS:
+        if self.camera.grab(self._runtime_params) != self._zed_module.ERROR_CODE.SUCCESS:
             return False
         # Retrieve depth
         self.camera.retrieve_measure(
@@ -242,9 +284,9 @@ class ZedCamera(RgbDepthCamera):
 
 
 def create_zed_camera(
-    resolution: tuple[int, int] = (640, 480),
-    fps: int = 30,
-    depth_mode: str = "PERFORMANCE",
+    depth_mode: str,
+    resolution: tuple[int, int],
+    fps: int,
     serial_number: Optional[int] = None,
 ) -> Optional[ZedCamera]:
     """Factory function to create ZED camera with error handling.
@@ -260,9 +302,9 @@ def create_zed_camera(
     """
     try:
         camera = ZedCamera(
+            depth_mode=depth_mode,
             resolution=resolution,
             fps=fps,
-            depth_mode=depth_mode,
             serial_number=serial_number,
         )
         return camera

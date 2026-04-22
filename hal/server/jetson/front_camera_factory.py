@@ -71,7 +71,7 @@ def create_front_rgb_depth_camera(
     *,
     resolution: tuple[int, int],
     fps: int,
-    depth_mode: str = "PERFORMANCE",
+    depth_mode: str,
     zed_serial_number: Optional[int] = None,
     maixsense_host: Optional[str] = None,
     maixsense_port: Optional[int] = None,

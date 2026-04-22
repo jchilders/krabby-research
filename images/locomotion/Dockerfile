@@ -71,6 +71,10 @@ RUN bash -c "pip3 install --no-cache-dir /tmp/wheels/*.whl"
 COPY controller/ /workspace/controller/
 COPY firmware/ /workspace/firmware/
 ENV PYTHONPATH=/workspace
+# Jetson camera stack requires its libnvjpeg for pyzed/Argus interop.
+# If removed, pyzed may resolve CUDA libnvjpeg first and fail to import with:
+# "undefined symbol: jpeg_set_hardware_acceleration_parameters_enc".
+ENV LD_PRELOAD=/usr/lib/aarch64-linux-gnu/nvidia/libnvjpeg.so
 
 # Set entrypoint to HAL server with integrated inference
 # This runs both Jetson HAL server and policy inference in the same process

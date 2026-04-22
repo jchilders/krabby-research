@@ -12,6 +12,19 @@ if [ ! -f "$PROJECT_ROOT/Makefile" ]; then
   exit 1
 fi
 
+ensure_dir_exists() {
+  local dir="$1"
+  if mkdir -p "$dir" 2>/dev/null; then
+    return 0
+  fi
+  echo "Directory not creatable as current user, creating with sudo: $dir"
+  sudo mkdir -p "$dir"
+  if [ ! -d "$dir" ]; then
+    echo "Error: directory does not exist after sudo create: $dir" >&2
+    exit 1
+  fi
+}
+
 # -------------------------
 # Hardcoded launch settings
 # -------------------------
@@ -32,8 +45,9 @@ ROBOT_TYPE="go2"
 TELEOP_WS_URL="ws://10.0.0.130:9000/ws/robot"
 COLLECTOR_HOST_DIR="/tmp/krabby_bags"
 CONTAINER_COLLECTOR_DIR="/workspace/bags"
-ZED_RESOURCES_HOST_DIR="${HOME}/zed-resources"
+ZED_CACHE_HOST_DIR="${HOME}/zed-resources"
 ZED_RESOURCES_CONTAINER_DIR="/usr/local/zed/resources"
+ZED_SETTINGS_CONTAINER_DIR="/usr/local/zed/settings"
 CREATE_COLLECTOR_DIR_IF_MISSING=1
 
 if [ -z "$CHECKPOINT_HOST_DIR" ]; then
@@ -56,8 +70,12 @@ if [ ! -d "$COLLECTOR_HOST_DIR" ]; then
   fi
 fi
 
-ZED_RESOURCES_HOST_DIR="$(realpath -m "$ZED_RESOURCES_HOST_DIR")"
-mkdir -p "$ZED_RESOURCES_HOST_DIR"
+ZED_CACHE_HOST_DIR="$(realpath -m "$ZED_CACHE_HOST_DIR")"
+ZED_RESOURCES_SUBDIR="$ZED_CACHE_HOST_DIR/resources"
+ZED_SETTINGS_SUBDIR="$ZED_CACHE_HOST_DIR/settings"
+ensure_dir_exists "$ZED_CACHE_HOST_DIR"
+ensure_dir_exists "$ZED_RESOURCES_SUBDIR"
+ensure_dir_exists "$ZED_SETTINGS_SUBDIR"
 
 echo "Using data collector host folder: $COLLECTOR_HOST_DIR"
 echo "Using image: $IMAGE"
@@ -67,7 +85,8 @@ echo "Using task reference: $TASK_NAME"
 echo "Using robot definition: $ROBOT_TYPE"
 echo "Using teleop signaling URL: $TELEOP_WS_URL"
 echo "Using side MaixSense endpoint: from sensor catalog"
-echo "Using ZED resources mount: $ZED_RESOURCES_HOST_DIR:$ZED_RESOURCES_CONTAINER_DIR"
+echo "Using ZED resources mount: $ZED_RESOURCES_SUBDIR:$ZED_RESOURCES_CONTAINER_DIR"
+echo "Using ZED settings mount: $ZED_SETTINGS_SUBDIR:$ZED_SETTINGS_CONTAINER_DIR"
 
 PY_BOOTSTRAP="$(cat <<'PYEOF'
 import sys
@@ -104,9 +123,14 @@ if side is None:
     raise SystemExit(
         "Expected a non-primary side MaixSense catalog row "
         "(camera_driver='maixsense_a075v', hal_open_rgbd=True), but none was found."
-    )
+)
 side_host = (side.maixsense_host or "").strip() or "(unset)"
-side_port = side.maixsense_port if side.maixsense_port is not None else 80
+if side.maixsense_port is not None:
+    side_port = side.maixsense_port
+elif side.maixsense_port_env:
+    side_port = (__import__("os").environ.get(side.maixsense_port_env, "")).strip() or "(unset)"
+else:
+    side_port = "(unset)"
 
 # Force teleop config from launcher.
 teleop_settings.TELEOP_EDGE_MODE = "agent"
@@ -131,7 +155,8 @@ PYEOF
 exec sudo docker run --rm --runtime=nvidia --network host \
   -v "$CHECKPOINT_HOST_DIR:/workspace/checkpoints" \
   -v "$COLLECTOR_HOST_DIR:$CONTAINER_COLLECTOR_DIR" \
-  -v "$ZED_RESOURCES_HOST_DIR:$ZED_RESOURCES_CONTAINER_DIR" \
+  -v "$ZED_RESOURCES_SUBDIR:$ZED_RESOURCES_CONTAINER_DIR" \
+  -v "$ZED_SETTINGS_SUBDIR:$ZED_SETTINGS_CONTAINER_DIR" \
   -v /dev:/dev \
   --privileged \
   --entrypoint python3 \

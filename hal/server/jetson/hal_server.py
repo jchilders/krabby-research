@@ -75,11 +75,11 @@ def _read_optional_int_env(var_name: str) -> Optional[int]:
 
 def _expected_rgb_depth_shapes_for_entry(
     entry: JetsonSensorCatalogEntry,
-    primary_resolution_wh: tuple[int, int],
 ) -> tuple[tuple[int, int, int], tuple[int, int]]:
     """Return ((H, W, 3), (H, W)) for RGB uint8 and depth float32."""
-    w, h = primary_resolution_wh if entry.is_primary else entry.resolution
-    return (h, w, 3), (h, w)
+    rgb_w, rgb_h = entry.resolution
+    depth_w, depth_h = entry.depth_resolution
+    return (rgb_h, rgb_w, 3), (depth_h, depth_w)
 
 
 class JetsonHalServer(HalServerBase):
@@ -99,10 +99,6 @@ class JetsonHalServer(HalServerBase):
         observation_dimensions: ObservationDimensions,
         action_dim: int,
         robot_definition: RobotDefinition,
-        camera_resolution: tuple[int, int] | None = None,
-        camera_fps: int | None = None,
-        camera_driver: str | None = None,
-        depth_mode: str = "PERFORMANCE",
         mcu_port: Optional[str] = None,
         mcu_baud: int = 115200,
         mcu_auto_connect: bool = True,
@@ -116,10 +112,6 @@ class JetsonHalServer(HalServerBase):
                 a matching side catalog row (see ``JETSON_SENSOR_CATALOG`` ``policy_scan_slot``).
             action_dim: Action dimension (model output joint count)
             robot_definition: Robot definition for joint names and order (adapter uses get_joint_names()).
-            camera_resolution: Front observation camera (width, height); default from the catalog ``is_primary`` row.
-            camera_fps: Front observation camera FPS; default from the catalog ``is_primary`` row.
-            camera_driver: Registered RGB-D driver id (see ``FRONT_RGB_DEPTH_CAMERA_FACTORIES``); default from the catalog ``is_primary`` row's ``camera_driver`` (also exposed on ``SensorInfo`` from ``list_sensors()``).
-            depth_mode: Passed to the camera driver when supported (e.g. ZED depth mode).
             mcu_port: Serial port for MCU connection. If None, uses default from MCU SDK.
             mcu_baud: Baud rate for MCU serial communication.
             mcu_auto_connect: If True, automatically connect to MCU on initialization.
@@ -129,18 +121,15 @@ class JetsonHalServer(HalServerBase):
         self.action_dim = action_dim
         self.robot_definition = robot_definition
         _obs_cam = front_observation_camera_catalog_entry()
-        self.camera_resolution = (
-            camera_resolution if camera_resolution is not None else _obs_cam.resolution
-        )
-        self.camera_fps = camera_fps if camera_fps is not None else _obs_cam.fps
-        _driver = camera_driver if camera_driver is not None else _obs_cam.camera_driver
+        self.camera_resolution = _obs_cam.resolution
+        self.camera_fps = _obs_cam.fps
+        _driver = _obs_cam.camera_driver
         if not _driver:
             raise RuntimeError(
                 "camera_driver is unset; set it on the JETSON_SENSOR_CATALOG is_primary row "
-                "or pass camera_driver= to JetsonHalServer"
+                "before constructing JetsonHalServer"
             )
         self._camera_driver = _driver
-        self._depth_mode = depth_mode
         self.front_camera: Optional[RgbDepthCamera] = None
         self.state_source = None  # IMU/encoders (placeholder, real implementation in future)
         self.actuator_sink = None  # Motors (placeholder, real implementation in future)
@@ -224,26 +213,18 @@ class JetsonHalServer(HalServerBase):
 
             zed_serial: Optional[int] = None
             if entry.camera_driver == "zed":
-                if entry.zed_usb_serial_env:
-                    zed_serial = _read_optional_int_env(entry.zed_usb_serial_env)
-                if not entry.is_primary and zed_serial is None:
-                    logger.warning(
-                        "Skipping HAL RGB-D %s: ZED needs integer USB serial in env %s",
-                        entry.id,
-                        entry.zed_usb_serial_env or "(set zed_usb_serial_env on catalog row)",
-                    )
-                    continue
+                zed_env_name = (entry.zed_usb_serial_env or "").strip()
+                if zed_env_name:
+                    zed_serial = _read_optional_int_env(zed_env_name)
 
-            res = (
-                self.camera_resolution if entry.is_primary else entry.resolution
-            )
-            fps = self.camera_fps if entry.is_primary else entry.fps
+            res = entry.resolution
+            fps = entry.fps
 
             cam = create_front_rgb_depth_camera(
                 entry.camera_driver,
                 resolution=res,
                 fps=fps,
-                depth_mode=self._depth_mode,
+                depth_mode=entry.depth_mode,
                 zed_serial_number=zed_serial,
                 maixsense_host=entry.maixsense_host,
                 maixsense_port=entry.maixsense_port,
@@ -480,9 +461,11 @@ class JetsonHalServer(HalServerBase):
         # Catalog RGB-D: one grab per opened HAL camera. If the driver returns no frame
         # (rgb or depth None), use zero tensors at the catalog resolution. Shape mismatches
         # and other errors from get_camera_frames propagate (not converted to zeros).
-        camera_height, camera_width = self.camera_resolution[1], self.camera_resolution[0]
+        primary_entry = JETSON_SENSOR_CATALOG_BY_ID[self._primary_catalog_id]
+        camera_width, camera_height = primary_entry.resolution
+        primary_depth_width, primary_depth_height = primary_entry.depth_resolution
         expected_rgb_shape = (camera_height, camera_width, 3)
-        expected_depth_shape = (camera_height, camera_width)
+        expected_depth_shape = (primary_depth_height, primary_depth_width)
         nf_scan = self.observation_dimensions.num_scan_front
         ns_scan = self.observation_dimensions.num_side_scan
 
@@ -496,9 +479,7 @@ class JetsonHalServer(HalServerBase):
                 )
                 continue
 
-            exp_rgb_shape, exp_depth_shape = _expected_rgb_depth_shapes_for_entry(
-                entry, self.camera_resolution
-            )
+            exp_rgb_shape, exp_depth_shape = _expected_rgb_depth_shapes_for_entry(entry)
             rgb_frame, depth_frame = cam.get_camera_frames()
 
             placeholder = False
@@ -584,13 +565,9 @@ class JetsonHalServer(HalServerBase):
                 scan_features = np.asarray(scan_features, dtype=np.float32)
 
         side_scan_features: Optional[np.ndarray] = None
-        side_camera_rgb: Optional[np.ndarray] = None
-        side_camera_depth: Optional[np.ndarray] = None
         if self._side_catalog_id:
             chunk_s = rgbd_by_catalog_id.get(self._side_catalog_id)
             if chunk_s is not None:
-                side_camera_rgb = chunk_s.rgb
-                side_camera_depth = chunk_s.depth
                 side_scan_features = chunk_s.scan_features
                 if side_scan_features is not None:
                     side_scan_features = np.asarray(
@@ -612,8 +589,8 @@ class JetsonHalServer(HalServerBase):
             camera_depth=camera_depth,
             scan_features=scan_features,
             side_scan_features=side_scan_features,
-            side_camera_rgb=side_camera_rgb,
-            side_camera_depth=side_camera_depth,
+            side_camera_rgb=None,
+            side_camera_depth=None,
             rgbd_by_catalog_id=rgbd_by_catalog_id if rgbd_by_catalog_id else None,
         )
 
