@@ -85,7 +85,8 @@ def test_jetson_build_pipeline_h264_fakesink_nvenc_shape():
     pipe = iface.build_pipeline(handle, encoding="h264", output_element="fakesink")
 
     assert "appsrc name=src" in pipe
-    assert "video/x-raw,format=RGB,width=640,height=480,framerate=30/1" in pipe
+    w, h = handle.resolution
+    assert f"video/x-raw,format=RGB,width={w},height={h},framerate={handle.fps}/1" in pipe
     assert "nvvidconv" in pipe
     assert "nvv4l2h264enc" in pipe
     assert "h264parse" in pipe
@@ -100,7 +101,8 @@ def test_jetson_build_pipeline_h264_fakesink_software_encode_shape():
     pipe = iface.build_pipeline(handle, encoding="h264", output_element="fakesink")
 
     assert "appsrc name=src" in pipe
-    assert "video/x-raw,format=RGB,width=640,height=480,framerate=30/1" in pipe
+    w, h = handle.resolution
+    assert f"video/x-raw,format=RGB,width={w},height={h},framerate={handle.fps}/1" in pipe
     assert "x264enc" in pipe
     assert "h264parse" in pipe
     assert pipe.rstrip().endswith("fakesink")
@@ -126,7 +128,11 @@ def test_jetson_depth_gray16_handle_and_sw_pipeline_shape():
 
     pipe = iface.build_pipeline(handle, encoding="h264", output_element="fakesink")
     assert "appsrc name=src" in pipe
-    assert "video/x-raw,format=GRAY16_LE,width=640,height=480,framerate=30/1" in pipe
+    w, h = handle.resolution
+    assert (
+        f"video/x-raw,format=GRAY16_LE,width={w},height={h},framerate={handle.fps}/1"
+        in pipe
+    )
     assert "videoconvert" in pipe
     assert "x264enc" in pipe
     assert pipe.rstrip().endswith("fakesink")
