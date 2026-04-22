@@ -8,12 +8,14 @@ import os
 
 from aiohttp import WSMsgType, web
 
+from teleop.portal.app_keys import BROWSER_ICE_APP_KEY, PORTAL_AUTH_SETTINGS_APP_KEY
 from teleop.portal.auth import teleop_auth_middleware
 from teleop.portal.client_config import teleop_client_config_handler
 from teleop.portal.ice_config import BrowserIceConfig
 from teleop.portal.settings import PortalAuthSettings
 
 logger = logging.getLogger(__name__)
+PAIRING_APP_KEY = web.AppKey("pairing", object)
 
 Role = str  # "browser" | "robot"
 
@@ -117,11 +119,17 @@ class PairingBroker:
 
 
 async def _pairing_broker_startup(app: web.Application) -> None:
-    await app["pairing"].start()
+    broker = app.get(PAIRING_APP_KEY)
+    if not isinstance(broker, PairingBroker):
+        raise web.HTTPInternalServerError(text="teleop: app missing PairingBroker")
+    await broker.start()
 
 
 async def _pairing_broker_cleanup(app: web.Application) -> None:
-    await app["pairing"].stop()
+    broker = app.get(PAIRING_APP_KEY)
+    if not isinstance(broker, PairingBroker):
+        return
+    await broker.stop()
 
 
 def create_portal_app(
@@ -133,9 +141,9 @@ def create_portal_app(
     broker = pairing or PairingBroker()
     logging.basicConfig(level=logging.INFO)
     app = web.Application(middlewares=[teleop_auth_middleware])
-    app["browser_ice"] = browser_ice
-    app["portal_auth_settings"] = portal_auth_settings
-    app["pairing"] = broker
+    app[BROWSER_ICE_APP_KEY] = browser_ice
+    app[PORTAL_AUTH_SETTINGS_APP_KEY] = portal_auth_settings
+    app[PAIRING_APP_KEY] = broker
     app.on_startup.append(_pairing_broker_startup)
     app.on_cleanup.append(_pairing_broker_cleanup)
     app.router.add_get("/", _portal_index)

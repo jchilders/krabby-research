@@ -6,7 +6,9 @@ from typing import Optional
 
 from aiohttp import web
 
-from teleop.portal.settings import HTTP_TOKEN, PortalAuthSettings
+from teleop.portal.app_keys import PORTAL_AUTH_SETTINGS_APP_KEY
+from teleop.portal import settings as portal_settings
+from teleop.portal.settings import PortalAuthSettings
 
 
 def _normalize_optional_token(t: object | None) -> Optional[str]:
@@ -18,10 +20,10 @@ def _normalize_optional_token(t: object | None) -> Optional[str]:
 
 def expected_token(request: web.Request) -> Optional[str]:
     """Return required token string, or ``None`` if auth is disabled."""
-    ps = request.app.get("portal_auth_settings")
+    ps = request.app.get(PORTAL_AUTH_SETTINGS_APP_KEY)
     if ps is not None and not isinstance(ps, PortalAuthSettings):
         raise web.HTTPInternalServerError(
-            text="teleop: app['portal_auth_settings'] must be PortalAuthSettings or None"
+            text="teleop: app auth settings must be PortalAuthSettings or None"
         )
     if isinstance(ps, PortalAuthSettings):
         # App settings only override module defaults when explicitly set.
@@ -30,7 +32,7 @@ def expected_token(request: web.Request) -> Optional[str]:
         app_token = _normalize_optional_token(ps.http_token)
         if app_token is not None:
             return app_token
-    t = HTTP_TOKEN
+    t = portal_settings.HTTP_TOKEN
     return _normalize_optional_token(t)
 
 
