@@ -26,6 +26,7 @@ from hal.server.jetson.teleop_integration import start_jetson_teleop_signaling_t
 from compute.parkour.inference_client import ParkourInferenceClient
 from compute.parkour.policy_interface import ModelWeights
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
+from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 from hal.server.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
 from teleop.edge.robot_settings import build_teleop_edge_settings
 
@@ -70,14 +71,26 @@ def main():
             "Configure signaling URL, mode, and optional sensor ids in teleop/edge/robot_settings.py."
         ),
     )
+    parser.add_argument(
+        "--robot",
+        type=str,
+        default="hex",
+        choices=["hex", "go2"],
+        help="Robot definition to use (default: hex).",
+    )
 
     args = parser.parse_args()
     logging.getLogger().setLevel(getattr(logging, args.log_level))
     logger.setLevel(getattr(logging, args.log_level))
 
     model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
-    # Use the quad Unitree-Go2 definition for parkour teacher/student checkpoints.
-    robot_definition = UNITREE_GO2_DEFINITION
+    if args.robot == "hex":
+        robot_definition = KRABBY_HEX_DEFINITION
+        logger.info("Using Krabby Hex robot definition (default)")
+    else:
+        # Keep explicit option for Unitree-Go2 checkpoints.
+        robot_definition = UNITREE_GO2_DEFINITION
+        logger.info("Using Unitree Go2 robot definition")
     observation_dimensions = model_definition.get_observation_dimensions(robot_definition)
 
     # Running flag for graceful shutdown

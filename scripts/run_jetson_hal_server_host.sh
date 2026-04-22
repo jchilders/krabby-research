@@ -28,6 +28,7 @@ for _dir in "$PROJECT_ROOT/checkpoints" "$PROJECT_ROOT/parkour/assets/weights"; 
   fi
 done
 TASK_NAME="Isaac-Extreme-Parkour-Teacher-Unitree-Go2-Play-v0"
+ROBOT_TYPE="go2"
 TELEOP_WS_URL="ws://10.0.0.130:9000/ws/robot"
 COLLECTOR_HOST_DIR="/tmp/krabby_bags"
 CONTAINER_COLLECTOR_DIR="/workspace/bags"
@@ -63,6 +64,7 @@ echo "Using image: $IMAGE"
 echo "Using checkpoint (host): $CHECKPOINT_HOST_DIR/$CHECKPOINT_FILENAME"
 echo "Using checkpoint (container): $CHECKPOINT_PATH"
 echo "Using task reference: $TASK_NAME"
+echo "Using robot definition: $ROBOT_TYPE"
 echo "Using teleop signaling URL: $TELEOP_WS_URL"
 echo "Using side MaixSense endpoint: from sensor catalog"
 echo "Using ZED resources mount: $ZED_RESOURCES_HOST_DIR:$ZED_RESOURCES_CONTAINER_DIR"
@@ -136,4 +138,5 @@ exec sudo docker run --rm --runtime=nvidia --network host \
   "$IMAGE" \
   -c "$PY_BOOTSTRAP" \
   --checkpoint "$CHECKPOINT_PATH" \
+  --robot "$ROBOT_TYPE" \
   --data-collector-output-dir "$CONTAINER_COLLECTOR_DIR"
