@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 
+import inspect
+import logging
 import os
 import statistics
 import time
@@ -12,14 +14,30 @@ from rsl_rl.env import VecEnv
 from rsl_rl.modules import (
     EmpiricalNormalization,
 )
+from tensordict import TensorDict
 from .actor_critic_with_encoder import ActorCriticRMA
-from rsl_rl.utils import store_code_state
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
 from .feature_extractors import DefaultEstimator
 from .ppo_with_extractor import PPOWithExtractor 
 from .distillation_with_extractor import DistillationWithExtractor 
 from copy import copy 
 import warnings 
+
+try:
+    from rsl_rl.utils import store_code_state
+except ImportError:
+    _STORE_CODE_STATE_WARNED = False
+    _LOGGER = logging.getLogger(__name__)
+
+    def store_code_state(*args, **kwargs):
+        global _STORE_CODE_STATE_WARNED
+        if not _STORE_CODE_STATE_WARNED:
+            _LOGGER.warning(
+                "rsl_rl.utils.store_code_state is unavailable in this runtime. "
+                "Skipping code-state snapshot logging."
+            )
+            _STORE_CODE_STATE_WARNED = True
+        return []
 
 class OnPolicyRunnerWithExtractor(OnPolicyRunner):
     def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device="cpu"):
@@ -32,6 +50,8 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self.env = env
         self.mean_hist_latent_loss = 0.
         self._configure_multi_gpu()
+        # Match stock OnPolicyRunner: distributed config lives on ``cfg["multi_gpu"]``.
+        self.multi_gpu_cfg = self.cfg.get("multi_gpu")
 
         if self.alg_cfg["class_name"] == "PPOWithExtractor":
             self.training_type = "rl"
@@ -101,11 +121,22 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         else:
             self.dagger_update_freq = self.alg_cfg.pop("dagger_update_freq")
             alg_class = eval(self.alg_cfg.pop("class_name"))
+            # Newer IsaacLab/RSL-RL configs may inject extra algorithm keys
+            # (e.g., "optimizer") not accepted by this project-local class.
+            init_params = inspect.signature(alg_class.__init__).parameters
+            filtered_alg_cfg = {k: v for k, v in self.alg_cfg.items() if k in init_params}
+            dropped_keys = sorted(set(self.alg_cfg.keys()) - set(filtered_alg_cfg.keys()))
+            if dropped_keys:
+                logging.getLogger(__name__).warning(
+                    "Ignoring unsupported PPO config keys for %s: %s",
+                    alg_class.__name__,
+                    ", ".join(dropped_keys),
+                )
             self.alg: PPOWithExtractor = alg_class(
                                                     policy, 
                                                     estimator, 
                                                     self.estimator_cfg,
-                                                    **self.alg_cfg, 
+                                                    **filtered_alg_cfg, 
                                                     device=self.device, 
                                                     multi_gpu_cfg=self.multi_gpu_cfg
                                                     )
@@ -141,6 +172,18 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self.tot_time = 0
         self.current_learning_iteration = 0
         self.git_status_repos = [rsl_rl.__file__]
+
+    def add_git_repo_to_log(self, repo_file_path: str) -> None:
+        """Register a repo path for ``store_code_state`` (stock runner uses ``Logger``; we only track ``git_status_repos``)."""
+        self.git_status_repos.append(repo_file_path)
+
+    def train_mode(self) -> None:
+        if hasattr(self.alg, "train_mode"):
+            self.alg.train_mode()
+
+    def eval_mode(self) -> None:
+        if hasattr(self.alg, "eval_mode"):
+            self.alg.eval_mode()
 
     def learn_rl(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):  # noqa: C901
         # initialize writer
@@ -225,8 +268,13 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                     else:
                         privileged_obs = obs
 
-                    # process the step
-                    self.alg.process_env_step(rewards, dones, infos)
+                    # process the step (post-step observations; RND / symmetry expect TensorDict)
+                    obs_td = TensorDict(
+                        {"policy": obs, "critic": privileged_obs},
+                        batch_size=[obs.shape[0]],
+                        device=self.device,
+                    )
+                    self.alg.process_env_step(obs_td, rewards, dones, infos)
 
                     # Extract intrinsic rewards (only for logging)
                     intrinsic_rewards = self.alg.intrinsic_rewards if self.alg.rnd else None
@@ -431,6 +479,90 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         # Save the final model after training
         if self.log_dir is not None and not self.disable_logs:
             self.save(os.path.join(self.log_dir, f"model_{self.current_learning_iteration}.pt"))
+
+    def log(self, locs, width=80, pad=35):
+        """Tensorboard / terminal logging for teacher RL (``learn_rl``)."""
+        collection_size = self.num_steps_per_env * self.env.num_envs * self.gpu_world_size
+        self.tot_timesteps += collection_size
+        self.tot_time += locs["collection_time"] + locs["learn_time"]
+        iteration_time = locs["collection_time"] + locs["learn_time"]
+
+        ep_string = ""
+        if locs.get("ep_infos"):
+            for key in locs["ep_infos"][0]:
+                infotensor = torch.tensor([], device=self.device)
+                for ep_info in locs["ep_infos"]:
+                    if key not in ep_info:
+                        continue
+                    if not isinstance(ep_info[key], torch.Tensor):
+                        ep_info[key] = torch.Tensor([ep_info[key]])
+                    if len(ep_info[key].shape) == 0:
+                        ep_info[key] = ep_info[key].unsqueeze(0)
+                    infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
+                value = torch.mean(infotensor)
+                if "/" in key:
+                    self.writer.add_scalar(key, value, locs["it"])
+                    ep_string += f"""{f'{key}:':>{pad}} {value:.4f}\n"""
+                else:
+                    self.writer.add_scalar("Episode/" + key, value, locs["it"])
+                    ep_string += f"""{f'Mean episode {key}:':>{pad}} {value:.4f}\n"""
+
+        denom = max(locs["collection_time"] + locs["learn_time"], 1e-8)
+        fps = int(collection_size / denom)
+
+        for key, value in locs["loss_dict"].items():
+            self.writer.add_scalar(f"Loss/{key}", value, locs["it"])
+        self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, locs["it"])
+        policy = self.alg.policy
+        if hasattr(policy, "std"):
+            action_std = torch.mean(policy.std).item()
+        elif hasattr(policy, "log_std"):
+            action_std = torch.mean(torch.exp(policy.log_std)).item()
+        else:
+            action_std = 0.0
+        self.writer.add_scalar("Policy/mean_noise_std", action_std, locs["it"])
+
+        self.writer.add_scalar("Perf/total_fps", fps, locs["it"])
+        self.writer.add_scalar("Perf/collection time", locs["collection_time"], locs["it"])
+        self.writer.add_scalar("Perf/learning_time", locs["learn_time"], locs["it"])
+
+        if len(locs.get("rewbuffer", [])) > 0:
+            self.writer.add_scalar("Train/mean_reward", statistics.mean(locs["rewbuffer"]), locs["it"])
+        if len(locs.get("lenbuffer", [])) > 0:
+            self.writer.add_scalar("Train/mean_episode_length", statistics.mean(locs["lenbuffer"]), locs["it"])
+            if self.logger_type != "wandb":
+                self.writer.add_scalar(
+                    "Train/mean_episode_length/time",
+                    statistics.mean(locs["lenbuffer"]),
+                    self.tot_time,
+                )
+
+        title = f" \033[1m Learning iteration {locs['it']}/{locs['tot_iter']} \033[0m "
+        log_string = (
+            f"""{'#' * width}\n"""
+            f"""{title.center(width, ' ')}\n\n"""
+            f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
+                'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+        )
+        if len(locs.get("rewbuffer", [])) > 0:
+            log_string += f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.4f}\n"""
+        for key, value in locs["loss_dict"].items():
+            log_string += f"""{f'Mean {key}:':>{pad}} {value:.4f}\n"""
+        if len(locs.get("lenbuffer", [])) > 0:
+            log_string += f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
+        log_string += ep_string
+        num_learning_iterations = locs.get("num_learning_iterations", locs["tot_iter"] - locs["start_iter"])
+        eta_factor = self.tot_time / (locs["it"] - locs["start_iter"] + 1) * (
+            locs["start_iter"] + num_learning_iterations - locs["it"]
+        )
+        log_string += (
+            f"""{'-' * width}\n"""
+            f"""{'Total timesteps:':>{pad}} {self.tot_timesteps}\n"""
+            f"""{'Iteration time:':>{pad}} {iteration_time:.2f}s\n"""
+            f"""{'Time elapsed:':>{pad}} {time.strftime("%H:%M:%S", time.gmtime(self.tot_time))}\n"""
+            f"""{'ETA:':>{pad}} {time.strftime("%H:%M:%S", time.gmtime(eta_factor))}\n"""
+        )
+        print(log_string)
 
     def log_vision(self, locs, width=80, pad=35):
         

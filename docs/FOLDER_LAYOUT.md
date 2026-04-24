@@ -33,7 +33,7 @@ krabby-research/
 ├── parkour/                          # Existing parkour model code (unchanged)
 │   ├── scripts/rsl_rl/               # Training and evaluation scripts
 │   ├── parkour_isaaclab/             # IsaacLab environment code
-│   └── parkour_tasks/                # Task configurations
+│   └── parkour_tasks/                # Task configurations (crab hexapod policy config: docs/crab-hexapod-policy-config.md)
 │
 ├── hal/                              # Hardware Abstraction Layer
 │   ├── __init__.py                   # Minimal stub (packages installed via wheels or editable mode)

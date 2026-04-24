@@ -212,3 +212,7 @@ __marimo__/
 
 # Build cache (for heavy downloads like Isaac Lab, reused across Docker builds)
 .build-cache/
+
+# Parkour RL training artifacts (RSL-RL logs, Hydra outputs)
+parkour/logs/
+parkour/outputs/

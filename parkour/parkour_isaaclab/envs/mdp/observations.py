@@ -139,8 +139,18 @@ class ExtremeParkourObservations(ManagerTermBase):
     def _get_priv_latent(
         self,
         ):
-        body_mass = self.asset.root_physx_view.get_masses()[:,self.body_id].to(self.device)
-        body_com = self.asset.data.com_pos_b[:,self.body_id,:].to(self.device).squeeze(1)
+        body_mass = self.asset.root_physx_view.get_masses()[:, self.body_id].to(self.device)
+        body_com = self.asset.data.com_pos_b[:, self.body_id, :].to(self.device)
+        # Different embodiments can expose scalar vs vector body-id indexing.
+        # Normalize to [num_envs, K] before concatenation.
+        if body_mass.ndim == 1:
+            body_mass = body_mass.unsqueeze(1)
+        elif body_mass.ndim > 2:
+            body_mass = body_mass.reshape(body_mass.shape[0], -1)
+        if body_com.ndim == 1:
+            body_com = body_com.unsqueeze(1)
+        elif body_com.ndim > 2:
+            body_com = body_com.reshape(body_com.shape[0], -1)
         mass_params_tensor = torch.cat([body_mass, body_com],dim=-1).to(self.device)
         friction_coeffs_tensor = self.asset.root_physx_view.get_material_properties()[:, 0, 0]
         joint_stiffness = self.asset.data.joint_stiffness.to(self.device)
