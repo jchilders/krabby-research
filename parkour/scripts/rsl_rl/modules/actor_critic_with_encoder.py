@@ -8,6 +8,7 @@ from torch.distributions import Normal
 from .feature_extractors.state_encoder import *
 from rsl_rl.utils import resolve_nn_activation
 
+
 class Actor(nn.Module):
     def __init__(self, 
                  num_actions, 
@@ -205,7 +206,7 @@ class ActorCriticRMA(nn.Module):
     def update_distribution(self, observations, hist_encoding):
         mean = self.actor(observations, hist_encoding)
         if self.noise_std_type == "scalar":
-            std = mean*0. + self.std
+            std = self.std.expand_as(mean)
         elif self.noise_std_type == "log":
             std = torch.exp(self.log_std).expand_as(mean)
         else:

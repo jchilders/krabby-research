@@ -16,7 +16,8 @@ from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab.sensors import ContactSensor, RayCaster, RayCasterCamera
 from isaaclab.assets import Articulation
 from isaaclab.utils.math  import euler_xyz_from_quat, wrap_to_pi
-from parkour_isaaclab.envs.mdp.parkours import ParkourEvent 
+from parkour_isaaclab.envs.mdp.parkours import ParkourEvent
+from parkour_isaaclab.utils.nonfinite_logging import warn_if_nonfinite
 from collections.abc import Sequence
 import numpy as np 
 import cv2
@@ -98,22 +99,28 @@ class ExtremeParkourObservations(ManagerTermBase):
                             ),dim=-1)
         priv_explicit = self._get_priv_explicit()
         priv_latent = self._get_priv_latent()
-        observations = torch.cat([obs_buf, #53
-                                  self.measured_heights, #132
-                                  priv_explicit, # 9
-                                  priv_latent, # 29
-                                  self._obs_history_buffer.view(self.num_envs, -1)
-                                  ],dim=-1)
+        warn_if_nonfinite("observations.history_buffer", self._obs_history_buffer)
+        self._obs_history_buffer = torch.nan_to_num(
+            self._obs_history_buffer, nan=0.0, posinf=0.0, neginf=0.0
+        )
+        observations = torch.cat(
+            [
+                obs_buf,
+                self.measured_heights,
+                priv_explicit,
+                priv_latent,
+                self._obs_history_buffer.view(self.num_envs, -1),
+            ],
+            dim=-1,
+        )
         obs_buf[:, 6:8] = 0
         self._obs_history_buffer = torch.where(
-            (env.episode_length_buf <= 1)[:, None, None], 
+            (env.episode_length_buf <= 1)[:, None, None],
             torch.stack([obs_buf] * self.history_length, dim=1),
-            torch.cat([
-                self._obs_history_buffer[:, 1:],
-                obs_buf.unsqueeze(1)
-            ], dim=1)
+            torch.cat([self._obs_history_buffer[:, 1:], obs_buf.unsqueeze(1)], dim=1),
         )
-        return observations 
+        warn_if_nonfinite("observations.concat", observations)
+        return torch.nan_to_num(observations, nan=0.0, posinf=0.0, neginf=0.0)
 
     def _get_contact_fill(
         self,
@@ -157,15 +164,36 @@ class ExtremeParkourObservations(ManagerTermBase):
         default_joint_stiffness = self.asset.data.default_joint_stiffness.to(self.device)
         joint_damping = self.asset.data.joint_damping.to(self.device)
         default_joint_damping = self.asset.data.default_joint_damping.to(self.device)
-        return torch.cat((
-            mass_params_tensor,
-            friction_coeffs_tensor.unsqueeze(1).to(self.device),
-            (joint_stiffness/ default_joint_stiffness) - 1, 
-            (joint_damping/ default_joint_damping) - 1
-        ), dim=-1).to(self.device)
+        # Zero USD defaults -> 0/0 NaNs in ratios; crab (and other rigs) may expose 0 stiffness/damping.
+        eps = 1e-8
+        stiff_ratio = torch.where(
+            default_joint_stiffness.abs() > eps,
+            joint_stiffness / default_joint_stiffness - 1.0,
+            torch.zeros_like(joint_stiffness),
+        )
+        damp_ratio = torch.where(
+            default_joint_damping.abs() > eps,
+            joint_damping / default_joint_damping - 1.0,
+            torch.zeros_like(joint_damping),
+        )
+        return torch.cat(
+            (
+                mass_params_tensor,
+                friction_coeffs_tensor.unsqueeze(1).to(self.device),
+                stiff_ratio,
+                damp_ratio,
+            ),
+            dim=-1,
+        ).to(self.device)
     
     def _get_heights(self):
-        return torch.clip(self.ray_sensor.data.pos_w[:, 2].unsqueeze(1) - self.ray_sensor.data.ray_hits_w[..., 2] - 0.3, -1, 1).to(self.device)
+        raw = (
+            self.ray_sensor.data.pos_w[:, 2].unsqueeze(1)
+            - self.ray_sensor.data.ray_hits_w[..., 2]
+            - 0.3
+        )
+        raw = torch.nan_to_num(raw, nan=0.0, posinf=1.0, neginf=-1.0)
+        return torch.clip(raw, -1, 1).to(self.device)
 
 class image_features(ManagerTermBase):
     

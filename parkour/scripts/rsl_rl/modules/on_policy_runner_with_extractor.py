@@ -6,8 +6,9 @@ import logging
 import os
 import statistics
 import time
-import torch
 from collections import deque
+
+import torch
 
 import rsl_rl
 from rsl_rl.env import VecEnv
@@ -18,10 +19,12 @@ from tensordict import TensorDict
 from .actor_critic_with_encoder import ActorCriticRMA
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
 from .feature_extractors import DefaultEstimator
+from parkour_isaaclab.utils.nonfinite_logging import warn_if_nonfinite
+
 from .ppo_with_extractor import PPOWithExtractor 
 from .distillation_with_extractor import DistillationWithExtractor 
 from copy import copy 
-import warnings 
+import warnings
 
 try:
     from rsl_rl.utils import store_code_state
@@ -285,28 +288,32 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                             ep_infos.append(infos["episode"])
                         elif "log" in infos:
                             ep_infos.append(infos["log"])
-                        # Update rewards
+                        # Flatten (N,1) tensors for per-env sums; nan_to_num avoids poisoned episode totals.
+                        rew_f = rewards.squeeze(-1) if rewards.dim() > 1 else rewards
+                        warn_if_nonfinite("runner.reward_step", rew_f)
+                        rew_f = torch.nan_to_num(rew_f, nan=0.0, posinf=0.0, neginf=0.0)
                         if self.alg.rnd:
-                            cur_ereward_sum += rewards
-                            cur_ireward_sum += intrinsic_rewards  # type: ignore
-                            cur_reward_sum += rewards + intrinsic_rewards
+                            ir = intrinsic_rewards.squeeze(-1) if intrinsic_rewards.dim() > 1 else intrinsic_rewards  # type: ignore[union-attr]
+                            warn_if_nonfinite("runner.intrinsic_reward_step", ir)
+                            ir = torch.nan_to_num(ir, nan=0.0, posinf=0.0, neginf=0.0)
+                            cur_ereward_sum += rew_f
+                            cur_ireward_sum += ir
+                            cur_reward_sum += rew_f + ir
                         else:
-                            cur_reward_sum += rewards
-                        # Update episode length
+                            cur_reward_sum += rew_f
                         cur_episode_length += 1
-                        # Clear data for completed episodes
-                        # -- common
-                        new_ids = (dones > 0).nonzero(as_tuple=False)
-                        rewbuffer.extend(cur_reward_sum[new_ids][:, 0].cpu().numpy().tolist())
-                        lenbuffer.extend(cur_episode_length[new_ids][:, 0].cpu().numpy().tolist())
-                        cur_reward_sum[new_ids] = 0
-                        cur_episode_length[new_ids] = 0
-                        # -- intrinsic and extrinsic rewards
-                        if self.alg.rnd:
-                            erewbuffer.extend(cur_ereward_sum[new_ids][:, 0].cpu().numpy().tolist())
-                            irewbuffer.extend(cur_ireward_sum[new_ids][:, 0].cpu().numpy().tolist())
-                            cur_ereward_sum[new_ids] = 0
-                            cur_ireward_sum[new_ids] = 0
+                        don_f = dones.squeeze(-1) if dones.dim() > 1 else dones
+                        idx = (don_f > 0).nonzero(as_tuple=False).view(-1)
+                        if idx.numel() > 0:
+                            rewbuffer.extend(cur_reward_sum[idx].detach().cpu().numpy().tolist())
+                            lenbuffer.extend(cur_episode_length[idx].detach().cpu().numpy().tolist())
+                            cur_reward_sum[idx] = 0
+                            cur_episode_length[idx] = 0
+                            if self.alg.rnd:
+                                erewbuffer.extend(cur_ereward_sum[idx].detach().cpu().numpy().tolist())
+                                irewbuffer.extend(cur_ireward_sum[idx].detach().cpu().numpy().tolist())
+                                cur_ereward_sum[idx] = 0
+                                cur_ireward_sum[idx] = 0
 
                 stop = time.time()
                 collection_time = stop - start
@@ -499,7 +506,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
                     infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
-                value = torch.mean(infotensor)
+                value = torch.nanmean(infotensor) if infotensor.numel() > 0 else torch.tensor(float("nan"))
                 if "/" in key:
                     self.writer.add_scalar(key, value, locs["it"])
                     ep_string += f"""{f'{key}:':>{pad}} {value:.4f}\n"""
@@ -585,7 +592,7 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
                     infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
-                value = torch.mean(infotensor)
+                value = torch.nanmean(infotensor) if infotensor.numel() > 0 else torch.tensor(float("nan"))
                 # log to logger and terminal
                 if "/" in key:
                     self.writer.add_scalar(key, value, locs["it"])
@@ -607,15 +614,17 @@ class OnPolicyRunnerWithExtractor(OnPolicyRunner):
         self.writer.add_scalar("Perf/collection time", locs["collection_time"], locs["it"])
         self.writer.add_scalar("Perf/learning_time", locs["learn_time"], locs["it"])
 
-        if len(locs["lenbuffer"]) > 0:
+        if len(locs.get("lenbuffer", [])) > 0:
             self.writer.add_scalar("Train/mean_episode_length", statistics.mean(locs["lenbuffer"]), locs["it"])
             if self.logger_type != "wandb":  # wandb does not support non-integer x-axis logging
                 self.writer.add_scalar(
-                    "Train/mean_episode_length/time", statistics.mean(locs["lenbuffer"]), self.tot_time
+                    "Train/mean_episode_length/time",
+                    statistics.mean(locs["lenbuffer"]),
+                    self.tot_time,
                 )
         str = f" \033[1m Learning iteration {locs['it']}/{locs['tot_iter']} \033[0m "
 
-        if len(locs["lenbuffer"]) > 0:
+        if len(locs.get("lenbuffer", [])) > 0:
             log_string = (
                 f"""{'#' * width}\n"""
                 f"""{str.center(width, ' ')}\n\n"""

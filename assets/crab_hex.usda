@@ -322,8 +322,8 @@ def Xform "World"
                     float drive:angular:physics:stiffness = 18000
                     float drive:angular:physics:targetPosition = 0
                     float drive:angular:physics:targetVelocity = 0
-                    float limit:angular:physics:high = 45
-                    float limit:angular:physics:low = -45
+                    float limit:angular:physics:high = 1.2
+                    float limit:angular:physics:low = -1.2
                     uniform token physics:axis = "Z"
                     rel physics:body0 = </World/KrabbyUno/Root_MR/MR_HipMount>
                     rel physics:body1 = </World/KrabbyUno/Root_MR/MR_Hip>
@@ -722,8 +722,8 @@ def Xform "World"
                     float drive:angular:physics:stiffness = 18000
                     float drive:angular:physics:targetPosition = 0
                     float drive:angular:physics:targetVelocity = 0
-                    float limit:angular:physics:high = 45
-                    float limit:angular:physics:low = -45
+                    float limit:angular:physics:high = 1.2
+                    float limit:angular:physics:low = -1.2
                     uniform token physics:axis = "Z"
                     rel physics:body0 = </World/KrabbyUno/Root_ML/ML_HipMount>
                     rel physics:body1 = </World/KrabbyUno/Root_ML/ML_Hip>
@@ -1117,8 +1117,8 @@ def Xform "World"
                     float drive:angular:physics:stiffness = 18000
                     float drive:angular:physics:targetPosition = 0
                     float drive:angular:physics:targetVelocity = 0
-                    float limit:angular:physics:high = 45
-                    float limit:angular:physics:low = -45
+                    float limit:angular:physics:high = 1.2
+                    float limit:angular:physics:low = -1.2
                     uniform token physics:axis = "Z"
                     rel physics:body0 = </World/KrabbyUno/Root_RR/RR_HipMount>
                     rel physics:body1 = </World/KrabbyUno/Root_RR/RR_Hip>
@@ -1512,8 +1512,8 @@ def Xform "World"
                     float drive:angular:physics:stiffness = 18000
                     float drive:angular:physics:targetPosition = 0
                     float drive:angular:physics:targetVelocity = 0
-                    float limit:angular:physics:high = 45
-                    float limit:angular:physics:low = -45
+                    float limit:angular:physics:high = 1.2
+                    float limit:angular:physics:low = -1.2
                     uniform token physics:axis = "Z"
                     rel physics:body0 = </World/KrabbyUno/Root_RL/RL_HipMount>
                     rel physics:body1 = </World/KrabbyUno/Root_RL/RL_Hip>
@@ -1907,8 +1907,8 @@ def Xform "World"
                     float drive:angular:physics:stiffness = 18000
                     float drive:angular:physics:targetPosition = 0
                     float drive:angular:physics:targetVelocity = 0
-                    float limit:angular:physics:high = 45
-                    float limit:angular:physics:low = -45
+                    float limit:angular:physics:high = 1.2
+                    float limit:angular:physics:low = -1.2
                     uniform token physics:axis = "Z"
                     rel physics:body0 = </World/KrabbyUno/Root_FR/FR_HipMount>
                     rel physics:body1 = </World/KrabbyUno/Root_FR/FR_Hip>
@@ -2422,8 +2422,8 @@ def Xform "World"
                     float drive:angular:physics:stiffness = 18000
                     float drive:angular:physics:targetPosition = 0
                     float drive:angular:physics:targetVelocity = 0
-                    float limit:angular:physics:high = 45
-                    float limit:angular:physics:low = -45
+                    float limit:angular:physics:high = 1.2
+                    float limit:angular:physics:low = -1.2
                     uniform token physics:axis = "Z"
                     rel physics:body0 = </World/KrabbyUno/Root_FL/FL_HipMount>
                     rel physics:body1 = </World/KrabbyUno/Root_FL/FL_Hip>
@@ -2627,17 +2627,6 @@ def Xform "World"
                 quatf physics:localRot1 = (1, 0, 0, 0)
             }
         }
-    }
-
-    def PhysicsScene "PhysicsScene" (
-        prepend apiSchemas = ["PhysxSceneAPI"]
-    )
-    {
-        float physics:gravityMagnitude = 9.81
-        uniform uint physxScene:maxPositionIterationCount = 32
-        uniform uint physxScene:maxVelocityIterationCount = 8
-        uniform uint physxScene:minPositionIterationCount = 32
-        uniform uint physxScene:minVelocityIterationCount = 8
     }
 
     def Xform "GroundPlane" (

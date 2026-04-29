@@ -12,7 +12,19 @@ from rsl_rl.extensions import RandomNetworkDistillation
 from rsl_rl.storage import RolloutStorage
 from rsl_rl.utils import resolve_callable, resolve_optimizer
 
+from parkour_isaaclab.utils.nonfinite_logging import warn_if_nonfinite
+
 from .actor_critic_with_encoder import ActorCriticRMA
+
+
+def _safe_advantage_normalize(adv: torch.Tensor) -> torch.Tensor:
+    """Finite normalization when global advantage std is 0 or non-finite."""
+    warn_if_nonfinite("advantage_normalize.input", adv)
+    adv = torch.nan_to_num(adv, nan=0.0, posinf=0.0, neginf=0.0)
+    std = adv.std()
+    if torch.isfinite(std) and std > 1e-8:
+        return (adv - adv.mean()) / (std + 1e-8)
+    return adv - adv.mean()
 
 
 class PPOWithExtractor:
@@ -225,17 +237,28 @@ class PPOWithExtractor:
         if self.storage is None:
             raise RuntimeError("Rollout storage is not initialized; call init_storage first.")
         st = self.storage
-        last_values = self.policy.evaluate(last_critic_obs).detach()
+        last_values_raw = self.policy.evaluate(last_critic_obs).detach()
+        warn_if_nonfinite("compute_returns.last_values", last_values_raw)
+        last_values = torch.nan_to_num(
+            last_values_raw,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
         advantage = 0
         for step in reversed(range(st.num_transitions_per_env)):
             next_values = last_values if step == st.num_transitions_per_env - 1 else st.values[step + 1]
             next_is_not_terminal = 1.0 - st.dones[step].float()
             delta = st.rewards[step] + next_is_not_terminal * self.gamma * next_values - st.values[step]
+            warn_if_nonfinite("compute_returns.delta", delta)
+            delta = torch.nan_to_num(delta, nan=0.0, posinf=0.0, neginf=0.0)
             advantage = delta + next_is_not_terminal * self.gamma * self.lam * advantage
             st.returns[step] = advantage + st.values[step]
-        st.advantages = st.returns - st.values
+        advantages_raw = st.returns - st.values
+        warn_if_nonfinite("compute_returns.advantages_raw", advantages_raw)
+        st.advantages = torch.nan_to_num(advantages_raw, nan=0.0, posinf=0.0, neginf=0.0)
         if not self.normalize_advantage_per_mini_batch:
-            st.advantages = (st.advantages - st.advantages.mean()) / (st.advantages.std() + 1e-8)
+            st.advantages = _safe_advantage_normalize(st.advantages)
 
     def update(self) -> dict[str, float]:  # noqa: C901
         if self.storage is None:
@@ -282,9 +305,7 @@ class PPOWithExtractor:
 
             if self.normalize_advantage_per_mini_batch:
                 with torch.no_grad():
-                    advantages_batch = (advantages_batch - advantages_batch.mean()) / (
-                        advantages_batch.std() + 1e-8
-                    )
+                    advantages_batch = _safe_advantage_normalize(advantages_batch)
 
             if self.symmetry and self.symmetry["use_data_augmentation"]:
                 data_augmentation_func = self.symmetry["data_augmentation_func"]
@@ -299,6 +320,13 @@ class PPOWithExtractor:
                 target_values_batch = target_values_batch.repeat(num_aug, 1)
                 advantages_batch = advantages_batch.repeat(num_aug, 1)
                 returns_batch = returns_batch.repeat(num_aug, 1)
+
+            warn_if_nonfinite("update.obs_policy", obs_batch)
+            warn_if_nonfinite("update.obs_critic", critic_obs_batch)
+            obs_batch = torch.nan_to_num(obs_batch, nan=0.0, posinf=0.0, neginf=0.0)
+            critic_obs_batch = torch.nan_to_num(
+                critic_obs_batch, nan=0.0, posinf=0.0, neginf=0.0
+            )
 
             self.policy.act(obs_batch, hist_encoding=False, masks=masks_batch, hidden_states=hid_states_batch[0])
             actions_log_prob_batch = self.policy.get_actions_log_prob(actions_batch)
@@ -335,9 +363,12 @@ class PPOWithExtractor:
                 ]
             ).pow(2).mean()
             self.estimator_optimizer.zero_grad()
-            estimator_loss.backward()
-            nn.utils.clip_grad_norm_(self.estimator.parameters(), self.max_grad_norm)
-            self.estimator_optimizer.step()
+            if torch.isfinite(estimator_loss).all():
+                estimator_loss.backward()
+                nn.utils.clip_grad_norm_(self.estimator.parameters(), self.max_grad_norm)
+                self.estimator_optimizer.step()
+            else:
+                self.estimator_optimizer.zero_grad(set_to_none=True)
 
             if self.desired_kl is not None and self.schedule == "adaptive":
                 with torch.inference_mode():
@@ -368,7 +399,9 @@ class PPOWithExtractor:
                     for param_group in self.optimizer.param_groups:
                         param_group["lr"] = self.learning_rate
 
-            ratio = torch.exp(actions_log_prob_batch - torch.squeeze(old_actions_log_prob_batch))
+            log_ratio = actions_log_prob_batch - torch.squeeze(old_actions_log_prob_batch)
+            log_ratio = torch.clamp(log_ratio, min=-20.0, max=20.0)
+            ratio = torch.exp(log_ratio)
             surrogate = -torch.squeeze(advantages_batch) * ratio
             surrogate_clipped = -torch.squeeze(advantages_batch) * torch.clamp(
                 ratio, 1.0 - self.clip_param, 1.0 + self.clip_param
@@ -428,30 +461,38 @@ class PPOWithExtractor:
                 rnd_loss = torch.nn.functional.mse_loss(predicted_embedding, target_embedding)
 
             self.optimizer.zero_grad()
-            loss.backward()
+            if torch.isfinite(loss).all():
+                loss.backward()
 
-            if self.rnd and rnd_loss is not None:
-                self.rnd_optimizer.zero_grad()
-                rnd_loss.backward()
+                if self.rnd and rnd_loss is not None:
+                    self.rnd_optimizer.zero_grad()
+                    rnd_loss.backward()
 
-            if self.is_multi_gpu:
-                self.reduce_parameters()
+                if self.is_multi_gpu:
+                    self.reduce_parameters()
 
-            nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-            self.optimizer.step()
+                nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                self.optimizer.step()
 
-            if self.rnd_optimizer:
-                self.rnd_optimizer.step()
+                if self.rnd_optimizer:
+                    self.rnd_optimizer.step()
 
-            mean_value_loss += value_loss.item()
-            mean_surrogate_loss += surrogate_loss.item()
-            mean_entropy += entropy_batch.mean().item()
-            mean_priv_reg_loss += priv_reg_loss.mean().item()
-            mean_estimator_loss += estimator_loss.item()
+                mean_value_loss += value_loss.item()
+                mean_surrogate_loss += surrogate_loss.item()
+                mean_entropy += entropy_batch.mean().item()
+                mean_priv_reg_loss += priv_reg_loss.mean().item()
+            else:
+                self.optimizer.zero_grad(set_to_none=True)
 
-            if mean_rnd_loss is not None and rnd_loss is not None:
+            mean_estimator_loss += estimator_loss.item() if torch.isfinite(estimator_loss).all() else 0.0
+
+            if mean_rnd_loss is not None and rnd_loss is not None and torch.isfinite(rnd_loss).all():
                 mean_rnd_loss += rnd_loss.item()
-            if mean_symmetry_loss is not None and symmetry_loss is not None:
+            if (
+                mean_symmetry_loss is not None
+                and symmetry_loss is not None
+                and torch.isfinite(symmetry_loss).all()
+            ):
                 mean_symmetry_loss += symmetry_loss.item()
 
         num_updates = self.num_learning_epochs * self.num_mini_batches
