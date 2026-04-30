@@ -18,6 +18,34 @@ Jetson HAL with **`--teleop`** runs an **outbound** WebSocket client to the URL 
 
 ---
 
+## WebRTC stack decision (aiortc vs webrtcbin)
+
+### Decision
+
+Use **`aiortc`** for the live robot-side WebRTC path (`teleop.edge` session/signaling flow).
+
+### Alternatives considered
+
+- **`aiortc`** (selected)
+- **GStreamer `webrtcbin`** (not selected for current implementation)
+
+### Rationale
+
+- **Python-first integration:** existing signaling/session logic is already implemented in Python (`teleop/edge/portal_client.py`, `teleop/edge/signaling_session.py`, `teleop/edge/rtc_session.py`).
+- **Lower implementation complexity:** avoids coupling session state management to a separate GStreamer WebRTC graph lifecycle.
+- **Testing fit:** current unit tests in `tests/unit/teleop/` validate signaling/session behavior directly around Python boundaries.
+- **Requirement fit:** current scope is reliable remote viewing from HAL-backed RGB streams, which is satisfied by the `aiortc` path.
+
+### Tradeoffs and revisit triggers
+
+- **Tradeoff:** `webrtcbin` can be preferable for deeper end-to-end GStreamer-native media control.
+- Revisit this choice if we need:
+  - tighter hardware-encoding control directly in live teleop media,
+  - materially higher stream-count scaling than current targets,
+  - or measured latency/performance goals that `aiortc` cannot meet within acceptable complexity.
+
+---
+
 ## How components connect
 
 ### Responsibility split
