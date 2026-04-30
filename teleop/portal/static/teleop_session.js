@@ -7,6 +7,10 @@
   var debugEl = document.getElementById('debugRtc');
   var catalogListEl = document.getElementById('catalogList');
   var catalogInputEl = document.getElementById('catalogIds');
+  var controllerStatusEl = document.getElementById('controllerStatus');
+  var controlChannelStatusEl = document.getElementById('controlChannelStatus');
+  var controlSendStatusEl = document.getElementById('controlSendStatus');
+  var controllerStateMirrorEl = document.getElementById('controllerStateMirror');
   var params = new URLSearchParams(location.search);
   var token = params.get('token');
   var qs = token ? '?token=' + encodeURIComponent(token) : '';
@@ -18,10 +22,111 @@
   var stunTurnServers = [{ urls: 'stun:stun.l.google.com:19302' }];
   var ws = null;
   var pc = null;
+  var controlDc = null;
   var answerWaiter = null;
   var availableCatalogIds = [];
   var lastOffsetMs = null;
   var captureByCatalogIdNs = {};
+  var gamepadLoopTimer = null;
+  var controlSendCount = 0;
+  var lastControlSendMs = 0;
+  var lastSentControllerState = null;
+
+  function readGamepadState() {
+    var pads = (navigator.getGamepads && navigator.getGamepads()) || [];
+    var p = null;
+    for (var i = 0; i < pads.length; i += 1) {
+      if (pads[i]) {
+        p = pads[i];
+        break;
+      }
+    }
+    if (!p) {
+      return {
+        LT: false, LB: false, LS: false, RS: false, RT: false, RB: false,
+        LX: 0.0, LY: 0.0, RX: 0.0, RY: 0.0
+      };
+    }
+    function b(idx) { return !!(p.buttons && p.buttons[idx] && p.buttons[idx].pressed); }
+    function a(idx) {
+      var v = (p.axes && typeof p.axes[idx] === 'number') ? p.axes[idx] : 0.0;
+      if (v < -1) return -1;
+      if (v > 1) return 1;
+      return v;
+    }
+    return {
+      LT: b(6), LB: b(4), LS: b(10), RS: b(11), RT: b(7), RB: b(5),
+      LX: a(0), LY: a(1), RX: a(2), RY: a(3)
+    };
+  }
+
+  function firstConnectedGamepad() {
+    var pads = (navigator.getGamepads && navigator.getGamepads()) || [];
+    for (var i = 0; i < pads.length; i += 1) {
+      if (pads[i]) return pads[i];
+    }
+    return null;
+  }
+
+  function updateControllerDebugPanel() {
+    var gp = firstConnectedGamepad();
+    if (controllerStatusEl) {
+      if (gp) {
+        controllerStatusEl.textContent =
+          'Controller: connected (' + (gp.id || 'unknown') + ', index ' + gp.index + ')';
+      } else {
+        controllerStatusEl.textContent = 'Controller: not connected';
+      }
+    }
+    if (controlChannelStatusEl) {
+      var dcState = controlDc ? controlDc.readyState : 'closed';
+      controlChannelStatusEl.textContent = 'Control channel: ' + dcState;
+    }
+    if (controlSendStatusEl) {
+      if (lastControlSendMs > 0) {
+        controlSendStatusEl.textContent =
+          'Control send: ' + controlSendCount + ' msgs, last ' +
+          (Date.now() - lastControlSendMs) + 'ms ago';
+      } else {
+        controlSendStatusEl.textContent = 'Control send: not started';
+      }
+    }
+    if (controllerStateMirrorEl) {
+      if (lastSentControllerState) {
+        controllerStateMirrorEl.textContent =
+          'state: ' + JSON.stringify(lastSentControllerState, null, 2);
+      } else {
+        controllerStateMirrorEl.textContent = 'state: --';
+      }
+    }
+  }
+
+  function stopGamepadLoop() {
+    if (gamepadLoopTimer !== null) {
+      clearInterval(gamepadLoopTimer);
+      gamepadLoopTimer = null;
+    }
+  }
+
+  function startGamepadLoop() {
+    stopGamepadLoop();
+    controlSendCount = 0;
+    lastControlSendMs = 0;
+    gamepadLoopTimer = setInterval(function () {
+      if (!controlDc || controlDc.readyState !== 'open') return;
+      var st = readGamepadState();
+      lastSentControllerState = st;
+      controlDc.send(
+        JSON.stringify({
+          type: 'control',
+          sent_browser_ms: Date.now(),
+          state: st
+        })
+      );
+      controlSendCount += 1;
+      lastControlSendMs = Date.now();
+    }, 20); // 50 Hz
+  }
 
   function waitGatheringComplete(p) {
     return new Promise(function (resolve) {
@@ -137,6 +242,8 @@
       pc.close();
       pc = null;
     }
+    stopGamepadLoop();
+    controlDc = null;
     videosEl.innerHTML = '';
     if (streamStatus) {
       streamStatus.textContent = 'Requested ' + numStreams + ' stream(s); negotiating...';
@@ -144,6 +251,13 @@
     status.textContent = 'Negotiating WebRTC...';
 
     pc = new RTCPeerConnection({ iceServers: stunTurnServers });
+    controlDc = pc.createDataChannel('krabby-control-v1', { ordered: true });
+    controlDc.onopen = function () {
+      startGamepadLoop();
+    };
+    controlDc.onclose = function () {
+      stopGamepadLoop();
+    };
     pc.addEventListener('connectionstatechange', updateDebug);
     pc.addEventListener('iceconnectionstatechange', updateDebug);
     pc.addEventListener('signalingstatechange', updateDebug);
@@ -186,6 +300,10 @@
     ws = new WebSocket(wsUrl);
     ws.onerror = function () {
       status.textContent = 'WebSocket error';
+      stopGamepadLoop();
+    };
+    ws.onclose = function () {
+      stopGamepadLoop();
     };
 
     ws.onmessage = function (e) {
@@ -292,6 +410,8 @@
       });
     });
   }
+
+  setInterval(updateControllerDebugPanel, 250);
 
   boot();
 })();

@@ -117,6 +117,19 @@ Terminate **TLS** in front of the portal in production; preserve **WebSocket Upg
 - **Multiple video lines:** **N** recvonly video transceivers → **N** sender tracks if within **`robot_settings.MAX_VIDEO_M_LINES`**.
 - **Congestion:** standard WebRTC; no custom algorithm in-repo.
 
+### Control data channel (v1)
+
+- Browser creates a WebRTC data channel named **`krabby-control-v1`**.
+- Robot accepts that channel and consumes JSON control messages:
+  - `{"type":"control","sent_browser_ms":<number>,"state":{...}}`
+  - `state` mirrors `ControllerState` keys:
+    - buttons: `LT`, `LB`, `LS`, `RS`, `RT`, `RB` (booleans)
+    - axes: `LX`, `LY`, `RX`, `RY` (normalized floats in `[-1, 1]`)
+- Browser sends control at **50 Hz** (`20ms` interval) from Gamepad API state in `teleop_session.js`.
+- Robot path:
+  - data channel JSON -> `WebRTCInputController` -> `GamepadToKrabbyHALMapper` -> `HalClient.put_joint_command`.
+- Invalid/non-JSON control payloads are rejected with warning logs; malformed fields are rejected by parser without tearing down media.
+
 ### HAL vs WebRTC
 
 Inference uses **`get_observations()`**. Viewer depth previews (if shown) are for humans only; raw depth for models stays on HAL. Encoding helpers live in **`hal/server/gstreamer_runtime.py`**.

@@ -47,7 +47,12 @@ def main():
     parser = argparse.ArgumentParser(description="Jetson production deployment with HAL server and inference")
 
     # Model arguments
-    parser.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint")
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Path to model checkpoint (required when --control-source inference)",
+    )
     parser.add_argument(
         "--log-level",
         type=str,
@@ -83,6 +88,16 @@ def main():
         ),
     )
     parser.add_argument(
+        "--control-source",
+        type=str,
+        default="portal",
+        choices=["portal", "inference"],
+        help=(
+            "Primary command source for actuator control. "
+            "'portal' uses WebRTC data-channel commands; 'inference' uses policy inference client."
+        ),
+    )
+    parser.add_argument(
         "--robot",
         type=str,
         default="hex",
@@ -93,6 +108,12 @@ def main():
     args = parser.parse_args()
     logging.getLogger().setLevel(getattr(logging, args.log_level))
     logger.setLevel(getattr(logging, args.log_level))
+
+    if args.control_source == "inference" and not args.checkpoint:
+        parser.error("--checkpoint is required when --control-source inference")
+    if args.control_source == "portal" and not args.teleop:
+        logger.info("control-source=portal selected: enabling --teleop automatically")
+        args.teleop = True
 
     model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
     if args.robot == "hex":
@@ -191,26 +212,31 @@ def main():
                 teleop_sensor_ids,
             )
 
-        model_weights = ModelWeights(
-            checkpoint_path=args.checkpoint,
-            observation_dimensions=observation_dimensions,
-            action_dim=model_definition.action_dim,
-        )
+        if args.control_source == "inference":
+            model_weights = ModelWeights(
+                checkpoint_path=args.checkpoint,
+                observation_dimensions=observation_dimensions,
+                action_dim=model_definition.action_dim,
+            )
 
-        parkour_client = ParkourInferenceClient(
-            hal_client_config=hal_client_config,
-            model_weights=model_weights,
-            observation_dimensions=observation_dimensions,
-            robot_definition=robot_definition,
-            control_rate=CONTROL_RATE_HZ,
-            device="cuda",
-            transport_context=transport_context,
-        )
-        parkour_client.initialize()
-        logger.info("Parkour inference client initialized")
+            parkour_client = ParkourInferenceClient(
+                hal_client_config=hal_client_config,
+                model_weights=model_weights,
+                observation_dimensions=observation_dimensions,
+                robot_definition=robot_definition,
+                control_rate=CONTROL_RATE_HZ,
+                device="cuda",
+                transport_context=transport_context,
+            )
+            parkour_client.initialize()
+            logger.info("Parkour inference client initialized")
 
-        # Start inference client in separate thread
-        parkour_client.start_thread(running_flag=lambda: running)
+            # Start inference client in separate thread
+            parkour_client.start_thread(running_flag=lambda: running)
+        else:
+            logger.info(
+                "Portal controller mode active: waiting for teleop control data-channel commands on HAL command socket"
+            )
 
         if args.data_collector_output_dir is not None or args.data_collector_config is not None:
             if args.data_collector_config is not None:
@@ -248,7 +274,7 @@ def main():
                 # Publish observations from real sensors
                 hal_server.set_observation()
 
-                # Try to get joint command from inference client (non-blocking)
+                # Try to get joint command from the selected command source (non-blocking)
                 # This command was generated from observations we published in a PREVIOUS iteration
                 # We'll apply it in THIS iteration
                 command = hal_server.get_joint_command(timeout_ms=1)  # 1ms timeout for non-blocking check

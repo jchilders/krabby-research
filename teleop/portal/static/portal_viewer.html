@@ -37,6 +37,13 @@
     <label><input type="radio" name="teleop_streams" value="3" /> 3</label>
     <button type="button" id="applyStreams">Apply</button>
   </fieldset>
+  <fieldset>
+    <legend>Controller Debug</legend>
+    <p id="controllerStatus">Controller: checking...</p>
+    <p id="controlChannelStatus">Control channel: closed</p>
+    <p id="controlSendStatus">Control send: not started</p>
+    <pre id="controllerStateMirror">state: --</pre>
+  </fieldset>
   <div id="videos"></div>
   <script>window.TELEOP_WS_PATH = '/ws/browser';</script>
   <script src="/static/teleop_session.js"></script>

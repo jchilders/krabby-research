@@ -33,6 +33,7 @@ async def portal_client_loop(
     pre_offer_validator: Optional[Callable[[dict[str, Any], int], None]] = None,
     hello_ack_payload_builder: Optional[Callable[[], dict[str, Any]]] = None,
     pong_payload_builder: Optional[Callable[[], dict[str, Any]]] = None,
+    control_message_handler: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> None:
     """Reconnect forever. JSON is the same as the historical on-robot ``/ws`` signaling."""
     session = aiohttp.ClientSession()
@@ -56,6 +57,7 @@ async def portal_client_loop(
                         pre_offer_validator=pre_offer_validator,
                         hello_ack_payload_builder=hello_ack_payload_builder,
                         pong_payload_builder=pong_payload_builder,
+                        control_message_handler=control_message_handler,
                     )
             except asyncio.CancelledError:
                 break

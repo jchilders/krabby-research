@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Optional
 
 from controller.input import InputController
+from controller.input.webrtc_input_controller import WebRTCInputController
 from controller.input.state import ControllerState
 from controller.mappers.gamepad_to_isaacsim_hal_mapper import GamepadToIsaacSimHALMapper
 from controller.mappers.gamepad_to_krabby_hal_mapper import GamepadToKrabbyHALMapper
@@ -29,6 +30,7 @@ class ControlMode(str, Enum):
     INPUT_CONTROLLER_ISAACSIM = "input_controller_isaacsim"
     MODEL_CONTROLLER_KRABBY = "model_controller_krabby"    
     INPUT_CONTROLLER_KRABBY = "input_controller_krabby"
+    INPUT_CONTROLLER_WEBRTC = "input_controller_webrtc"
 
 
 @dataclass
@@ -53,6 +55,7 @@ class ControlLoopConfig:
     mapper_knee_out_in_scale: float = 1.0
     mapper_hip_yaw_scale: float = 1.0
     isaacsim_robot_definition: Optional[RobotDefinition] = None
+    webrtc_input_controller: Optional[WebRTCInputController] = None
 
 
 class ControlLoop:
@@ -111,6 +114,8 @@ class ControlLoop:
             raise NotImplementedError("MODEL_CONTROLLER_KRABBY mode not yet implemented")
         elif self.config.mode == ControlMode.INPUT_CONTROLLER_KRABBY:
             self._start_input_controller_krabby_mode()
+        elif self.config.mode == ControlMode.INPUT_CONTROLLER_WEBRTC:
+            self._start_input_controller_webrtc_mode()
         else:
             raise ValueError(f"Unknown control mode: {self.config.mode}")
         
@@ -205,6 +210,30 @@ class ControlLoop:
         )
         
         logger.info("INPUT_CONTROLLER_KRABBY mode initialized")
+
+    def _start_input_controller_webrtc_mode(self) -> None:
+        """Start components for INPUT_CONTROLLER_WEBRTC mode."""
+        if self.config.webrtc_input_controller is None:
+            raise ValueError("webrtc_input_controller is required for INPUT_CONTROLLER_WEBRTC mode")
+        self._input_controller = self.config.webrtc_input_controller
+
+        if self.config.hal_client_config is None:
+            raise ValueError("hal_client_config is required for INPUT_CONTROLLER_WEBRTC mode")
+
+        self._hal_client = HalClient(
+            config=self.config.hal_client_config,
+            context=None,
+        )
+        self._hal_client.initialize()
+
+        self._gamepad_to_krabby_hal_mapper = GamepadToKrabbyHALMapper(
+            hip_up_down_scale=self.config.mapper_hip_up_down_scale,
+            knee_out_in_scale=self.config.mapper_knee_out_in_scale,
+            hip_yaw_scale=self.config.mapper_hip_yaw_scale,
+        )
+        self._input_controller.register_callback(self._on_gamepad_state_krabby)
+        self._input_controller.start(update_rate_hz=self.config.input_controller_update_rate_hz)
+        logger.info("INPUT_CONTROLLER_WEBRTC mode initialized")
     
     def _on_gamepad_state(self, state: ControllerState) -> None:
         """Callback for gamepad state updates.

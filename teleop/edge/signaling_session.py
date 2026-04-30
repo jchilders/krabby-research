@@ -25,6 +25,7 @@ async def run_robot_signaling_loop(
     pre_offer_validator: Callable[[dict[str, Any], int], None] | None = None,
     hello_ack_payload_builder: Callable[[], dict[str, Any]] | None = None,
     pong_payload_builder: Callable[[], dict[str, Any]] | None = None,
+    control_message_handler: Callable[[dict[str, Any]], None] | None = None,
 ) -> None:
     """Handle ping/hello/offer on a signaling WebSocket until close or error.
 
@@ -108,6 +109,7 @@ async def run_robot_signaling_loop(
                     payload,
                     video_track_factory=video_track_factory,
                     max_video_m_lines=teleop_settings.max_video_m_lines,
+                    control_message_handler=control_message_handler,
                 )
             except Exception as e:
                 logger.warning(

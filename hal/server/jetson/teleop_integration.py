@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from typing import Any, Optional
 
 import numpy as np
@@ -14,6 +15,8 @@ from zmq.error import ContextTerminated
 from hal.client.client import HalClient
 from hal.client.config import HalClientConfig
 from hal.server.sensor_interface import SensorInterface
+from controller.input import WebRTCInputController
+from controller.mappers.gamepad_to_krabby_hal_mapper import GamepadToKrabbyHALMapper
 from teleop.edge.config import TeleopEdgeSettings
 from teleop.edge.hal_rgb_track import HalRgbSnapshotVideoTrack
 from teleop.edge.portal_client import portal_client_loop
@@ -121,13 +124,30 @@ def start_jetson_teleop_signaling_thread(
         rgb_lock = threading.Lock()
         poll_stop = threading.Event()
         hal_teleop = HalClient(hal_client_config, context=transport_context)
+        hal_client_lock = threading.Lock()
+        hal_ready = threading.Event()
+        webrtc_input = WebRTCInputController()
+        mapper = GamepadToKrabbyHALMapper()
+
+        def _on_webrtc_state(state: Any) -> None:
+            if not hal_ready.is_set():
+                return
+            try:
+                cmd = mapper.map(state, observation_timestamp_ns=None)
+                with hal_client_lock:
+                    hal_teleop.put_joint_command(cmd)
+            except Exception:
+                logger.warning("teleop control: failed to map/send command", exc_info=True)
+
+        webrtc_input.register_callback(_on_webrtc_state)
+        webrtc_input.start(update_rate_hz=50.0)
 
         def _poll_worker() -> None:
-            hal_teleop.initialize()
             try:
                 while not poll_stop.is_set():
                     try:
-                        obs = hal_teleop.poll(timeout_ms=15)
+                        with hal_client_lock:
+                            obs = hal_teleop.poll(timeout_ms=15)
                     except ContextTerminated:
                         # Normal during shutdown when the shared ZMQ context is closed first.
                         logger.debug("teleop HAL client poll stopped (ZMQ context terminated)")
@@ -148,8 +168,12 @@ def start_jetson_teleop_signaling_thread(
                                 latest_rgb[cid] = np.ascontiguousarray(chunk.rgb, dtype=np.uint8)
                                 latest_capture_ns[cid] = int(obs.timestamp_ns)
             finally:
-                hal_teleop.close()
+                with hal_client_lock:
+                    hal_teleop.close()
 
+        with hal_client_lock:
+            hal_teleop.initialize()
+        hal_ready.set()
         poller = threading.Thread(target=_poll_worker, name="jetson-teleop-hal-poll", daemon=True)
         poller.start()
 
@@ -180,6 +204,26 @@ def start_jetson_teleop_signaling_thread(
                 cap = dict(latest_capture_ns)
             return {"capture_timestamps_ns": cap}
 
+        def _on_control_message(payload: dict[str, Any]) -> None:
+            def _warn_rate_limited(msg: str) -> None:
+                now = time.monotonic()
+                if now - _last_bad_control_warn_mono[0] >= 10.0:
+                    logger.warning(msg)
+                    _last_bad_control_warn_mono[0] = now
+
+            if payload.get("type") != "control":
+                return
+            st = payload.get("state")
+            if not isinstance(st, dict):
+                _warn_rate_limited("Rejected control message: missing or non-object 'state'")
+                return
+            try:
+                webrtc_input.update_from_payload(st)
+            except Exception as e:
+                _warn_rate_limited(f"Rejected control message: malformed controller payload ({e})")
+
+        _last_bad_control_warn_mono = [0.0]
+
         async def _run() -> None:
             task = asyncio.create_task(
                 portal_client_loop(
@@ -190,6 +234,7 @@ def start_jetson_teleop_signaling_thread(
                     pre_offer_validator=lambda _payload, n: _validate_sensor_pipeline_binding(n),
                     hello_ack_payload_builder=_hello_ack_payload,
                     pong_payload_builder=_pong_payload,
+                    control_message_handler=_on_control_message,
                 )
             )
             await asyncio.to_thread(stop_event.wait)
@@ -204,6 +249,7 @@ def start_jetson_teleop_signaling_thread(
         except Exception:
             logger.exception("Teleop signaling thread exited with error")
         finally:
+            webrtc_input.stop()
             poll_stop.set()
             poller.join(timeout=5.0)
             if poller.is_alive():
