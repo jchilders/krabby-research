@@ -5,6 +5,8 @@
   var latencyEl = document.getElementById('latency');
   var streamStatus = document.getElementById('streamStatus');
   var debugEl = document.getElementById('debugRtc');
+  var catalogListEl = document.getElementById('catalogList');
+  var catalogInputEl = document.getElementById('catalogIds');
   var params = new URLSearchParams(location.search);
   var token = params.get('token');
   var qs = token ? '?token=' + encodeURIComponent(token) : '';
@@ -17,6 +19,9 @@
   var ws = null;
   var pc = null;
   var answerWaiter = null;
+  var availableCatalogIds = [];
+  var lastOffsetMs = null;
+  var captureByCatalogIdNs = {};
 
   function waitGatheringComplete(p) {
     return new Promise(function (resolve) {
@@ -41,6 +46,49 @@
       pc.signalingState;
   }
 
+  function selectedCatalogIdsFromCheckboxes() {
+    if (!catalogListEl) return [];
+    var nodes = catalogListEl.querySelectorAll('input[type="checkbox"][data-catalog-id]:checked');
+    var out = [];
+    nodes.forEach(function (n) {
+      var v = n.getAttribute('data-catalog-id');
+      if (v) out.push(v);
+    });
+    return out;
+  }
+
+  function syncCatalogInputFromSelection(ids) {
+    if (!catalogInputEl) return;
+    catalogInputEl.value = ids.join(', ');
+  }
+
+  function renderCatalogList(ids) {
+    if (!catalogListEl) return;
+    if (!ids || !ids.length) {
+      catalogListEl.textContent = 'Available sensors: waiting for robot hello...';
+      return;
+    }
+    catalogListEl.innerHTML = '';
+    var label = document.createElement('div');
+    label.textContent = 'Available sensors (select order top-to-bottom):';
+    catalogListEl.appendChild(label);
+    ids.forEach(function (cid, idx) {
+      var row = document.createElement('label');
+      row.style.display = 'block';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.setAttribute('data-catalog-id', cid);
+      if (idx === 0) cb.checked = true;
+      cb.addEventListener('change', function () {
+        syncCatalogInputFromSelection(selectedCatalogIdsFromCheckboxes());
+      });
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(' ' + cid));
+      catalogListEl.appendChild(row);
+    });
+    syncCatalogInputFromSelection(selectedCatalogIdsFromCheckboxes());
+  }
+
   function readNumStreams() {
     var el = document.querySelector('input[name="teleop_streams"]:checked');
     if (!el) return 1;
@@ -48,13 +96,18 @@
     return n > 0 ? n : 1;
   }
 
+  function selectedCatalogIdsInOrder() {
+    return readCatalogIdsArray();
+  }
+
   /** HAL RGB-D catalog ids in order; empty field -> ``[]`` (robot uses bootstrap / primary-only list). */
   function readCatalogIdsArray() {
-    var el = document.getElementById('catalogIds');
-    if (!el) {
-      return [];
+    var selected = selectedCatalogIdsFromCheckboxes();
+    if (selected.length > 0) {
+      return selected;
     }
-    return String(el.value || '')
+    if (!catalogInputEl) return [];
+    return String(catalogInputEl.value || '')
       .split(',')
       .map(function (s) {
         return s.trim();
@@ -147,11 +200,52 @@
         answerWaiter = null;
         return;
       }
+      if (msg.type === 'hello_ack') {
+        if (Array.isArray(msg.available_catalog_ids)) {
+          availableCatalogIds = msg.available_catalog_ids
+            .map(function (s) {
+              return String(s || '').trim();
+            })
+            .filter(Boolean);
+          renderCatalogList(availableCatalogIds);
+        }
+      }
       if (msg.type === 'pong' && typeof msg.t === 'number' && latencyEl) {
+        var nowPerf = performance.now();
+        var rttMs = Math.round(nowPerf - msg.t);
+        if (typeof msg.t_wall_ms === 'number' && typeof msg.server_ms === 'number') {
+          var t0 = msg.t_wall_ms;
+          var t1 = msg.server_ms;
+          var t3 = Date.now();
+          var offset = t1 - ((t0 + t3) / 2.0); // robot wall-clock minus browser wall-clock
+          if (lastOffsetMs === null) {
+            lastOffsetMs = offset;
+          } else {
+            // Smooth jitter with light EMA.
+            lastOffsetMs = (0.85 * lastOffsetMs) + (0.15 * offset);
+          }
+        }
+        if (msg.capture_timestamps_ns && typeof msg.capture_timestamps_ns === 'object') {
+          captureByCatalogIdNs = msg.capture_timestamps_ns;
+        }
+        var g2gText = 'g2g: n/a';
+        var selected = selectedCatalogIdsInOrder();
+        if (selected.length > 0 && lastOffsetMs !== null) {
+          var cid = selected[0];
+          var capNs = captureByCatalogIdNs[cid];
+          if (typeof capNs === 'number') {
+            var capMsRobot = capNs / 1e6;
+            var capMsBrowser = capMsRobot - lastOffsetMs;
+            var estG2g = Date.now() - capMsBrowser;
+            if (isFinite(estG2g)) {
+              g2gText = 'g2g~' + Math.max(0, Math.round(estG2g)) + ' ms (capture->render est, stream ' + cid + ')';
+            }
+          }
+        }
         latencyEl.textContent =
-          'Signaling RTT ~' +
-          Math.round(performance.now() - msg.t) +
-          ' ms (signaling round-trip only, not glass-to-glass).';
+          'RTT~' + rttMs + ' ms; offset~' +
+          (lastOffsetMs === null ? 'n/a' : Math.round(lastOffsetMs) + ' ms') +
+          '; ' + g2gText;
       }
     };
 
@@ -164,7 +258,7 @@
       });
       setInterval(function () {
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'ping', t: performance.now() }));
+          ws.send(JSON.stringify({ type: 'ping', t: performance.now(), t_wall_ms: Date.now() }));
         }
       }, 2000);
     };

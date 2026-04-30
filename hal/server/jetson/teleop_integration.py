@@ -83,7 +83,9 @@ def start_jetson_teleop_signaling_thread(
             return
 
         catalog_state = _ViewerCatalogIds(bootstrap_sensor_catalog_ids, settings)
-        sensors_by_id = {s.id: s for s in sensor_interface.list_sensors()}
+        available_sensors = sensor_interface.list_sensors()
+        sensors_by_id = {s.id: s for s in available_sensors}
+        available_catalog_ids = [s.id for s in available_sensors]
 
         def _validate_sensor_pipeline_binding(track_count: int) -> None:
             selected = catalog_state.snapshot_poll_ids()
@@ -115,6 +117,7 @@ def start_jetson_teleop_signaling_thread(
                     )
 
         latest_rgb: dict[str, np.ndarray] = {}
+        latest_capture_ns: dict[str, int] = {}
         rgb_lock = threading.Lock()
         poll_stop = threading.Event()
         hal_teleop = HalClient(hal_client_config, context=transport_context)
@@ -143,6 +146,7 @@ def start_jetson_teleop_signaling_thread(
                             chunk = obs.rgbd_by_catalog_id.get(cid)
                             if chunk is not None and chunk.rgb is not None and chunk.rgb.size > 0:
                                 latest_rgb[cid] = np.ascontiguousarray(chunk.rgb, dtype=np.uint8)
+                                latest_capture_ns[cid] = int(obs.timestamp_ns)
             finally:
                 hal_teleop.close()
 
@@ -168,6 +172,14 @@ def start_jetson_teleop_signaling_thread(
         def _on_signaling_json(payload: dict[str, Any]) -> None:
             catalog_state.apply_from_payload(payload)
 
+        def _hello_ack_payload() -> dict[str, Any]:
+            return {"available_catalog_ids": available_catalog_ids}
+
+        def _pong_payload() -> dict[str, Any]:
+            with rgb_lock:
+                cap = dict(latest_capture_ns)
+            return {"capture_timestamps_ns": cap}
+
         async def _run() -> None:
             task = asyncio.create_task(
                 portal_client_loop(
@@ -176,6 +188,8 @@ def start_jetson_teleop_signaling_thread(
                     video_track_factory=factory,
                     on_signaling_json=_on_signaling_json,
                     pre_offer_validator=lambda _payload, n: _validate_sensor_pipeline_binding(n),
+                    hello_ack_payload_builder=_hello_ack_payload,
+                    pong_payload_builder=_pong_payload,
                 )
             )
             await asyncio.to_thread(stop_event.wait)

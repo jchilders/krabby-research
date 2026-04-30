@@ -31,6 +31,8 @@ async def portal_client_loop(
     video_track_factory: Callable[[int], Any] | None = None,
     on_signaling_json: Optional[Callable[[dict[str, Any]], None]] = None,
     pre_offer_validator: Optional[Callable[[dict[str, Any], int], None]] = None,
+    hello_ack_payload_builder: Optional[Callable[[], dict[str, Any]]] = None,
+    pong_payload_builder: Optional[Callable[[], dict[str, Any]]] = None,
 ) -> None:
     """Reconnect forever. JSON is the same as the historical on-robot ``/ws`` signaling."""
     session = aiohttp.ClientSession()
@@ -52,6 +54,8 @@ async def portal_client_loop(
                         video_track_factory=video_track_factory,
                         on_signaling_json=on_signaling_json,
                         pre_offer_validator=pre_offer_validator,
+                        hello_ack_payload_builder=hello_ack_payload_builder,
+                        pong_payload_builder=pong_payload_builder,
                     )
             except asyncio.CancelledError:
                 break
