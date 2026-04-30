@@ -9,6 +9,8 @@ PARKOUR_TASKS_SRC = Path(__file__).resolve().parents[2] / "parkour" / "parkour_t
 if str(PARKOUR_TASKS_SRC) not in sys.path:
     sys.path.insert(0, str(PARKOUR_TASKS_SRC))
 
+pytestmark = pytest.mark.isaacsim
+
 
 def test_crab_hexapod_package_imports() -> None:
     pytest.importorskip("isaaclab")
