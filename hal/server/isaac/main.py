@@ -26,6 +26,7 @@ from isaaclab.app import AppLauncher
 
 from data_collection.collector import start_collector_thread
 from data_collection.collector_settings import build_data_collector_config
+from data_collection.config import load_config
 
 logger = logging.getLogger(__name__)
 CONTROL_RATE_HZ = 100.0
@@ -145,6 +146,15 @@ def main():
         help=(
             "Enable second HalClient + rosbag2 (mcap) recording and write bags to this directory. "
             "Mount this path to host storage for persistence."
+        ),
+    )
+    parser.add_argument(
+        "--data-collector-config",
+        type=str,
+        default=None,
+        help=(
+            "Optional YAML config for collector settings (rates/topics/rotation/quota/output_dir). "
+            "HAL endpoints are always enforced from --observation_bind/--command_bind."
         ),
     )
 
@@ -357,12 +367,20 @@ def main():
         parkour_client = None
         logger.info("Joystick mode: waiting for krabby-uno-sim on %s / %s", args.observation_bind, args.command_bind)
 
-    if args.data_collector_output_dir is not None:
-        dc_cfg = build_data_collector_config(
-            observation_endpoint=args.observation_bind,
-            command_endpoint=args.command_bind,
-            output_dir=args.data_collector_output_dir,
-        )
+    if args.data_collector_output_dir is not None or args.data_collector_config is not None:
+        if args.data_collector_config is not None:
+            dc_cfg = load_config(args.data_collector_config)
+            # Entry-point transport wiring is authoritative for this process.
+            dc_cfg.hal.observation_endpoint = args.observation_bind
+            dc_cfg.hal.command_endpoint = args.command_bind
+            if args.data_collector_output_dir is not None:
+                dc_cfg.output_dir = Path(args.data_collector_output_dir).expanduser()
+        else:
+            dc_cfg = build_data_collector_config(
+                observation_endpoint=args.observation_bind,
+                command_endpoint=args.command_bind,
+                output_dir=args.data_collector_output_dir,
+            )
         collector_stop = threading.Event()
         _collector, collector_thread = start_collector_thread(
             dc_cfg,

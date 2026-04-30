@@ -7,9 +7,11 @@ That is done with a **second `HalClient`** in the **same process** as the primar
 ## Run (Jetson or Isaac Sim container)
 
 1. Build **locomotion** (`images/locomotion/Dockerfile`) or **Isaac Sim** (`images/isaacsim/Dockerfile`). Both images include `data_collection/` and pin **`rosbags`** (and **`PyYAML`** for optional `load_config` / tests) in their `requirements.txt`.
-2. Adjust recording defaults in **`data_collection/collector_settings.py`** (same pattern as camera rows in **`hal/server/jetson/sensor_backend_jetson.py`**).
-3. Pass **`--data-collector-output-dir <container_path>`** to enable recording.
-4. Mount a host directory to that same container path so bags persist after container exit.
+2. Use either:
+   - Python defaults in **`data_collection/collector_settings.py`**, or
+   - your own YAML file via **`--data-collector-config <path>`**.
+3. Pass **`--data-collector-output-dir <container_path>`** (optional) to override `output_dir` from config/defaults.
+4. Mount a host directory to the chosen container output path so bags persist after container exit.
 
 ### Host mount requirement
 
@@ -29,10 +31,12 @@ Collector output path in container (`/workspace/bags`):
 docker run --rm --runtime=nvidia \
   -v /path/to/checkpoints:/workspace/checkpoints \
   -v /path/to/krabby_bags:/workspace/bags \
+  -v /path/to/collector.yaml:/workspace/config/collector.yaml \
   -v /dev:/dev \
   --privileged \
   krabby-locomotion:latest \
   --checkpoint /workspace/checkpoints/unitree_go2_parkour_teacher.pt \
+  --data-collector-config /workspace/config/collector.yaml \
   --data-collector-output-dir /workspace/bags
 ```
 
@@ -47,22 +51,57 @@ docker run --rm --gpus all \
   -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v /path/to/checkpoints:/workspace/checkpoints \
   -v /path/to/krabby_bags:/workspace/bags \
+  -v /path/to/collector.yaml:/workspace/config/collector.yaml \
   krabby-isaacsim:latest \
   --task 'Your-Task-v0' \
   --checkpoint /workspace/checkpoints/your.ckpt \
+  --data-collector-config /workspace/config/collector.yaml \
   --data-collector-output-dir /workspace/bags
 ```
 
-If you launch from an interactive shell inside a running container (instead of `docker run`), pass `--data-collector-output-dir`; the chosen output path must be on a mounted volume if you want host persistence.
+If you launch from an interactive shell inside a running container (instead of `docker run`), pass `--data-collector-config` and/or `--data-collector-output-dir`; the chosen output path must be on a mounted volume if you want host persistence.
 
-## Configuration (Python)
+## Configuration (YAML + Python defaults)
 
-Recording parameters live in **`data_collection/collector_settings.py`**. The entrypoint calls **`build_data_collector_config(observation_endpoint=..., command_endpoint=..., output_dir=...)`** so collector endpoints match the primary HAL client endpoints. On Jetson (`hal.server.jetson.main`), these are fixed in-process endpoints; on Isaac (`hal.server.isaac.main`), they may come from CLI bind args. The dataclass shape is **`DataCollectorConfig`** in **`data_collection/config.py`**; **`DataCollectorConfig.from_dict`** / **`load_config`** remain for tests or ad hoc YAML if you build your own loader.
+If **`--data-collector-config`** is provided, the entrypoint loads that YAML and uses it for collector settings. If no config path is provided, defaults are assembled from **`data_collection/collector_settings.py`** via `build_data_collector_config(...)`. In all cases, entrypoints enforce HAL endpoints from runtime server wiring so collector transport matches the primary HAL client endpoints.
+
+Example YAML (`collector.yaml`):
+
+```yaml
+hal:
+  observation_endpoint: "inproc://hal_observation"
+  command_endpoint: "inproc://hal_commands"
+output_dir: "/data/krabby_bags"
+max_disk_usage_fraction: 0.5
+rotation_max_bytes: 1073741824
+rotation_max_minutes: 30.0
+rates:
+  images_hz: 10.0
+  joints_imu_hz: 50.0
+topics:
+  camera_front_rgb: true
+  camera_front_depth: true
+  camera_side_left_rgb: true
+  camera_side_right_rgb: true
+  camera_side_rgbd_depth: true
+  radar_edge: true
+  joints_state: true
+  joints_command: true
+  imu: true
+catalog_map:
+  side_left_rgb_catalog_id: "side_rgbd"
+  side_right_rgb_catalog_id: null
+  side_rgbd_depth_catalog_id: "side_rgbd"
+  radar_edge_catalog_id: null
+joint_names: []
+joints_command_source: "previous_action"
+polling_timeout_ms: 10
+```
 
 | Area | Where it is set |
 |------|-----------------|
-| HAL transport | From the server's configured endpoints via **`build_data_collector_config`** (must match primary `HalClientConfig`; Jetson uses fixed inproc endpoints). |
-| Output | **`DEFAULT_OUTPUT_DIR`**, **`MAX_DISK_USAGE_FRACTION`**, **`ROTATION_MAX_BYTES`**, **`ROTATION_MAX_MINUTES`** in **`collector_settings.py`**; override directory with **`--data-collector-output-dir`**. |
+| HAL transport | Always enforced from entrypoint runtime endpoints (must match primary `HalClientConfig`; Jetson uses fixed inproc endpoints). |
+| Output | From YAML/default config (`output_dir`) with optional CLI override via **`--data-collector-output-dir`**. |
 | Rates | **`RECORDING_RATES`** — wall-clock caps; actual rate is still bounded by HAL publish rate and **latest-only** `poll()` semantics. |
 | Topics | **`TOPIC_ENABLE`** — booleans per ROS topic (see table below). |
 | Catalog | **`CATALOG_TOPIC_MAP`** — Jetson **`rgbd_by_catalog_id`** keys (e.g. `side_rgbd`). |
@@ -109,5 +148,5 @@ Under `output_dir`, each **segment** is a standard **rosbag2 v9** directory with
 
 - **`topics.*`:** Only enabled topics are registered on the bag writer, so disabling a stream removes that topic from the segment entirely.
 - **`catalog_map`:** Values are **catalog ids** matching keys in `HardwareObservations.rgbd_by_catalog_id` on Jetson (authoritative list: `JETSON_SENSOR_CATALOG` in `hal/server/jetson/sensor_backend_jetson.py`; overview in [SENSOR_INTERFACE.md](SENSOR_INTERFACE.md)). Use `null` to turn off an optional stream (e.g. no side-right RGB until that camera exists). Side-left RGB can still fall back from legacy `side_camera_rgb` when catalog routing has not produced `/camera/side_left/rgb` yet (see `data_collection/serialization.py`).
-- **HAL endpoints:** Wrong or mismatched strings mean no observations or the wrong socket; **`build_data_collector_config`** must receive the same bind strings as the primary client.
-- **Source of truth:** Edit **`data_collection/collector_settings.py`** for defaults (mirrors how camera rows live in Python on the HAL side).
+- **HAL endpoints:** YAML values are overridden by entrypoint runtime endpoint wiring so transport always matches the primary client.
+- **Source of truth:** Keep defaults in **`collector_settings.py`**; use **`--data-collector-config`** only when you want per-run YAML overrides.

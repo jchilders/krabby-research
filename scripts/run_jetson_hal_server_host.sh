@@ -7,6 +7,29 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+print_usage() {
+  cat <<'EOF'
+Usage: scripts/run_jetson_hal_server_host.sh
+
+Launches Jetson HAL server in Docker using hardcoded settings in this script.
+
+Data collector notes:
+  - This launcher currently enables recording via:
+      --data-collector-output-dir /workspace/bags
+  - HAL entrypoint also supports:
+      --data-collector-config <path-to-collector.yaml>
+    (edit this script if you want to pass that flag through).
+
+To customize runtime values (image, checkpoint, collector path, teleop URL),
+edit the "Hardcoded launch settings" section in this file.
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  print_usage
+  exit 0
+fi
+
 if [ ! -f "$PROJECT_ROOT/Makefile" ]; then
   echo "Error: Could not find repo Makefile at $PROJECT_ROOT/Makefile" >&2
   exit 1

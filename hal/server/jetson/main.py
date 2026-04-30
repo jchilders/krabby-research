@@ -12,6 +12,7 @@ and applies commands to control the robot actuators.
 
 import argparse
 import logging
+from pathlib import Path
 import signal
 import sys
 import threading
@@ -19,6 +20,7 @@ import time
 
 from data_collection.collector import start_collector_thread
 from data_collection.collector_settings import build_data_collector_config
+from data_collection.config import load_config
 from hal.client.config import HalClientConfig
 from hal.server import HalServerConfig
 from hal.server.jetson import JetsonHalServer
@@ -61,6 +63,15 @@ def main():
         help=(
             "Enable second HalClient + rosbag2 (mcap) recording and write bags to this directory. "
             "Mount this path to host storage for persistence."
+        ),
+    )
+    parser.add_argument(
+        "--data-collector-config",
+        type=str,
+        default=None,
+        help=(
+            "Optional YAML config for collector settings (rates/topics/rotation/quota/output_dir). "
+            "HAL inproc endpoints are always enforced by this entrypoint."
         ),
     )
     parser.add_argument(
@@ -200,12 +211,20 @@ def main():
         # Start inference client in separate thread
         parkour_client.start_thread(running_flag=lambda: running)
 
-        if args.data_collector_output_dir is not None:
-            dc_cfg = build_data_collector_config(
-                observation_endpoint=OBSERVATION_ENDPOINT,
-                command_endpoint=COMMAND_ENDPOINT,
-                output_dir=args.data_collector_output_dir,
-            )
+        if args.data_collector_output_dir is not None or args.data_collector_config is not None:
+            if args.data_collector_config is not None:
+                dc_cfg = load_config(args.data_collector_config)
+                # Entry-point transport wiring is authoritative for inproc deployment.
+                dc_cfg.hal.observation_endpoint = OBSERVATION_ENDPOINT
+                dc_cfg.hal.command_endpoint = COMMAND_ENDPOINT
+                if args.data_collector_output_dir is not None:
+                    dc_cfg.output_dir = Path(args.data_collector_output_dir).expanduser()
+            else:
+                dc_cfg = build_data_collector_config(
+                    observation_endpoint=OBSERVATION_ENDPOINT,
+                    command_endpoint=COMMAND_ENDPOINT,
+                    output_dir=args.data_collector_output_dir,
+                )
             collector_stop = threading.Event()
             _collector, collector_thread = start_collector_thread(
                 dc_cfg,
