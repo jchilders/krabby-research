@@ -11,6 +11,7 @@ from aiohttp import WSMsgType
 
 from teleop.edge.config import TeleopEdgeSettings
 from teleop.edge.rtc_session import handle_first_offer_message
+from teleop.edge.sdp_util import count_video_m_lines
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ async def run_robot_signaling_loop(
     teleop_settings: TeleopEdgeSettings,
     video_track_factory: Callable[[int], Any] | None = None,
     on_signaling_json: Callable[[dict[str, Any]], None] | None = None,
+    pre_offer_validator: Callable[[dict[str, Any], int], None] | None = None,
 ) -> None:
     """Handle ping/hello/offer on a signaling WebSocket until close or error.
 
@@ -67,6 +69,16 @@ async def run_robot_signaling_loop(
                 pc_live = None
             if on_signaling_json is not None:
                 on_signaling_json(payload)
+            n_video = 1
+            sdp_raw = payload.get("sdp")
+            if isinstance(sdp_raw, str):
+                n_video = count_video_m_lines(sdp_raw)
+            if pre_offer_validator is not None:
+                try:
+                    pre_offer_validator(payload, n_video)
+                except Exception as e:
+                    await ws.send_str(json.dumps({"type": "error", "message": str(e)}))
+                    continue
             try:
                 err_json, ans_sdp, pc = await handle_first_offer_message(
                     payload,

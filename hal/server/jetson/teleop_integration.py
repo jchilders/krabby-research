@@ -13,6 +13,7 @@ from zmq.error import ContextTerminated
 
 from hal.client.client import HalClient
 from hal.client.config import HalClientConfig
+from hal.server.sensor_interface import SensorInterface
 from teleop.edge.config import TeleopEdgeSettings
 from teleop.edge.hal_rgb_track import HalRgbSnapshotVideoTrack
 from teleop.edge.portal_client import portal_client_loop
@@ -56,6 +57,7 @@ class _ViewerCatalogIds:
 def start_jetson_teleop_signaling_thread(
     hal_client_config: HalClientConfig,
     transport_context: zmq.Context,
+    sensor_interface: SensorInterface,
     *,
     stop_event: threading.Event,
     bootstrap_sensor_catalog_ids: list[str],
@@ -81,6 +83,36 @@ def start_jetson_teleop_signaling_thread(
             return
 
         catalog_state = _ViewerCatalogIds(bootstrap_sensor_catalog_ids, settings)
+        sensors_by_id = {s.id: s for s in sensor_interface.list_sensors()}
+
+        def _validate_sensor_pipeline_binding(track_count: int) -> None:
+            selected = catalog_state.snapshot_poll_ids()
+            if len(selected) < track_count:
+                raise ValueError(
+                    "offer rejected: viewer requested more video tracks than selected catalog_ids"
+                )
+            for idx in range(track_count):
+                cid = selected[idx]
+                sensor = sensors_by_id.get(cid)
+                if sensor is None:
+                    raise ValueError(
+                        f"offer rejected: catalog_id {cid!r} not found in SensorInterface.list_sensors()"
+                    )
+                try:
+                    handle = sensor_interface.get_gstreamer_handle(sensor)
+                    pipeline = sensor_interface.build_pipeline(
+                        handle,
+                        encoding="h264",
+                        output_element="fakesink",
+                    )
+                except Exception as e:
+                    raise ValueError(
+                        f"offer rejected: failed sensor pipeline preflight for catalog_id {cid!r}: {e}"
+                    ) from e
+                if "h264" not in pipeline.lower():
+                    raise ValueError(
+                        f"offer rejected: sensor pipeline for catalog_id {cid!r} is not H.264"
+                    )
 
         latest_rgb: dict[str, np.ndarray] = {}
         rgb_lock = threading.Lock()
@@ -143,6 +175,7 @@ def start_jetson_teleop_signaling_thread(
                     teleop_edge_settings=settings,
                     video_track_factory=factory,
                     on_signaling_json=_on_signaling_json,
+                    pre_offer_validator=lambda _payload, n: _validate_sensor_pipeline_binding(n),
                 )
             )
             await asyncio.to_thread(stop_event.wait)

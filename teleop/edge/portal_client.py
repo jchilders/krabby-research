@@ -30,6 +30,7 @@ async def portal_client_loop(
     teleop_edge_settings: TeleopEdgeSettings,
     video_track_factory: Callable[[int], Any] | None = None,
     on_signaling_json: Optional[Callable[[dict[str, Any]], None]] = None,
+    pre_offer_validator: Optional[Callable[[dict[str, Any], int], None]] = None,
 ) -> None:
     """Reconnect forever. JSON is the same as the historical on-robot ``/ws`` signaling."""
     session = aiohttp.ClientSession()
@@ -50,6 +51,7 @@ async def portal_client_loop(
                         teleop_settings=teleop_edge_settings,
                         video_track_factory=video_track_factory,
                         on_signaling_json=on_signaling_json,
+                        pre_offer_validator=pre_offer_validator,
                     )
             except asyncio.CancelledError:
                 break

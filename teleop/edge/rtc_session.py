@@ -9,7 +9,11 @@ from typing import Any, Callable
 
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
-from teleop.edge.sdp_util import count_video_m_lines, video_m_line_budget_error_json
+from teleop.edge.sdp_util import (
+    count_video_m_lines,
+    offer_has_h264_video,
+    video_m_line_budget_error_json,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +91,17 @@ async def handle_first_offer_message(
         )
         return budget_err, None, None
     n_vid = count_video_m_lines(sdp)
+    if n_vid > 0 and not offer_has_h264_video(sdp):
+        return (
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": "offer rejected: H.264 is required for teleop video",
+                }
+            ),
+            None,
+            None,
+        )
     if n_vid > 0 and video_track_factory is None:
         return (
             json.dumps(

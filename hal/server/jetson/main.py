@@ -177,6 +177,7 @@ def main():
             teleop_thread = start_jetson_teleop_signaling_thread(
                 hal_client_config,
                 transport_context,
+                hal_server.get_sensor_interface(),
                 stop_event=teleop_stop,
                 bootstrap_sensor_catalog_ids=teleop_sensor_ids,
                 teleop_edge_settings=_teleop_st,
