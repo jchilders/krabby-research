@@ -5,8 +5,8 @@
   var latencyEl = document.getElementById('latency');
   var streamStatus = document.getElementById('streamStatus');
   var debugEl = document.getElementById('debugRtc');
+  var mediaDebugEl = document.getElementById('teleopMediaDebug');
   var catalogListEl = document.getElementById('catalogList');
-  var catalogInputEl = document.getElementById('catalogIds');
   var controllerStatusEl = document.getElementById('controllerStatus');
   var controlChannelStatusEl = document.getElementById('controlChannelStatus');
   var controlSendStatusEl = document.getElementById('controlSendStatus');
@@ -19,6 +19,9 @@
   var wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var wsUrl = wsProto + '//' + location.host + PATH + qs;
 
+  /** Radius [0,1) for radial stick deadzone (resting jitter); raise if a pad needs more margin. */
+  var TELEOP_GAMEPAD_STICK_DEADZONE = 0.1;
+
   var stunTurnServers = [{ urls: 'stun:stun.l.google.com:19302' }];
   var ws = null;
   var pc = null;
@@ -30,7 +33,37 @@
   var gamepadLoopTimer = null;
   var controlSendCount = 0;
   var lastControlSendMs = 0;
-  var lastSentControllerState = null;
+  /** First offer must run after ``hello_ack`` so ``catalog_ids`` matches checkboxes (not ``[]``). */
+  var initialRtcStarted = false;
+  var initialRtcFallbackTimer = null;
+
+  /** Captured when the last offer JSON is sent (for on-page diagnostics). */
+  var lastOfferCatalogIdsSnapshot = [];
+  var lastOfferRequestedRecvonlyLines = 0;
+  var lastOfferSentAtIso = '';
+
+  /** Filled in-order from ``ontrack`` for the active ``pc``. */
+  var receivedVideoTracksMeta = [];
+
+  var mediaDebugPollTimer = null;
+
+  /** Per-stick radial deadzone: zero inside radius ``zone``, smooth rescale toward full ±1 beyond. */
+  function stickPairAfterDeadzone(x, y, zone) {
+    if (!(zone > 0)) {
+      return [x, y];
+    }
+    var m = Math.sqrt(x * x + y * y);
+    if (m <= zone) {
+      return [0.0, 0.0];
+    }
+    var gain = (m - zone) / (m * (1.0 - zone));
+    function clampAxis(v) {
+      if (v < -1) return -1;
+      if (v > 1) return 1;
+      return v;
+    }
+    return [clampAxis(x * gain), clampAxis(y * gain)];
+  }
 
   function readGamepadState() {
     var pads = (navigator.getGamepads && navigator.getGamepads()) || [];
@@ -54,9 +87,18 @@
       if (v > 1) return 1;
       return v;
     }
+    var lx0 = a(0);
+    var ly0 = a(1);
+    var rx0 = a(2);
+    var ry0 = a(3);
+    var left = stickPairAfterDeadzone(lx0, ly0, TELEOP_GAMEPAD_STICK_DEADZONE);
+    var right = stickPairAfterDeadzone(rx0, ry0, TELEOP_GAMEPAD_STICK_DEADZONE);
     return {
       LT: b(6), LB: b(4), LS: b(10), RS: b(11), RT: b(7), RB: b(5),
-      LX: a(0), LY: a(1), RX: a(2), RY: a(3)
+      LX: left[0],
+      LY: left[1],
+      RX: right[0],
+      RY: right[1]
     };
   }
 
@@ -79,25 +121,27 @@
       }
     }
     if (controlChannelStatusEl) {
-      var dcState = controlDc ? controlDc.readyState : 'closed';
-      controlChannelStatusEl.textContent = 'Control channel: ' + dcState;
+      var dcState = controlDc ? controlDc.readyState : 'n/a';
+      controlChannelStatusEl.textContent =
+        'Control channel (WebRTC krabby-control-v1): ' + dcState;
     }
     if (controlSendStatusEl) {
-      if (lastControlSendMs > 0) {
-        controlSendStatusEl.textContent =
-          'Control send: ' + controlSendCount + ' msgs, last ' +
-          (Date.now() - lastControlSendMs) + 'ms ago';
+      if (controlDc && controlDc.readyState === 'open') {
+        if (lastControlSendMs > 0) {
+          controlSendStatusEl.textContent =
+            'Relayed to robot: ' + controlSendCount + ' msgs, last ' +
+            (Date.now() - lastControlSendMs) + 'ms ago';
+        } else {
+          controlSendStatusEl.textContent =
+            'Relayed to robot: channel open (first control frame pending…)';
+        }
       } else {
-        controlSendStatusEl.textContent = 'Control send: not started';
+        controlSendStatusEl.textContent =
+          'Relayed to robot: idle (no open WebRTC channel; local capture above still updates)';
       }
     }
     if (controllerStateMirrorEl) {
-      if (lastSentControllerState) {
-        controllerStateMirrorEl.textContent =
-          'state: ' + JSON.stringify(lastSentControllerState, null, 2);
-      } else {
-        controllerStateMirrorEl.textContent = 'state: --';
-      }
+      controllerStateMirrorEl.textContent = JSON.stringify(readGamepadState(), null, 2);
     }
   }
 
@@ -115,7 +159,6 @@
     gamepadLoopTimer = setInterval(function () {
       if (!controlDc || controlDc.readyState !== 'open') return;
       var st = readGamepadState();
-      lastSentControllerState = st;
       controlDc.send(
         JSON.stringify({
           type: 'control',
@@ -151,6 +194,141 @@
       pc.signalingState;
   }
 
+  function stopMediaDebugPoll() {
+    if (mediaDebugPollTimer !== null) {
+      clearInterval(mediaDebugPollTimer);
+      mediaDebugPollTimer = null;
+    }
+  }
+
+  /** Parse ``m-line`` indexes for bundled video recv in local offer SDP (SDP order ≈ browser transceiver creation order). */
+  function sdpVideoRecvonlyMidOrder(sdpText) {
+    if (!sdpText || typeof sdpText !== 'string') {
+      return [];
+    }
+    var lines = sdpText.split(/\r?\n/);
+    var mids = [];
+    var i = 0;
+    for (i = 0; i < lines.length; i += 1) {
+      var line = lines[i];
+      if (/^m=video /i.test(line)) {
+        var mid = '(no mid)';
+        var j = i + 1;
+        while (j < lines.length && !/^m=/i.test(lines[j])) {
+          var b = /^a=mid:([^\s]+)/i.exec(lines[j]);
+          if (b) {
+            mid = b[1];
+            break;
+          }
+          j += 1;
+        }
+        mids.push(mid);
+      }
+    }
+    return mids;
+  }
+
+  function refreshMediaDebugPanel() {
+    if (!mediaDebugEl) {
+      return;
+    }
+    if (!pc) {
+      mediaDebugEl.textContent = '—';
+      return;
+    }
+
+    function finish(lines) {
+      mediaDebugEl.textContent = lines.join('\n');
+    }
+
+    var lines = [];
+    lines.push('=== Last outbound offer (snapshot at send time) ===');
+    lines.push('sent (ISO): ' + (lastOfferSentAtIso || 'n/a'));
+    lines.push(
+      'recvonly lines requested (transceivers): ' + lastOfferRequestedRecvonlyLines +
+        ' | catalog_ids: ' +
+        JSON.stringify(lastOfferCatalogIdsSnapshot)
+    );
+    var lsd = pc.localDescription;
+    if (lsd && lsd.sdp) {
+      lines.push('local SDP video mids (creation order): ' + sdpVideoRecvonlyMidOrder(lsd.sdp).join(', '));
+    }
+    lines.push('');
+
+    lines.push('=== ``ontrack`` order (incoming MediaStreamTracks) ===');
+    if (!receivedVideoTracksMeta.length) {
+      lines.push('(no tracks yet)');
+    } else {
+      receivedVideoTracksMeta.forEach(function (r, ix) {
+        lines.push(
+          '  #' + ix + ' mid=' + (r.mid || '?') +
+            ' streamId=' + (r.streamId || '?') +
+            ' trackId=' + (r.trackId || '?')
+        );
+      });
+    }
+
+    pc.getStats(null).then(function (report) {
+      var inbound = [];
+      var seenSsrc = {};
+      report.forEach(function (s) {
+        if (s.type === 'inbound-rtp' && s.kind === 'video' && typeof s.ssrc === 'number') {
+          var k = s.ssrc + ':' + String(s.mid || '');
+          if (seenSsrc[k]) {
+            return;
+          }
+          seenSsrc[k] = true;
+          inbound.push(s);
+        }
+      });
+      inbound.sort(function (a, b) {
+        return (a.mid || '').localeCompare(b.mid || '');
+      });
+
+      lines.push('');
+      lines.push('=== inbound-rtp video (deduped by ssrc+mid) ===');
+      if (!inbound.length) {
+        lines.push('(no inbound-rtp stats yet)');
+      }
+      inbound.forEach(function (s, ix) {
+        lines.push(
+          '  #' + ix +
+            ' ssrc=' + s.ssrc +
+            ' mid=' + (s.mid || '?') +
+            ' mimeType=' + (s.mimeType || '?') +
+            ' codecId=' + (s.codecId || '?') +
+            ' framesDecoded=' + (typeof s.framesDecoded === 'number' ? s.framesDecoded : '?')
+        );
+      });
+
+      lines.push('');
+      lines.push('=== Peer transceivers (video receivers) ===');
+      var txs = pc.getTransceivers();
+      var videoTx = txs.filter(function (t) {
+        return t.receiver && t.receiver.track && t.receiver.track.kind === 'video';
+      });
+      lines.push('count=' + videoTx.length);
+      videoTx.forEach(function (t, ix) {
+        lines.push(
+          '  #' + ix + ' mid=' + (t.mid || '?') + ' recv trackId=' + t.receiver.track.id
+        );
+      });
+
+      var rsd = pc.remoteDescription;
+      if (rsd && rsd.sdp) {
+        lines.push('');
+        lines.push('=== Remote SDP (negotiated ``m=video`` ``a=mid`` order) ===');
+        lines.push(String(sdpVideoRecvonlyMidOrder(rsd.sdp).join(', ') || '(none parsed)'));
+      }
+
+      finish(lines);
+    }).catch(function (e) {
+      lines.push('');
+      lines.push('getStats() failed: ' + (e && e.message ? e.message : String(e)));
+      finish(lines);
+    });
+  }
+
   function selectedCatalogIdsFromCheckboxes() {
     if (!catalogListEl) return [];
     var nodes = catalogListEl.querySelectorAll('input[type="checkbox"][data-catalog-id]:checked');
@@ -162,11 +340,6 @@
     return out;
   }
 
-  function syncCatalogInputFromSelection(ids) {
-    if (!catalogInputEl) return;
-    catalogInputEl.value = ids.join(', ');
-  }
-
   function renderCatalogList(ids) {
     if (!catalogListEl) return;
     if (!ids || !ids.length) {
@@ -175,49 +348,34 @@
     }
     catalogListEl.innerHTML = '';
     var label = document.createElement('div');
-    label.textContent = 'Available sensors (select order top-to-bottom):';
+    label.textContent = 'Available sensors:';
     catalogListEl.appendChild(label);
-    ids.forEach(function (cid, idx) {
+    ids.forEach(function (cid) {
       var row = document.createElement('label');
       row.style.display = 'block';
       var cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.setAttribute('data-catalog-id', cid);
-      if (idx === 0) cb.checked = true;
-      cb.addEventListener('change', function () {
-        syncCatalogInputFromSelection(selectedCatalogIdsFromCheckboxes());
-      });
+      cb.checked = true;
       row.appendChild(cb);
       row.appendChild(document.createTextNode(' ' + cid));
       catalogListEl.appendChild(row);
     });
-    syncCatalogInputFromSelection(selectedCatalogIdsFromCheckboxes());
   }
 
-  function readNumStreams() {
-    var el = document.querySelector('input[name="teleop_streams"]:checked');
-    if (!el) return 1;
-    var n = parseInt(el.value, 10);
-    return n > 0 ? n : 1;
+  /** Matches checked count, or ``1`` recvonly line when none checked (robot picks its default camera). */
+  function rtcRecvonlyVideoLineCount() {
+    var ids = readCatalogIdsArray();
+    return ids.length > 0 ? ids.length : 1;
   }
 
   function selectedCatalogIdsInOrder() {
     return readCatalogIdsArray();
   }
 
-  /** HAL RGB-D catalog ids in order; empty field -> ``[]`` (robot uses bootstrap / primary-only list). */
+  /** Checked catalog ids in DOM order. None checked -> ``[]`` (offer omits viewer ids; robot uses its default listing). */
   function readCatalogIdsArray() {
-    var selected = selectedCatalogIdsFromCheckboxes();
-    if (selected.length > 0) {
-      return selected;
-    }
-    if (!catalogInputEl) return [];
-    return String(catalogInputEl.value || '')
-      .split(',')
-      .map(function (s) {
-        return s.trim();
-      })
-      .filter(Boolean);
+    return selectedCatalogIdsFromCheckboxes();
   }
 
   function helloPayload() {
@@ -242,6 +400,7 @@
       pc.close();
       pc = null;
     }
+    stopMediaDebugPoll();
     stopGamepadLoop();
     controlDc = null;
     videosEl.innerHTML = '';
@@ -249,6 +408,11 @@
       streamStatus.textContent = 'Requested ' + numStreams + ' stream(s); negotiating...';
     }
     status.textContent = 'Negotiating WebRTC...';
+
+    receivedVideoTracksMeta = [];
+    if (mediaDebugEl) {
+      mediaDebugEl.textContent = 'negotiating…';
+    }
 
     pc = new RTCPeerConnection({ iceServers: stunTurnServers });
     controlDc = pc.createDataChannel('krabby-control-v1', { ordered: true });
@@ -259,12 +423,21 @@
       stopGamepadLoop();
     };
     pc.addEventListener('connectionstatechange', updateDebug);
+    pc.addEventListener('connectionstatechange', function () {
+      refreshMediaDebugPanel();
+    });
     pc.addEventListener('iceconnectionstatechange', updateDebug);
     pc.addEventListener('signalingstatechange', updateDebug);
     updateDebug();
 
     var nTracks = 0;
     pc.ontrack = function (ev) {
+      receivedVideoTracksMeta.push({
+        trackId: ev.track.id,
+        streamId: ev.streams[0] ? ev.streams[0].id : '?',
+        mid: ev.transceiver && typeof ev.transceiver.mid === 'string' ? ev.transceiver.mid : '(pending)'
+      });
+      refreshMediaDebugPanel();
       nTracks += 1;
       if (streamStatus) {
         streamStatus.textContent = 'Receiving ' + nTracks + ' / ' + numStreams + ' video track(s)';
@@ -289,20 +462,49 @@
 
     var ans = await new Promise(function (resolve, reject) {
       answerWaiter = { resolve: resolve, reject: reject };
+      lastOfferSentAtIso = new Date().toISOString();
+      lastOfferCatalogIdsSnapshot = readCatalogIdsArray().slice();
+      lastOfferRequestedRecvonlyLines = numStreams;
       ws.send(JSON.stringify(offerPayload(pc.localDescription.sdp)));
     });
     await pc.setRemoteDescription({ type: 'answer', sdp: ans.sdp });
     status.textContent = 'Playing';
     updateDebug();
+    refreshMediaDebugPanel();
+    stopMediaDebugPoll();
+    mediaDebugPollTimer = setInterval(refreshMediaDebugPanel, 2000);
+  }
+
+  function tryStartInitialRtc() {
+    if (initialRtcStarted) {
+      return;
+    }
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    initialRtcStarted = true;
+    if (initialRtcFallbackTimer !== null) {
+      clearTimeout(initialRtcFallbackTimer);
+      initialRtcFallbackTimer = null;
+    }
+    startRtc(rtcRecvonlyVideoLineCount()).catch(function (err) {
+      status.textContent = 'WebRTC error: ' + (err && err.message ? err.message : String(err));
+    });
   }
 
   function openWebSocket() {
+    initialRtcStarted = false;
+    if (initialRtcFallbackTimer !== null) {
+      clearTimeout(initialRtcFallbackTimer);
+      initialRtcFallbackTimer = null;
+    }
     ws = new WebSocket(wsUrl);
     ws.onerror = function () {
       status.textContent = 'WebSocket error';
       stopGamepadLoop();
     };
     ws.onclose = function () {
+      stopMediaDebugPoll();
       stopGamepadLoop();
     };
 
@@ -327,6 +529,7 @@
             .filter(Boolean);
           renderCatalogList(availableCatalogIds);
         }
+        tryStartInitialRtc();
       }
       if (msg.type === 'pong' && typeof msg.t === 'number' && latencyEl) {
         var nowPerf = performance.now();
@@ -368,12 +571,17 @@
     };
 
     ws.onopen = function () {
+      status.textContent = 'Waiting for robot hello…';
       try {
         ws.send(JSON.stringify(helloPayload()));
       } catch (e) {}
-      startRtc(readNumStreams()).catch(function (err) {
-        status.textContent = 'WebRTC error: ' + (err && err.message ? err.message : String(err));
-      });
+      initialRtcFallbackTimer = setTimeout(function () {
+        initialRtcFallbackTimer = null;
+        if (!initialRtcStarted && ws && ws.readyState === WebSocket.OPEN) {
+          status.textContent = 'No hello_ack yet; starting WebRTC with current selection…';
+          tryStartInitialRtc();
+        }
+      }, 8000);
       setInterval(function () {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'ping', t: performance.now(), t_wall_ms: Date.now() }));
@@ -402,10 +610,10 @@
       });
   }
 
-  var applyBtn = document.getElementById('applyStreams');
-  if (applyBtn) {
-    applyBtn.addEventListener('click', function () {
-      startRtc(readNumStreams()).catch(function (err) {
+  var applyCatalogBtn = document.getElementById('applyCatalogStreams');
+  if (applyCatalogBtn) {
+    applyCatalogBtn.addEventListener('click', function () {
+      startRtc(rtcRecvonlyVideoLineCount()).catch(function (err) {
         status.textContent = 'WebRTC error: ' + (err && err.message ? err.message : String(err));
       });
     });

@@ -14,6 +14,12 @@
     #videos video { width: 100%; }
     fieldset { margin: 0.75rem 0; max-width: 40rem; }
     #debugRtc { font: 12px/1.4 monospace; color: #444; margin: 0.5rem 0; white-space: pre-wrap; }
+    #teleopMediaDebug {
+      font: 12px/1.4 monospace;
+      color: #333;
+      white-space: pre-wrap;
+      max-width: 48rem;
+    }
   </style>
 </head>
 <body>
@@ -24,25 +30,25 @@
   <p id="streamStatus">Streams: —</p>
   <p id="debugRtc"></p>
   <fieldset>
-    <legend>HAL catalog ids (order matches recvonly video lines; leave empty to use robot bootstrap)</legend>
-    <div id="catalogList">Available sensors: waiting for robot hello...</div>
-    <small>Hint: robot default applies when no sensors are selected.</small>
-    <label for="catalogIds">Comma-separated</label>
-    <input type="text" id="catalogIds" name="catalogIds" size="48" placeholder="empty = robot default (primary)" />
+    <legend>Media debug (signaling + inbound RTP)</legend>
+    <p><small>Shows what the browser thinks it asked for versus inbound video RTP. Different rows with different <code>ssrc</code> typically mean distinct sender streams—compare to the catalog ids listed here; same picture with different SSRC still means duplicated sources upstream.</small></p>
+    <pre id="teleopMediaDebug">—</pre>
   </fieldset>
   <fieldset>
-    <legend>Synthetic test streams (re-offer replaces session)</legend>
-    <label><input type="radio" name="teleop_streams" value="1" checked /> 1</label>
-    <label><input type="radio" name="teleop_streams" value="2" /> 2</label>
-    <label><input type="radio" name="teleop_streams" value="3" /> 3</label>
-    <button type="button" id="applyStreams">Apply</button>
+    <legend>Sensors (one WebRTC video line per checked id, top-to-bottom order)</legend>
+    <div id="catalogList">Available sensors: waiting for robot hello...</div>
+    <small>Uncheck to drop a stream. If nothing is checked, the robot uses its own default camera and you still get one video line. Use Apply after changing the list.</small><br/>
+    <button type="button" id="applyCatalogStreams">Apply — renegotiate WebRTC</button>
   </fieldset>
   <fieldset>
     <legend>Controller Debug</legend>
+    <p><small>Local capture uses only the browser (Gamepad API). Sending to the robot is separate and needs an open WebRTC data channel to the paired edge.</small></p>
+    <p><strong>Browser</strong></p>
     <p id="controllerStatus">Controller: checking...</p>
-    <p id="controlChannelStatus">Control channel: closed</p>
-    <p id="controlSendStatus">Control send: not started</p>
-    <pre id="controllerStateMirror">state: --</pre>
+    <pre id="controllerStateMirror">—</pre>
+    <p><strong>To robot (WebRTC)</strong></p>
+    <p id="controlChannelStatus">Control channel: —</p>
+    <p id="controlSendStatus">Relayed to robot: —</p>
   </fieldset>
   <div id="videos"></div>
   <script>window.TELEOP_WS_PATH = '/ws/browser';</script>
