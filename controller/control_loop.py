@@ -45,7 +45,9 @@ class ControlLoopConfig:
         mapper_hip_up_down_scale: Scaling factor for hip up/down axis
         mapper_knee_out_in_scale: Scaling factor for knee out/in axis
         mapper_hip_yaw_scale: Scaling factor for hip yaw axis
-        isaacsim_robot_definition: Optional robot definition for IsaacSim mapper (quad 12-joint or hex 18-joint).
+        isaacsim_robot_definition: Required for INPUT_CONTROLLER_ISAACSIM (must match IsaacSim HAL topology).
+        krabby_gamepad_robot_definition: Required for INPUT_CONTROLLER_KRABBY and INPUT_CONTROLLER_WEBRTC
+            (must match the HAL server topology). Unused for other modes.
     """
     mode: ControlMode
     input_controller_device_id: Optional[int] = None
@@ -55,6 +57,7 @@ class ControlLoopConfig:
     mapper_knee_out_in_scale: float = 1.0
     mapper_hip_yaw_scale: float = 1.0
     isaacsim_robot_definition: Optional[RobotDefinition] = None
+    krabby_gamepad_robot_definition: Optional[RobotDefinition] = None
     webrtc_input_controller: Optional[WebRTCInputController] = None
 
 
@@ -153,18 +156,25 @@ class ControlLoop:
         # Initialize HAL client
         if self.config.hal_client_config is None:
             raise ValueError("hal_client_config is required for INPUT_CONTROLLER_ISAACSIM mode")
-        
+
+        rd = self.config.isaacsim_robot_definition
+        if rd is None:
+            raise ValueError(
+                "isaacsim_robot_definition is required for INPUT_CONTROLLER_ISAACSIM "
+                "(e.g. krabby-uno-sim --hex|--quad, or pass RobotDefinition explicitly)"
+            )
+
         self._hal_client = HalClient(
             config=self.config.hal_client_config,
             context=None,
         )
         self._hal_client.initialize()
-        
+
         self._gamepad_to_isaacsim_hal_mapper = GamepadToIsaacSimHALMapper(
             hip_up_down_scale=self.config.mapper_hip_up_down_scale,
             knee_out_in_scale=self.config.mapper_knee_out_in_scale,
             hip_yaw_scale=self.config.mapper_hip_yaw_scale,
-            robot_definition=self.config.isaacsim_robot_definition,
+            robot_definition=rd,
         )
         
         # Register callback to send commands when gamepad state changes
@@ -186,20 +196,27 @@ class ControlLoop:
         # Initialize HAL client
         if self.config.hal_client_config is None:
             raise ValueError("hal_client_config is required for INPUT_CONTROLLER_KRABBY mode")
-        
+
+        rd = self.config.krabby_gamepad_robot_definition
+        if rd is None:
+            raise ValueError(
+                "krabby_gamepad_robot_definition is required for INPUT_CONTROLLER_KRABBY "
+                "(set from CLI --robot hex|go2 or pass RobotDefinition explicitly)"
+            )
+
         self._hal_client = HalClient(
             config=self.config.hal_client_config,
             context=None,
         )
         self._hal_client.initialize()
-        
-        # Initialize mapper
+
         self._gamepad_to_krabby_hal_mapper = GamepadToKrabbyHALMapper(
             hip_up_down_scale=self.config.mapper_hip_up_down_scale,
             knee_out_in_scale=self.config.mapper_knee_out_in_scale,
             hip_yaw_scale=self.config.mapper_hip_yaw_scale,
+            robot_definition=rd,
         )
-        
+
         # Register callback to send commands when gamepad state changes
         self._input_controller.register_callback(self._on_gamepad_state_krabby)
         
@@ -220,6 +237,13 @@ class ControlLoop:
         if self.config.hal_client_config is None:
             raise ValueError("hal_client_config is required for INPUT_CONTROLLER_WEBRTC mode")
 
+        rd = self.config.krabby_gamepad_robot_definition
+        if rd is None:
+            raise ValueError(
+                "krabby_gamepad_robot_definition is required for INPUT_CONTROLLER_WEBRTC "
+                "(must match Jetson HAL --robot topology)"
+            )
+
         self._hal_client = HalClient(
             config=self.config.hal_client_config,
             context=None,
@@ -230,6 +254,7 @@ class ControlLoop:
             hip_up_down_scale=self.config.mapper_hip_up_down_scale,
             knee_out_in_scale=self.config.mapper_knee_out_in_scale,
             hip_yaw_scale=self.config.mapper_hip_yaw_scale,
+            robot_definition=rd,
         )
         self._input_controller.register_callback(self._on_gamepad_state_krabby)
         self._input_controller.start(update_rate_hz=self.config.input_controller_update_rate_hz)

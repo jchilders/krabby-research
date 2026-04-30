@@ -108,6 +108,9 @@ def main():
     args = parser.parse_args()
     logging.getLogger().setLevel(getattr(logging, args.log_level))
     logger.setLevel(getattr(logging, args.log_level))
+    # aioice (aiortc ICE) logs every candidate-pair transition at INFO; keep operator logs readable.
+    logging.getLogger("aioice").setLevel(logging.WARNING)
+    logging.getLogger("aiortc").setLevel(logging.WARNING)
 
     if args.control_source == "inference" and not args.checkpoint:
         parser.error("--checkpoint is required when --control-source inference")
@@ -202,6 +205,7 @@ def main():
                 stop_event=teleop_stop,
                 bootstrap_sensor_catalog_ids=teleop_sensor_ids,
                 teleop_edge_settings=_teleop_st,
+                robot_definition=robot_definition,
             )
             logger.info(
                 "Teleop outbound signaling started: mode=%s url=%s reconnect_s=%.1f "

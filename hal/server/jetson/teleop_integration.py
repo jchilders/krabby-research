@@ -14,6 +14,7 @@ from zmq.error import ContextTerminated
 
 from hal.client.client import HalClient
 from hal.client.config import HalClientConfig
+from hal.server.robot_definition import RobotDefinition
 from hal.server.sensor_interface import SensorInterface
 from controller.input import WebRTCInputController
 from controller.mappers.gamepad_to_krabby_hal_mapper import GamepadToKrabbyHALMapper
@@ -65,11 +66,15 @@ def start_jetson_teleop_signaling_thread(
     stop_event: threading.Event,
     bootstrap_sensor_catalog_ids: list[str],
     teleop_edge_settings: TeleopEdgeSettings,
+    robot_definition: RobotDefinition,
 ) -> threading.Thread:
     """Start outbound teleop: HalClient poll thread + asyncio signaling; stop when ``stop_event`` is set.
 
     ``bootstrap_sensor_catalog_ids`` seeds HAL polling until the browser sends ``catalog_ids``
     on ``hello`` / ``offer`` (see portal viewer); empty list is invalid.
+
+    ``robot_definition`` must match the Jetson HAL server's ``--robot`` topology so gamepad
+    mapping produces the same joint count/order as ``apply_command``.
     """
 
     def _thread_main() -> None:
@@ -127,7 +132,7 @@ def start_jetson_teleop_signaling_thread(
         hal_client_lock = threading.Lock()
         hal_ready = threading.Event()
         webrtc_input = WebRTCInputController()
-        mapper = GamepadToKrabbyHALMapper()
+        mapper = GamepadToKrabbyHALMapper(robot_definition=robot_definition)
 
         def _on_webrtc_state(state: Any) -> None:
             if not hal_ready.is_set():
