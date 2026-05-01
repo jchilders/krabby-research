@@ -432,9 +432,14 @@
 
     var nTracks = 0;
     pc.ontrack = function (ev) {
+      // Unified-plan answers often expose every recv track on the **same** remote MediaStream.
+      // Reusing ``ev.streams[0]`` on multiple <video> elements makes each tag show that stream’s
+      // default behavior (typically the first/combined video track) — duplicated tiles.
+      // One-element MediaStream pins this element to exactly one MediaStreamTrack.
+      var isolate = new MediaStream([ev.track]);
       receivedVideoTracksMeta.push({
         trackId: ev.track.id,
-        streamId: ev.streams[0] ? ev.streams[0].id : '?',
+        streamId: isolate.id,
         mid: ev.transceiver && typeof ev.transceiver.mid === 'string' ? ev.transceiver.mid : '(pending)'
       });
       refreshMediaDebugPanel();
@@ -448,7 +453,7 @@
       v.muted = true;
       v.style.maxWidth = '100%';
       v.style.background = '#111';
-      v.srcObject = ev.streams[0];
+      v.srcObject = isolate;
       videosEl.appendChild(v);
     };
 
@@ -465,7 +470,18 @@
       lastOfferSentAtIso = new Date().toISOString();
       lastOfferCatalogIdsSnapshot = readCatalogIdsArray().slice();
       lastOfferRequestedRecvonlyLines = numStreams;
-      ws.send(JSON.stringify(offerPayload(pc.localDescription.sdp)));
+      var sdpOut = pc.localDescription.sdp;
+      try {
+        /* eslint-disable no-console */
+        console.warn('[teleop-debug] browser outbound offer:', {
+          recvonlyTransceiverCount: numStreams,
+          catalogIds: lastOfferCatalogIdsSnapshot.slice(),
+          videoMidsInSdpCreationOrder: sdpVideoRecvonlyMidOrder(sdpOut),
+          sdpCharLength: sdpOut.length
+        });
+        /* eslint-enable no-console */
+      } catch (_e) {}
+      ws.send(JSON.stringify(offerPayload(sdpOut)));
     });
     await pc.setRemoteDescription({ type: 'answer', sdp: ans.sdp });
     status.textContent = 'Playing';
@@ -573,7 +589,13 @@
     ws.onopen = function () {
       status.textContent = 'Waiting for robot hello…';
       try {
-        ws.send(JSON.stringify(helloPayload()));
+        var hi = helloPayload();
+        try {
+          /* eslint-disable no-console */
+          console.warn('[teleop-debug] browser outbound hello:', hi);
+          /* eslint-enable no-console */
+        } catch (_e2) {}
+        ws.send(JSON.stringify(hi));
       } catch (e) {}
       initialRtcFallbackTimer = setTimeout(function () {
         initialRtcFallbackTimer = null;

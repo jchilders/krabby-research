@@ -19,11 +19,16 @@ from hal.server.sensor_interface import SensorInterface
 from controller.input import WebRTCInputController
 from controller.mappers.gamepad_to_krabby_hal_mapper import GamepadToKrabbyHALMapper
 from teleop.edge.config import TeleopEdgeSettings
+from teleop.edge.depth_preview import depth_meters_to_rgb24_u8
 from teleop.edge.hal_rgb_track import HalRgbSnapshotVideoTrack
 from teleop.edge.portal_client import portal_client_loop
+from teleop.edge.sdp_util import count_video_m_lines as _sdp_count_video_m_lines
 from teleop.edge.viewer_catalog import parse_viewer_catalog_ids_from_payload
 
 logger = logging.getLogger(__name__)
+
+# Temporary noisy breadcrumbs for multi-track / duplicate-feed diagnosis (grep: teleop-debug).
+_TELEOP_DEBUG_PREFIX = "[teleop-debug]"
 
 
 class _ViewerCatalogIds:
@@ -51,11 +56,11 @@ class _ViewerCatalogIds:
         return ids if ids else list(self._bootstrap)
 
     def catalog_id_for_track(self, track_index: int) -> str:
+        """One recvonly ``m=video`` line ⇒ one catalog id by index (**no clamping**)."""
         ids = self.snapshot_poll_ids()
-        if not ids:
+        if track_index < 0 or track_index >= len(ids):
             return ""
-        idx = min(max(track_index, 0), len(ids) - 1)
-        return ids[idx]
+        return ids[track_index]
 
 
 def start_jetson_teleop_signaling_thread(
@@ -97,9 +102,21 @@ def start_jetson_teleop_signaling_thread(
 
         def _validate_sensor_pipeline_binding(track_count: int) -> None:
             selected = catalog_state.snapshot_poll_ids()
-            if len(selected) < track_count:
+            binding_preview = [
+                f"[{i}]={selected[i]!r}" for i in range(min(track_count, len(selected)))
+            ]
+            logger.info(
+                "%s validate_offer m_video_lines=%d active_catalog_ids=%r catalog_per_index=%s",
+                _TELEOP_DEBUG_PREFIX,
+                track_count,
+                selected,
+                binding_preview,
+            )
+            if len(selected) != track_count:
                 raise ValueError(
-                    "offer rejected: viewer requested more video tracks than selected catalog_ids"
+                    "offer rejected: recvonly video m-line count "
+                    f"({track_count}) must match catalog_ids length ({len(selected)}); "
+                    f"snapshot={selected!r}"
                 )
             for idx in range(track_count):
                 cid = selected[idx]
@@ -108,6 +125,19 @@ def start_jetson_teleop_signaling_thread(
                     raise ValueError(
                         f"offer rejected: catalog_id {cid!r} not found in SensorInterface.list_sensors()"
                     )
+                if sensor.modality == "depth":
+                    dr = (sensor.extra or {}).get("depth_range_m")
+                    if (
+                        not isinstance(dr, (list, tuple))
+                        or len(dr) != 2
+                        or not np.isfinite(float(dr[0]))
+                        or not np.isfinite(float(dr[1]))
+                        or float(dr[1]) <= float(dr[0])
+                    ):
+                        raise ValueError(
+                            f"offer rejected: depth catalog_id {cid!r} requires "
+                            f"SensorInfo.extra['depth_range_m'] = (d_min, d_max) with d_max > d_min"
+                        )
                 try:
                     handle = sensor_interface.get_gstreamer_handle(sensor)
                     pipeline = sensor_interface.build_pipeline(
@@ -127,6 +157,7 @@ def start_jetson_teleop_signaling_thread(
         latest_rgb: dict[str, np.ndarray] = {}
         latest_capture_ns: dict[str, int] = {}
         rgb_lock = threading.Lock()
+        _last_poll_catalog_log_mono = [0.0]
         poll_stop = threading.Event()
         hal_teleop = HalClient(hal_client_config, context=transport_context)
         hal_client_lock = threading.Lock()
@@ -166,8 +197,59 @@ def start_jetson_teleop_signaling_thread(
                     if obs is None or obs.rgbd_by_catalog_id is None:
                         continue
                     poll_ids = catalog_state.snapshot_poll_ids()
+                    now_mono = time.monotonic()
+                    if now_mono - _last_poll_catalog_log_mono[0] >= 3.0:
+                        _last_poll_catalog_log_mono[0] = now_mono
+                        hb_keys = (
+                            sorted(obs.rgbd_by_catalog_id.keys())
+                            if obs.rgbd_by_catalog_id
+                            else []
+                        )
+                        with rgb_lock:
+                            buf_keys = sorted(latest_rgb.keys())
+                            shapes = {
+                                k: tuple(int(x) for x in latest_rgb[k].shape)
+                                for k in buf_keys
+                                if latest_rgb.get(k) is not None and hasattr(latest_rgb[k], "shape")
+                            }
+                        # Observations can include every opened HAL camera; teleop only mirrors
+                        # ``poll_ids`` (from hello/offer ``catalog_ids``). Unlisted ids are ignored here.
+                        obs_only = sorted(set(hb_keys) - set(poll_ids))
+                        logger.info(
+                            "%s HAL obs ts_ns=%s poll_ids(active order)=%r "
+                            "obs.rgbd_keys=%r latest_rgb_keys=%r arr_shapes=%s "
+                            "obs_has_rgbd_not_streamed=%r",
+                            _TELEOP_DEBUG_PREFIX,
+                            getattr(obs, "timestamp_ns", None),
+                            poll_ids,
+                            hb_keys,
+                            buf_keys,
+                            shapes,
+                            obs_only,
+                        )
                     with rgb_lock:
                         for cid in poll_ids:
+                            sensor = sensors_by_id.get(cid)
+                            if (
+                                sensor is not None
+                                and sensor.modality == "depth"
+                                and isinstance((sensor.extra or {}).get("gst_depth_source_catalog_id"), str)
+                            ):
+                                base = (sensor.extra or {})["gst_depth_source_catalog_id"]
+                                chunk = obs.rgbd_by_catalog_id.get(base)
+                                if chunk is None or chunk.depth.size == 0:
+                                    continue
+                                # depth_range_m: same contract as Gst depth sensors; validated in
+                                # _validate_sensor_pipeline_binding before the offer is accepted.
+                                dr = (sensor.extra or {})["depth_range_m"]
+                                depth_range = (float(dr[0]), float(dr[1]))
+                                preview = depth_meters_to_rgb24_u8(
+                                    chunk.depth, depth_range_m=depth_range
+                                )
+                                latest_rgb[cid] = np.ascontiguousarray(preview, dtype=np.uint8)
+                                latest_capture_ns[cid] = int(obs.timestamp_ns)
+                                continue
+
                             chunk = obs.rgbd_by_catalog_id.get(cid)
                             if chunk is not None and chunk.rgb is not None and chunk.rgb.size > 0:
                                 latest_rgb[cid] = np.ascontiguousarray(chunk.rgb, dtype=np.uint8)
@@ -191,7 +273,20 @@ def start_jetson_teleop_signaling_thread(
 
         def _make_track_factory():
             def factory(track_index: int) -> HalRgbSnapshotVideoTrack:
+                snap = catalog_state.snapshot_poll_ids()
                 cid = catalog_state.catalog_id_for_track(track_index)
+                logger.info(
+                    "%s attach_track m_line_index=%d catalog_id_bound=%r active_snapshot_now=%r",
+                    _TELEOP_DEBUG_PREFIX,
+                    track_index,
+                    cid,
+                    snap,
+                )
+                if not cid:
+                    logger.error(
+                        "teleop: catalog_id_for_track(%d) empty after validation; black until renegotiation",
+                        track_index,
+                    )
                 return HalRgbSnapshotVideoTrack(frame_getter=lambda c=cid: _rgb_copy(c))
 
             return factory
@@ -199,7 +294,36 @@ def start_jetson_teleop_signaling_thread(
         factory = _make_track_factory()
 
         def _on_signaling_json(payload: dict[str, Any]) -> None:
+            msg_t = payload.get("type")
+            raw_catalog = payload.get("catalog_ids", "<key absent>")
+            before = catalog_state.snapshot_poll_ids()
+            parsed_equiv = parse_viewer_catalog_ids_from_payload(
+                payload, max_lines=settings.max_video_m_lines
+            )
+            n_mvid: int | None = None
+            sdp = payload.get("sdp")
+            if isinstance(sdp, str) and msg_t == "offer":
+                n_mvid = _sdp_count_video_m_lines(sdp)
+            logger.info(
+                "%s inbound signaling type=%s raw_catalog_ids=%r parse_result="
+                "(None=omit field,[]=revert bootstrap)=%r snapshot_before_apply=%r "
+                "offer_m_video_lines=%s sdp_bytes=%s",
+                _TELEOP_DEBUG_PREFIX,
+                msg_t,
+                raw_catalog,
+                parsed_equiv,
+                before,
+                n_mvid,
+                len(sdp) if isinstance(sdp, str) else None,
+            )
             catalog_state.apply_from_payload(payload)
+            logger.info(
+                "%s inbound signaling type=%s snapshot_after_apply=%r bootstrap=%r",
+                _TELEOP_DEBUG_PREFIX,
+                msg_t,
+                catalog_state.snapshot_poll_ids(),
+                bootstrap_sensor_catalog_ids,
+            )
 
         def _hello_ack_payload() -> dict[str, Any]:
             return {"available_catalog_ids": available_catalog_ids}
