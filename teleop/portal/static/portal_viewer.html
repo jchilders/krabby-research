@@ -8,49 +8,87 @@
     #videos {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 0.5rem;
-      margin-top: 0.75rem;
+      gap: 0.75rem;
+      margin: 0.75rem 0;
+    }
+    .video-tile {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+    .video-tile-label {
+      font: 600 0.875rem/1.2 system-ui, sans-serif;
+      color: #222;
+      padding: 0.15rem 0;
+      word-break: break-word;
     }
     #videos video { width: 100%; }
     fieldset { margin: 0.75rem 0; max-width: 40rem; }
-    #debugRtc { font: 12px/1.4 monospace; color: #444; margin: 0.5rem 0; white-space: pre-wrap; }
-    #teleopMediaDebug {
-      font: 12px/1.4 monospace;
-      color: #333;
-      white-space: pre-wrap;
-      max-width: 48rem;
+    details.sensor-panel {
+      margin: 0.75rem 0;
+      max-width: 40rem;
     }
+    details.sensor-panel > summary {
+      cursor: pointer;
+      font-weight: 600;
+      list-style-position: outside;
+      margin-bottom: 0.35rem;
+    }
+    .sensor-panel-inner {
+      border: 1px solid #bbb;
+      border-radius: 3px;
+      padding: 0.5rem 0.65rem;
+      margin-top: 0.35rem;
+    }
+    details.controller-diagnostic {
+      margin: 0.75rem 0;
+      max-width: 40rem;
+    }
+    details.controller-diagnostic > summary {
+      cursor: pointer;
+      font-weight: 600;
+      list-style-position: outside;
+      margin-bottom: 0.35rem;
+    }
+    .controller-diagnostic-inner {
+      border: 1px solid #bbb;
+      border-radius: 3px;
+      padding: 0.5rem 0.65rem;
+      margin-top: 0.35rem;
+    }
+    #debugRtc { font: 12px/1.4 monospace; color: #444; margin: 0.5rem 0; white-space: pre-wrap; }
   </style>
 </head>
 <body>
   <h1>Krabby teleop portal viewer</h1>
   <p>Signaling via portal relay (<code>/ws/browser</code>).</p>
+  <div id="videos"></div>
   <p id="status">Connecting…</p>
   <p id="latency">Signaling RTT: —</p>
   <p id="streamStatus">Streams: —</p>
   <p id="debugRtc"></p>
-  <fieldset>
-    <legend>Media debug (signaling + inbound RTP)</legend>
-    <p><small>Shows what the browser thinks it asked for versus inbound video RTP. Different rows with different <code>ssrc</code> typically mean distinct sender streams—compare to the catalog ids listed here; same picture with different SSRC still means duplicated sources upstream.</small></p>
-    <pre id="teleopMediaDebug">—</pre>
-  </fieldset>
-  <fieldset>
-    <legend>Sensors (one WebRTC video line per checked id, top-to-bottom order)</legend>
-    <div id="catalogList">Available sensors: waiting for robot hello...</div>
-    <small>Uncheck to drop a stream. If nothing is checked, the robot uses its own default camera and you still get one video line. Use Apply after changing the list.</small><br/>
-    <button type="button" id="applyCatalogStreams">Apply — renegotiate WebRTC</button>
-  </fieldset>
-  <fieldset>
-    <legend>Controller Debug</legend>
-    <p><small>Local capture uses only the browser (Gamepad API). Sending to the robot is separate and needs an open WebRTC data channel to the paired edge.</small></p>
-    <p><strong>Browser</strong></p>
-    <p id="controllerStatus">Controller: checking...</p>
-    <pre id="controllerStateMirror">—</pre>
-    <p><strong>To robot (WebRTC)</strong></p>
-    <p id="controlChannelStatus">Control channel: —</p>
-    <p id="controlSendStatus">Relayed to robot: —</p>
-  </fieldset>
-  <div id="videos"></div>
+  <details class="sensor-panel" id="sensorSelectionPanel" open>
+    <summary>Sensor selection</summary>
+    <div class="sensor-panel-inner">
+      <p><small>One recvonly WebRTC video line per checked id (top-to-bottom). Uncheck to drop a stream. If nothing is checked, the robot uses its own default camera and you still get one video line.</small></p>
+      <div id="catalogList">Available sensors: waiting for robot hello...</div>
+      <p><small>Use Apply after changing the list.</small></p>
+      <button type="button" id="applyCatalogStreams">Apply — renegotiate WebRTC</button>
+    </div>
+  </details>
+  <details class="controller-diagnostic" id="controllerDiagnosticPanel">
+    <summary>Controller diagnostics</summary>
+    <div class="controller-diagnostic-inner">
+      <p><small>Local capture uses only the browser (Gamepad API). Sending to the robot is separate and needs an open WebRTC data channel to the paired edge.</small></p>
+      <p><strong>Browser</strong></p>
+      <p id="controllerStatus">Controller: checking...</p>
+      <pre id="controllerStateMirror">—</pre>
+      <p><strong>To robot (WebRTC)</strong></p>
+      <p id="controlChannelStatus">Control channel: —</p>
+      <p id="controlSendStatus">Relayed to robot: —</p>
+    </div>
+  </details>
   <script>window.TELEOP_WS_PATH = '/ws/browser';</script>
   <script src="/static/teleop_session.js"></script>
 </body>

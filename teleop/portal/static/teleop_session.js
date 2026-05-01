@@ -5,12 +5,15 @@
   var latencyEl = document.getElementById('latency');
   var streamStatus = document.getElementById('streamStatus');
   var debugEl = document.getElementById('debugRtc');
-  var mediaDebugEl = document.getElementById('teleopMediaDebug');
   var catalogListEl = document.getElementById('catalogList');
   var controllerStatusEl = document.getElementById('controllerStatus');
   var controlChannelStatusEl = document.getElementById('controlChannelStatus');
   var controlSendStatusEl = document.getElementById('controlSendStatus');
   var controllerStateMirrorEl = document.getElementById('controllerStateMirror');
+  var controllerDiagnosticDetails = document.getElementById('controllerDiagnosticPanel');
+  if (controllerDiagnosticDetails) {
+    controllerDiagnosticDetails.open = false;
+  }
   var params = new URLSearchParams(location.search);
   var token = params.get('token');
   var qs = token ? '?token=' + encodeURIComponent(token) : '';
@@ -36,16 +39,6 @@
   /** First offer must run after ``hello_ack`` so ``catalog_ids`` matches checkboxes (not ``[]``). */
   var initialRtcStarted = false;
   var initialRtcFallbackTimer = null;
-
-  /** Captured when the last offer JSON is sent (for on-page diagnostics). */
-  var lastOfferCatalogIdsSnapshot = [];
-  var lastOfferRequestedRecvonlyLines = 0;
-  var lastOfferSentAtIso = '';
-
-  /** Filled in-order from ``ontrack`` for the active ``pc``. */
-  var receivedVideoTracksMeta = [];
-
-  var mediaDebugPollTimer = null;
 
   /** Per-stick radial deadzone: zero inside radius ``zone``, smooth rescale toward full ±1 beyond. */
   function stickPairAfterDeadzone(x, y, zone) {
@@ -194,141 +187,6 @@
       pc.signalingState;
   }
 
-  function stopMediaDebugPoll() {
-    if (mediaDebugPollTimer !== null) {
-      clearInterval(mediaDebugPollTimer);
-      mediaDebugPollTimer = null;
-    }
-  }
-
-  /** Parse ``m-line`` indexes for bundled video recv in local offer SDP (SDP order ≈ browser transceiver creation order). */
-  function sdpVideoRecvonlyMidOrder(sdpText) {
-    if (!sdpText || typeof sdpText !== 'string') {
-      return [];
-    }
-    var lines = sdpText.split(/\r?\n/);
-    var mids = [];
-    var i = 0;
-    for (i = 0; i < lines.length; i += 1) {
-      var line = lines[i];
-      if (/^m=video /i.test(line)) {
-        var mid = '(no mid)';
-        var j = i + 1;
-        while (j < lines.length && !/^m=/i.test(lines[j])) {
-          var b = /^a=mid:([^\s]+)/i.exec(lines[j]);
-          if (b) {
-            mid = b[1];
-            break;
-          }
-          j += 1;
-        }
-        mids.push(mid);
-      }
-    }
-    return mids;
-  }
-
-  function refreshMediaDebugPanel() {
-    if (!mediaDebugEl) {
-      return;
-    }
-    if (!pc) {
-      mediaDebugEl.textContent = '—';
-      return;
-    }
-
-    function finish(lines) {
-      mediaDebugEl.textContent = lines.join('\n');
-    }
-
-    var lines = [];
-    lines.push('=== Last outbound offer (snapshot at send time) ===');
-    lines.push('sent (ISO): ' + (lastOfferSentAtIso || 'n/a'));
-    lines.push(
-      'recvonly lines requested (transceivers): ' + lastOfferRequestedRecvonlyLines +
-        ' | catalog_ids: ' +
-        JSON.stringify(lastOfferCatalogIdsSnapshot)
-    );
-    var lsd = pc.localDescription;
-    if (lsd && lsd.sdp) {
-      lines.push('local SDP video mids (creation order): ' + sdpVideoRecvonlyMidOrder(lsd.sdp).join(', '));
-    }
-    lines.push('');
-
-    lines.push('=== ``ontrack`` order (incoming MediaStreamTracks) ===');
-    if (!receivedVideoTracksMeta.length) {
-      lines.push('(no tracks yet)');
-    } else {
-      receivedVideoTracksMeta.forEach(function (r, ix) {
-        lines.push(
-          '  #' + ix + ' mid=' + (r.mid || '?') +
-            ' streamId=' + (r.streamId || '?') +
-            ' trackId=' + (r.trackId || '?')
-        );
-      });
-    }
-
-    pc.getStats(null).then(function (report) {
-      var inbound = [];
-      var seenSsrc = {};
-      report.forEach(function (s) {
-        if (s.type === 'inbound-rtp' && s.kind === 'video' && typeof s.ssrc === 'number') {
-          var k = s.ssrc + ':' + String(s.mid || '');
-          if (seenSsrc[k]) {
-            return;
-          }
-          seenSsrc[k] = true;
-          inbound.push(s);
-        }
-      });
-      inbound.sort(function (a, b) {
-        return (a.mid || '').localeCompare(b.mid || '');
-      });
-
-      lines.push('');
-      lines.push('=== inbound-rtp video (deduped by ssrc+mid) ===');
-      if (!inbound.length) {
-        lines.push('(no inbound-rtp stats yet)');
-      }
-      inbound.forEach(function (s, ix) {
-        lines.push(
-          '  #' + ix +
-            ' ssrc=' + s.ssrc +
-            ' mid=' + (s.mid || '?') +
-            ' mimeType=' + (s.mimeType || '?') +
-            ' codecId=' + (s.codecId || '?') +
-            ' framesDecoded=' + (typeof s.framesDecoded === 'number' ? s.framesDecoded : '?')
-        );
-      });
-
-      lines.push('');
-      lines.push('=== Peer transceivers (video receivers) ===');
-      var txs = pc.getTransceivers();
-      var videoTx = txs.filter(function (t) {
-        return t.receiver && t.receiver.track && t.receiver.track.kind === 'video';
-      });
-      lines.push('count=' + videoTx.length);
-      videoTx.forEach(function (t, ix) {
-        lines.push(
-          '  #' + ix + ' mid=' + (t.mid || '?') + ' recv trackId=' + t.receiver.track.id
-        );
-      });
-
-      var rsd = pc.remoteDescription;
-      if (rsd && rsd.sdp) {
-        lines.push('');
-        lines.push('=== Remote SDP (negotiated ``m=video`` ``a=mid`` order) ===');
-        lines.push(String(sdpVideoRecvonlyMidOrder(rsd.sdp).join(', ') || '(none parsed)'));
-      }
-
-      finish(lines);
-    }).catch(function (e) {
-      lines.push('');
-      lines.push('getStats() failed: ' + (e && e.message ? e.message : String(e)));
-      finish(lines);
-    });
-  }
-
   function selectedCatalogIdsFromCheckboxes() {
     if (!catalogListEl) return [];
     var nodes = catalogListEl.querySelectorAll('input[type="checkbox"][data-catalog-id]:checked');
@@ -400,19 +258,14 @@
       pc.close();
       pc = null;
     }
-    stopMediaDebugPoll();
     stopGamepadLoop();
     controlDc = null;
     videosEl.innerHTML = '';
+    var videoLabelsForSession = readCatalogIdsArray().slice();
     if (streamStatus) {
       streamStatus.textContent = 'Requested ' + numStreams + ' stream(s); negotiating...';
     }
     status.textContent = 'Negotiating WebRTC...';
-
-    receivedVideoTracksMeta = [];
-    if (mediaDebugEl) {
-      mediaDebugEl.textContent = 'negotiating…';
-    }
 
     pc = new RTCPeerConnection({ iceServers: stunTurnServers });
     controlDc = pc.createDataChannel('krabby-control-v1', { ordered: true });
@@ -423,9 +276,6 @@
       stopGamepadLoop();
     };
     pc.addEventListener('connectionstatechange', updateDebug);
-    pc.addEventListener('connectionstatechange', function () {
-      refreshMediaDebugPanel();
-    });
     pc.addEventListener('iceconnectionstatechange', updateDebug);
     pc.addEventListener('signalingstatechange', updateDebug);
     updateDebug();
@@ -437,16 +287,24 @@
       // default behavior (typically the first/combined video track) — duplicated tiles.
       // One-element MediaStream pins this element to exactly one MediaStreamTrack.
       var isolate = new MediaStream([ev.track]);
-      receivedVideoTracksMeta.push({
-        trackId: ev.track.id,
-        streamId: isolate.id,
-        mid: ev.transceiver && typeof ev.transceiver.mid === 'string' ? ev.transceiver.mid : '(pending)'
-      });
-      refreshMediaDebugPanel();
+      var trackIndex = nTracks;
       nTracks += 1;
       if (streamStatus) {
         streamStatus.textContent = 'Receiving ' + nTracks + ' / ' + numStreams + ' video track(s)';
       }
+      var label;
+      if (videoLabelsForSession.length > trackIndex && videoLabelsForSession[trackIndex]) {
+        label = videoLabelsForSession[trackIndex];
+      } else if (videoLabelsForSession.length === 0) {
+        label = numStreams <= 1 ? 'Robot default' : 'Video ' + (trackIndex + 1);
+      } else {
+        label = 'Video ' + (trackIndex + 1);
+      }
+      var tile = document.createElement('div');
+      tile.className = 'video-tile';
+      var cap = document.createElement('div');
+      cap.className = 'video-tile-label';
+      cap.textContent = label;
       var v = document.createElement('video');
       v.autoplay = true;
       v.playsInline = true;
@@ -454,7 +312,9 @@
       v.style.maxWidth = '100%';
       v.style.background = '#111';
       v.srcObject = isolate;
-      videosEl.appendChild(v);
+      tile.appendChild(cap);
+      tile.appendChild(v);
+      videosEl.appendChild(tile);
     };
 
     var i;
@@ -467,28 +327,11 @@
 
     var ans = await new Promise(function (resolve, reject) {
       answerWaiter = { resolve: resolve, reject: reject };
-      lastOfferSentAtIso = new Date().toISOString();
-      lastOfferCatalogIdsSnapshot = readCatalogIdsArray().slice();
-      lastOfferRequestedRecvonlyLines = numStreams;
-      var sdpOut = pc.localDescription.sdp;
-      try {
-        /* eslint-disable no-console */
-        console.warn('[teleop-debug] browser outbound offer:', {
-          recvonlyTransceiverCount: numStreams,
-          catalogIds: lastOfferCatalogIdsSnapshot.slice(),
-          videoMidsInSdpCreationOrder: sdpVideoRecvonlyMidOrder(sdpOut),
-          sdpCharLength: sdpOut.length
-        });
-        /* eslint-enable no-console */
-      } catch (_e) {}
-      ws.send(JSON.stringify(offerPayload(sdpOut)));
+      ws.send(JSON.stringify(offerPayload(pc.localDescription.sdp)));
     });
     await pc.setRemoteDescription({ type: 'answer', sdp: ans.sdp });
     status.textContent = 'Playing';
     updateDebug();
-    refreshMediaDebugPanel();
-    stopMediaDebugPoll();
-    mediaDebugPollTimer = setInterval(refreshMediaDebugPanel, 2000);
   }
 
   function tryStartInitialRtc() {
@@ -520,7 +363,6 @@
       stopGamepadLoop();
     };
     ws.onclose = function () {
-      stopMediaDebugPoll();
       stopGamepadLoop();
     };
 
@@ -589,13 +431,7 @@
     ws.onopen = function () {
       status.textContent = 'Waiting for robot hello…';
       try {
-        var hi = helloPayload();
-        try {
-          /* eslint-disable no-console */
-          console.warn('[teleop-debug] browser outbound hello:', hi);
-          /* eslint-enable no-console */
-        } catch (_e2) {}
-        ws.send(JSON.stringify(hi));
+        ws.send(JSON.stringify(helloPayload()));
       } catch (e) {}
       initialRtcFallbackTimer = setTimeout(function () {
         initialRtcFallbackTimer = null;
