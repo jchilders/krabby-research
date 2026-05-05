@@ -2,17 +2,18 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils import configclass
 
 from parkour_isaaclab.envs.mdp import observations as mdp_observations
 from parkour_isaaclab.envs.mdp import rewards as mdp_rewards
+from parkour_isaaclab.envs.mdp import terminations as mdp_terminations
 from parkour_isaaclab.envs.mdp.parkour_actions import DelayedJointPositionActionCfg
 from parkour_tasks.extreme_parkour_task.config.go2.parkour_mdp_cfg import (
     CommandsCfg,
     EventCfg,
     ParkourEventsCfg,
     StudentObservationsCfg,
-    TerminationsCfg,
 )
 
 
@@ -80,6 +81,27 @@ class CrabHexRewardsCfg:
         weight=-0.5,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_HipMount_HipRevoluteJoint"])},
     )
+    reward_tracking_goal_vel = RewTerm(
+        func=mdp_rewards.reward_tracking_goal_vel,
+        weight=1.5,
+        params={"asset_cfg": SceneEntityCfg("robot"), "parkour_name": "base_parkour"},
+    )
+    reward_tracking_yaw = RewTerm(
+        func=mdp_rewards.reward_tracking_yaw,
+        weight=0.5,
+        params={"asset_cfg": SceneEntityCfg("robot"), "parkour_name": "base_parkour"        },
+    )
+
+
+@configclass
+class CrabHexTerminationsCfg:
+    """Mirror Go2: use one combined termination term."""
+
+    total_terminates = DoneTerm(
+        func=mdp_terminations.terminate_episode,
+        time_out=True,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
 
 
 @configclass
@@ -91,12 +113,21 @@ class CrabHexActionsCfg:
             ".*_Hip_FemurPrismatic_PrismaticJoint",
             ".*_Femur_TibiaPrismatic_PrismaticJoint",
         ],
-        scale=0.25,
+        scale={
+            ".*_HipMount_HipRevoluteJoint": 0.25,
+            # Leg extension authority (too low → little surge; too high → unstable contacts).
+            ".*_Hip_FemurPrismatic_PrismaticJoint": 0.05,
+            ".*_Femur_TibiaPrismatic_PrismaticJoint": 0.05,
+        },
         use_default_offset=True,
         action_delay_steps=[1, 1],
         delay_update_global_steps=24 * 8000,
         history_length=8,
         use_delay=True,
-        clip={".*": (-4.8, 4.8)},
+        clip={
+            ".*_HipMount_HipRevoluteJoint": (-3.5, 3.5),
+            ".*_Hip_FemurPrismatic_PrismaticJoint": (-3.5, 3.5),
+            ".*_Femur_TibiaPrismatic_PrismaticJoint": (-3.5, 3.5),
+        },
     )
 
