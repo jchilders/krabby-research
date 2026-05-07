@@ -582,7 +582,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "Z"
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_FL/FL_Hip>
@@ -600,7 +600,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
             rel physics:body0 = </krabby/Leg_FL/FL_Hip>
             rel physics:body1 = </krabby/Leg_FL/FL_Femur>
@@ -617,7 +617,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
             rel physics:body0 = </krabby/Leg_FL/FL_Femur>
             rel physics:body1 = </krabby/Leg_FL/FL_Tibia>
@@ -634,7 +634,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "Z"
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_FR/FR_Hip>
@@ -652,7 +652,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
             rel physics:body0 = </krabby/Leg_FR/FR_Hip>
             rel physics:body1 = </krabby/Leg_FR/FR_Femur>
@@ -669,7 +669,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
             rel physics:body0 = </krabby/Leg_FR/FR_Femur>
             rel physics:body1 = </krabby/Leg_FR/FR_Tibia>
@@ -686,7 +686,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "Z"
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_RL/RL_Hip>
@@ -704,7 +704,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
             rel physics:body0 = </krabby/Leg_RL/RL_Hip>
             rel physics:body1 = </krabby/Leg_RL/RL_Femur>
@@ -721,7 +721,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
             rel physics:body0 = </krabby/Leg_RL/RL_Femur>
             rel physics:body1 = </krabby/Leg_RL/RL_Tibia>
@@ -738,7 +738,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "Z"
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_RR/RR_Hip>
@@ -756,7 +756,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
             rel physics:body0 = </krabby/Leg_RR/RR_Hip>
             rel physics:body1 = </krabby/Leg_RR/RR_Femur>
@@ -773,7 +773,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
             rel physics:body0 = </krabby/Leg_RR/RR_Femur>
             rel physics:body1 = </krabby/Leg_RR/RR_Tibia>
@@ -790,7 +790,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "Z"
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_ML/ML_Hip>
@@ -808,7 +808,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
             rel physics:body0 = </krabby/Leg_ML/ML_Hip>
             rel physics:body1 = </krabby/Leg_ML/ML_Femur>
@@ -825,7 +825,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
             rel physics:body0 = </krabby/Leg_ML/ML_Femur>
             rel physics:body1 = </krabby/Leg_ML/ML_Tibia>
@@ -842,7 +842,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "Z"
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_MR/MR_Hip>
@@ -860,7 +860,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
             rel physics:body0 = </krabby/Leg_MR/MR_Hip>
             rel physics:body1 = </krabby/Leg_MR/MR_Femur>
@@ -877,7 +877,7 @@ def Xform "krabby" (
         )
         {
             float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 1e15
+            float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
             rel physics:body0 = </krabby/Leg_MR/MR_Femur>
             rel physics:body1 = </krabby/Leg_MR/MR_Tibia>
@@ -910,7 +910,7 @@ def Xform "krabby" (
 
     def Scope "Graphs"
     {
-        def OmniGraph "Velocity_Controller"
+        def OmniGraph "Position_Controller"
         {
             token evaluationMode = "Automatic"
             token evaluator:type = "execution"
@@ -978,13 +978,14 @@ def Xform "krabby" (
                         bool isExecution = 1
                     }
                 )
-                prepend uint inputs:execIn.connect = </krabby/Graphs/Velocity_Controller/OnPlaybackTick.outputs:tick>
+                prepend uint inputs:execIn.connect = </krabby/Graphs/Position_Controller/OnPlaybackTick.outputs:tick>
                 custom int[] inputs:jointIndices
                 custom token[] inputs:jointNames
-                prepend token[] inputs:jointNames.connect = </krabby/Graphs/Velocity_Controller/JointNameArray.outputs:array>
+                prepend token[] inputs:jointNames.connect = </krabby/Graphs/Position_Controller/JointNameArray.outputs:array>
                 custom double[] inputs:positionCommand
-                custom string inputs:robotPath
-                custom rel inputs:targetPrim = </krabby> (
+                prepend double[] inputs:positionCommand.connect = </krabby/Graphs/Position_Controller/JointCommandArray.outputs:array>
+                custom string inputs:robotPath = "/krabby"
+                custom rel inputs:targetPrim (
                     customData = {
                         dictionary omni = {
                             dictionary graph = {
@@ -994,7 +995,6 @@ def Xform "krabby" (
                     }
                 )
                 custom double[] inputs:velocityCommand
-                prepend double[] inputs:velocityCommand.connect = </krabby/Graphs/Velocity_Controller/JointCommandArray.outputs:array>
                 token node:type = "isaacsim.core.nodes.IsaacArticulationController"
                 int node:typeVersion = 1
             }
