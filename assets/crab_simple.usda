@@ -584,6 +584,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "Z"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_FL/FL_Hip>
             float physics:breakForce = 3.4028235e38
@@ -602,6 +604,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_FL/FL_Hip>
             rel physics:body1 = </krabby/Leg_FL/FL_Femur>
             float physics:breakForce = 3.4028235e38
@@ -619,6 +623,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_FL/FL_Femur>
             rel physics:body1 = </krabby/Leg_FL/FL_Tibia>
             float physics:breakForce = 3.4028235e38
@@ -636,6 +642,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "Z"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_FR/FR_Hip>
             float physics:breakForce = 3.4028235e38
@@ -654,6 +662,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_FR/FR_Hip>
             rel physics:body1 = </krabby/Leg_FR/FR_Femur>
             float physics:breakForce = 3.4028235e38
@@ -671,6 +681,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_FR/FR_Femur>
             rel physics:body1 = </krabby/Leg_FR/FR_Tibia>
             float physics:breakForce = 3.4028235e38
@@ -688,6 +700,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "Z"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_RL/RL_Hip>
             float physics:breakForce = 3.4028235e38
@@ -706,6 +720,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_RL/RL_Hip>
             rel physics:body1 = </krabby/Leg_RL/RL_Femur>
             float physics:breakForce = 3.4028235e38
@@ -723,6 +739,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_RL/RL_Femur>
             rel physics:body1 = </krabby/Leg_RL/RL_Tibia>
             float physics:breakForce = 3.4028235e38
@@ -740,6 +758,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "Z"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_RR/RR_Hip>
             float physics:breakForce = 3.4028235e38
@@ -758,6 +778,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_RR/RR_Hip>
             rel physics:body1 = </krabby/Leg_RR/RR_Femur>
             float physics:breakForce = 3.4028235e38
@@ -775,6 +797,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_RR/RR_Femur>
             rel physics:body1 = </krabby/Leg_RR/RR_Tibia>
             float physics:breakForce = 3.4028235e38
@@ -792,6 +816,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "Z"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_ML/ML_Hip>
             float physics:breakForce = 3.4028235e38
@@ -810,6 +836,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_ML/ML_Hip>
             rel physics:body1 = </krabby/Leg_ML/ML_Femur>
             float physics:breakForce = 3.4028235e38
@@ -827,6 +855,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_ML/ML_Femur>
             rel physics:body1 = </krabby/Leg_ML/ML_Tibia>
             float physics:breakForce = 3.4028235e38
@@ -844,6 +874,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "Z"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_MR/MR_Hip>
             float physics:breakForce = 3.4028235e38
@@ -862,6 +894,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_MR/MR_Hip>
             rel physics:body1 = </krabby/Leg_MR/MR_Femur>
             float physics:breakForce = 3.4028235e38
@@ -879,6 +913,8 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 100000
             float drive:angular:physics:stiffness = 500000
             uniform token physics:axis = "X"
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_MR/MR_Femur>
             rel physics:body1 = </krabby/Leg_MR/MR_Tibia>
             float physics:breakForce = 3.4028235e38
