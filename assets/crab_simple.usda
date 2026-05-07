@@ -7,8 +7,8 @@
                 double radius = 5
             }
             dictionary Perspective = {
-                double3 position = (5.003947655368472, -1.9398383877667027, 4.071541286992596)
-                double3 target = (-0.0000036135257550640176, 0.000007544124470904023, 0.000008658511799097823)
+                double3 position = (7.59322740928944, -5.5307511890275105, 7.849931929740069)
+                double3 target = (-0.000004844810097992536, 0.000008416391422905178, 0.000008098486583563158)
             }
             dictionary Right = {
                 double3 position = (0, -5, 0)
@@ -30,7 +30,7 @@
         dictionary renderSettings = {
         }
     }
-    defaultPrim = "World"
+    defaultPrim = "krabby"
     endTimeCode = 1000000
     metersPerUnit = 1
     startTimeCode = 0
@@ -44,9 +44,9 @@ def Xform "World"
         prepend apiSchemas = ["PhysxSceneAPI"]
     )
     {
-        vector3f physics:gravityDirection = (0, 0, 0)
-        uniform token physxScene:broadphaseType = "MBP"
-        bool physxScene:enableGPUDynamics = 0
+        vector3f physics:gravityDirection = (0, 0, -1)
+        uniform token physxScene:broadphaseType = "GPU"
+        bool physxScene:enableGPUDynamics = 1
     }
 
     def Xform "GroundPlane"
@@ -89,15 +89,15 @@ def Xform "World"
         float3[] extent = [(-50, -50, -50), (50, 50, 50)]
         color3f inputs:color = (0.5, 1, 0.5)
         float inputs:intensity = 1000000
-        float inputs:radius = 0.1
+        float inputs:radius = 0.5
         float inputs:shaping:cone:angle = 45
         float inputs:shaping:cone:softness = 0.1
         float inputs:shaping:focus
         color3f inputs:shaping:focusTint
         asset inputs:shaping:ies:file
-        quatd xformOp:orient = (0.9392052823774539, 0.16881523910203375, -0.04029488237251362, -0.2962620040703764)
+        quatd xformOp:orient = (1, 0, 0, 0)
         double3 xformOp:scale = (1, 1, 1)
-        double3 xformOp:translate = (-0.5276971940893591, 0.027569798479977203, 6.631582252398207)
+        double3 xformOp:translate = (0, 0, 7)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
     }
 
@@ -106,7 +106,8 @@ def Xform "World"
     )
     {
         float inputs:angle = 1
-        float inputs:intensity = 0
+        float inputs:colorTemperature = 6500
+        float inputs:intensity = 300
         float inputs:shaping:cone:angle = 180
         float inputs:shaping:cone:softness
         float inputs:shaping:focus
@@ -189,6 +190,7 @@ def Xform "krabby" (
     prepend apiSchemas = ["PhysicsArticulationRootAPI", "PhysxArticulationAPI"]
 )
 {
+    rel proxyPrim = None
     quatd xformOp:orient = (1, 0, 0, 0)
     double3 xformOp:scale = (1, 1, 1)
     double3 xformOp:translate = (0, 0, 1)
@@ -581,11 +583,9 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsDriveAPI:angular"]
         )
         {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "Z"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_FL/FL_Hip>
             float physics:breakForce = 3.4028235e38
@@ -595,17 +595,17 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
         }
 
         def PhysicsRevoluteJoint "FL_Hip_Femur_RevoluteJoint" (
             prepend apiSchemas = ["PhysicsDriveAPI:angular"]
         )
         {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "X"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_FL/FL_Hip>
             rel physics:body1 = </krabby/Leg_FL/FL_Femur>
             float physics:breakForce = 3.4028235e38
@@ -614,17 +614,17 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -20
+            float physics:upperLimit = 20
         }
 
         def PhysicsRevoluteJoint "FL_Femur_Tibia_RevoluteJoint" (
             prepend apiSchemas = ["PhysicsDriveAPI:angular"]
         )
         {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "X"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_FL/FL_Femur>
             rel physics:body1 = </krabby/Leg_FL/FL_Tibia>
             float physics:breakForce = 3.4028235e38
@@ -633,17 +633,17 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0, 0.4)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -20
+            float physics:upperLimit = 20
         }
 
         def PhysicsRevoluteJoint "FR_Body_Hip_RevoluteJoint" (
             prepend apiSchemas = ["PhysicsDriveAPI:angular"]
         )
         {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "Z"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_FR/FR_Hip>
             float physics:breakForce = 3.4028235e38
@@ -653,17 +653,17 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, -0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
         }
 
         def PhysicsRevoluteJoint "FR_Hip_Femur_RevoluteJoint" (
             prepend apiSchemas = ["PhysicsDriveAPI:angular"]
         )
         {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "X"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_FR/FR_Hip>
             rel physics:body1 = </krabby/Leg_FR/FR_Femur>
             float physics:breakForce = 3.4028235e38
@@ -672,17 +672,17 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, -0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -20
+            float physics:upperLimit = 20
         }
 
         def PhysicsRevoluteJoint "FR_Femur_Tibia_RevoluteJoint" (
             prepend apiSchemas = ["PhysicsDriveAPI:angular"]
         )
         {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "X"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_FR/FR_Femur>
             rel physics:body1 = </krabby/Leg_FR/FR_Tibia>
             float physics:breakForce = 3.4028235e38
@@ -691,133 +691,17 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0, 0.4)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-        }
-
-        def PhysicsRevoluteJoint "RL_Body_Hip_RevoluteJoint" (
-            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
-        )
-        {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
-            uniform token physics:axis = "Z"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
-            rel physics:body0 = </krabby/body>
-            rel physics:body1 = </krabby/Leg_RL/RL_Hip>
-            float physics:breakForce = 3.4028235e38
-            float physics:breakTorque = 3.4028235e38
-            bool physics:collisionEnabled = 1
-            point3f physics:localPos0 = (0.49929675, -0.52, 0.2)
-            point3f physics:localPos1 = (0, 0.4, 0)
-            quatf physics:localRot0 = (1, 0, 0, 0)
-            quatf physics:localRot1 = (1, 0, 0, 0)
-        }
-
-        def PhysicsRevoluteJoint "RL_Hip_Femur_RevoluteJoint" (
-            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
-        )
-        {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
-            uniform token physics:axis = "X"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
-            rel physics:body0 = </krabby/Leg_RL/RL_Hip>
-            rel physics:body1 = </krabby/Leg_RL/RL_Femur>
-            float physics:breakForce = 3.4028235e38
-            float physics:breakTorque = 3.4028235e38
-            point3f physics:localPos0 = (-0.5, 0, -0.38151386)
-            point3f physics:localPos1 = (0, 0.4, 0)
-            quatf physics:localRot0 = (1, 0, 0, 0)
-            quatf physics:localRot1 = (1, 0, 0, 0)
-        }
-
-        def PhysicsRevoluteJoint "RL_Femur_Tibia_RevoluteJoint" (
-            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
-        )
-        {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
-            uniform token physics:axis = "X"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
-            rel physics:body0 = </krabby/Leg_RL/RL_Femur>
-            rel physics:body1 = </krabby/Leg_RL/RL_Tibia>
-            float physics:breakForce = 3.4028235e38
-            float physics:breakTorque = 3.4028235e38
-            point3f physics:localPos0 = (0.5, -0.470481, -0.1)
-            point3f physics:localPos1 = (0, 0, 0.4)
-            quatf physics:localRot0 = (1, 0, 0, 0)
-            quatf physics:localRot1 = (1, 0, 0, 0)
-        }
-
-        def PhysicsRevoluteJoint "RR_Body_Hip_RevoluteJoint" (
-            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
-        )
-        {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
-            uniform token physics:axis = "Z"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
-            rel physics:body0 = </krabby/body>
-            rel physics:body1 = </krabby/Leg_RR/RR_Hip>
-            float physics:breakForce = 3.4028235e38
-            float physics:breakTorque = 3.4028235e38
-            bool physics:collisionEnabled = 1
-            point3f physics:localPos0 = (0.49929675, 0.52, 0.2)
-            point3f physics:localPos1 = (0, -0.4, 0)
-            quatf physics:localRot0 = (1, 0, 0, 0)
-            quatf physics:localRot1 = (1, 0, 0, 0)
-        }
-
-        def PhysicsRevoluteJoint "RR_Hip_Femur_RevoluteJoint" (
-            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
-        )
-        {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
-            uniform token physics:axis = "X"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
-            rel physics:body0 = </krabby/Leg_RR/RR_Hip>
-            rel physics:body1 = </krabby/Leg_RR/RR_Femur>
-            float physics:breakForce = 3.4028235e38
-            float physics:breakTorque = 3.4028235e38
-            point3f physics:localPos0 = (-0.5, 0, -0.38151386)
-            point3f physics:localPos1 = (0, -0.4, 0)
-            quatf physics:localRot0 = (1, 0, 0, 0)
-            quatf physics:localRot1 = (1, 0, 0, 0)
-        }
-
-        def PhysicsRevoluteJoint "RR_Femur_Tibia_RevoluteJoint" (
-            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
-        )
-        {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
-            uniform token physics:axis = "X"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
-            rel physics:body0 = </krabby/Leg_RR/RR_Femur>
-            rel physics:body1 = </krabby/Leg_RR/RR_Tibia>
-            float physics:breakForce = 3.4028235e38
-            float physics:breakTorque = 3.4028235e38
-            point3f physics:localPos0 = (0.5, 0.470481, -0.1)
-            point3f physics:localPos1 = (0, 0, 0.4)
-            quatf physics:localRot0 = (1, 0, 0, 0)
-            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -20
+            float physics:upperLimit = 20
         }
 
         def PhysicsRevoluteJoint "ML_Body_Hip_RevoluteJoint" (
             prepend apiSchemas = ["PhysicsDriveAPI:angular"]
         )
         {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "Z"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_ML/ML_Hip>
             float physics:breakForce = 3.4028235e38
@@ -827,17 +711,17 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
         }
 
         def PhysicsRevoluteJoint "ML_Hip_Femur_RevoluteJoint" (
             prepend apiSchemas = ["PhysicsDriveAPI:angular"]
         )
         {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "X"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_ML/ML_Hip>
             rel physics:body1 = </krabby/Leg_ML/ML_Femur>
             float physics:breakForce = 3.4028235e38
@@ -846,17 +730,17 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -20
+            float physics:upperLimit = 20
         }
 
         def PhysicsRevoluteJoint "ML_Femur_Tibia_RevoluteJoint" (
             prepend apiSchemas = ["PhysicsDriveAPI:angular"]
         )
         {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "X"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_ML/ML_Femur>
             rel physics:body1 = </krabby/Leg_ML/ML_Tibia>
             float physics:breakForce = 3.4028235e38
@@ -865,17 +749,17 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0, 0.4)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -20
+            float physics:upperLimit = 20
         }
 
         def PhysicsRevoluteJoint "MR_Body_Hip_RevoluteJoint" (
             prepend apiSchemas = ["PhysicsDriveAPI:angular"]
         )
         {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "Z"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
             rel physics:body0 = </krabby/body>
             rel physics:body1 = </krabby/Leg_MR/MR_Hip>
             float physics:breakForce = 3.4028235e38
@@ -885,17 +769,17 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, -0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
         }
 
         def PhysicsRevoluteJoint "MR_Hip_Femur_RevoluteJoint" (
             prepend apiSchemas = ["PhysicsDriveAPI:angular"]
         )
         {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "X"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_MR/MR_Hip>
             rel physics:body1 = </krabby/Leg_MR/MR_Femur>
             float physics:breakForce = 3.4028235e38
@@ -904,17 +788,17 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, -0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -20
+            float physics:upperLimit = 20
         }
 
         def PhysicsRevoluteJoint "MR_Femur_Tibia_RevoluteJoint" (
             prepend apiSchemas = ["PhysicsDriveAPI:angular"]
         )
         {
-            float drive:angular:physics:damping = 100000
-            float drive:angular:physics:stiffness = 500000
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "X"
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
             rel physics:body0 = </krabby/Leg_MR/MR_Femur>
             rel physics:body1 = </krabby/Leg_MR/MR_Tibia>
             float physics:breakForce = 3.4028235e38
@@ -923,6 +807,124 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0, 0.4)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -20
+            float physics:upperLimit = 20
+        }
+
+        def PhysicsRevoluteJoint "RL_Body_Hip_RevoluteJoint" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
+        )
+        {
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
+            uniform token physics:axis = "Z"
+            rel physics:body0 = </krabby/body>
+            rel physics:body1 = </krabby/Leg_RL/RL_Hip>
+            float physics:breakForce = 3.4028235e38
+            float physics:breakTorque = 3.4028235e38
+            bool physics:collisionEnabled = 1
+            point3f physics:localPos0 = (0.49929675, -0.52, 0.2)
+            point3f physics:localPos1 = (0, 0.4, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
+        }
+
+        def PhysicsRevoluteJoint "RL_Hip_Femur_RevoluteJoint" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
+        )
+        {
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
+            uniform token physics:axis = "X"
+            rel physics:body0 = </krabby/Leg_RL/RL_Hip>
+            rel physics:body1 = </krabby/Leg_RL/RL_Femur>
+            float physics:breakForce = 3.4028235e38
+            float physics:breakTorque = 3.4028235e38
+            point3f physics:localPos0 = (-0.5, 0, -0.38151386)
+            point3f physics:localPos1 = (0, 0.4, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -20
+            float physics:upperLimit = 20
+        }
+
+        def PhysicsRevoluteJoint "RL_Femur_Tibia_RevoluteJoint" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
+        )
+        {
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
+            uniform token physics:axis = "X"
+            rel physics:body0 = </krabby/Leg_RL/RL_Femur>
+            rel physics:body1 = </krabby/Leg_RL/RL_Tibia>
+            float physics:breakForce = 3.4028235e38
+            float physics:breakTorque = 3.4028235e38
+            point3f physics:localPos0 = (0.5, -0.470481, -0.1)
+            point3f physics:localPos1 = (0, 0, 0.4)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -20
+            float physics:upperLimit = 20
+        }
+
+        def PhysicsRevoluteJoint "RR_Body_Hip_RevoluteJoint" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
+        )
+        {
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
+            uniform token physics:axis = "Z"
+            rel physics:body0 = </krabby/body>
+            rel physics:body1 = </krabby/Leg_RR/RR_Hip>
+            float physics:breakForce = 3.4028235e38
+            float physics:breakTorque = 3.4028235e38
+            bool physics:collisionEnabled = 1
+            point3f physics:localPos0 = (0.49929675, 0.52, 0.2)
+            point3f physics:localPos1 = (0, -0.4, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -14
+            float physics:upperLimit = 14
+        }
+
+        def PhysicsRevoluteJoint "RR_Hip_Femur_RevoluteJoint" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
+        )
+        {
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
+            uniform token physics:axis = "X"
+            rel physics:body0 = </krabby/Leg_RR/RR_Hip>
+            rel physics:body1 = </krabby/Leg_RR/RR_Femur>
+            float physics:breakForce = 3.4028235e38
+            float physics:breakTorque = 3.4028235e38
+            point3f physics:localPos0 = (-0.5, 0, -0.38151386)
+            point3f physics:localPos1 = (0, -0.4, 0)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -20
+            float physics:upperLimit = 20
+        }
+
+        def PhysicsRevoluteJoint "RR_Femur_Tibia_RevoluteJoint" (
+            prepend apiSchemas = ["PhysicsDriveAPI:angular"]
+        )
+        {
+            float drive:angular:physics:damping = 50000
+            float drive:angular:physics:stiffness = 800000
+            uniform token physics:axis = "X"
+            rel physics:body0 = </krabby/Leg_RR/RR_Femur>
+            rel physics:body1 = </krabby/Leg_RR/RR_Tibia>
+            float physics:breakForce = 3.4028235e38
+            float physics:breakTorque = 3.4028235e38
+            point3f physics:localPos0 = (0.5, 0.470481, -0.1)
+            point3f physics:localPos1 = (0, 0, 0.4)
+            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot1 = (1, 0, 0, 0)
+            float physics:lowerLimit = -20
+            float physics:upperLimit = 20
         }
     }
 
@@ -1021,7 +1023,7 @@ def Xform "krabby" (
                 custom double[] inputs:positionCommand
                 prepend double[] inputs:positionCommand.connect = </krabby/Graphs/Position_Controller/JointCommandArray.outputs:array>
                 custom string inputs:robotPath = "/krabby"
-                custom rel inputs:targetPrim (
+                custom rel inputs:targetPrim = </krabby> (
                     customData = {
                         dictionary omni = {
                             dictionary graph = {
@@ -1056,18 +1058,18 @@ def Xform "krabby" (
                 custom token inputs:input3 = "FR_Body_Hip_RevoluteJoint"
                 custom token inputs:input4 = "FR_Hip_Femur_RevoluteJoint"
                 custom token inputs:input5 = "FR_Femur_Tibia_RevoluteJoint"
-                custom token inputs:input6 = "RL_Body_Hip_RevoluteJoint"
-                custom token inputs:input7 = "RL_Hip_Femur_RevoluteJoint"
-                custom token inputs:input8 = "RL_Femur_Tibia_RevoluteJoint"
-                custom token inputs:input9 = "RR_Body_Hip_RevoluteJoint"
-                custom token inputs:input10 = "RR_Hip_Femur_RevoluteJoint"
-                custom token inputs:input11 = "RR_Femur_Tibia_RevoluteJoint"
-                custom token inputs:input12 = "ML_Body_Hip_RevoluteJoint"
-                custom token inputs:input13 = "ML_Hip_Femur_RevoluteJoint"
-                custom token inputs:input14 = "ML_Femur_Tibia_RevoluteJoint"
-                custom token inputs:input15 = "MR_Body_Hip_RevoluteJoint"
-                custom token inputs:input16 = "MR_Hip_Femur_RevoluteJoint"
-                custom token inputs:input17 = "MR_Femur_Tibia_RevoluteJoint"
+                custom token inputs:input6 = "ML_Body_Hip_RevoluteJoint"
+                custom token inputs:input7 = "ML_Hip_Femur_RevoluteJoint"
+                custom token inputs:input8 = "ML_Femur_Tibia_RevoluteJoint"
+                custom token inputs:input9 = "MR_Body_Hip_RevoluteJoint"
+                custom token inputs:input10 = "MR_Hip_Femur_RevoluteJoint"
+                custom token inputs:input11 = "MR_Femur_Tibia_RevoluteJoint"
+                custom token inputs:input12 = "RL_Body_Hip_RevoluteJoint"
+                custom token inputs:input13 = "RL_Hip_Femur_RevoluteJoint"
+                custom token inputs:input14 = "RL_Femur_Tibia_RevoluteJoint"
+                custom token inputs:input15 = "RR_Body_Hip_RevoluteJoint"
+                custom token inputs:input16 = "RR_Hip_Femur_RevoluteJoint"
+                custom token inputs:input17 = "RR_Femur_Tibia_RevoluteJoint"
                 token node:type = "omni.graph.nodes.ConstructArray"
                 int node:typeVersion = 1
                 custom token outputs:array

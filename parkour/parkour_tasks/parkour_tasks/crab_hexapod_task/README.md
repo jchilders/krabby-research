@@ -45,15 +45,17 @@ cd "$KRABBY_ROOT/IsaacLab"
 ./isaaclab.sh -p ...
 ```
 
-### Hexapod asset path
+### Hexapod asset (canonical)
 
-The crab hexapod USD is under `krabby-research/assets/crab_hex.usda`. Point the env variable at it **before** running any training or play script:
+This task uses **only** [`krabby-research/assets/crab_simple.usda`](file:///home/sanjay/Projects/krabby/krabby-research/assets/crab_simple.usda). The scene config resolves that path automatically from the repo layout (see `_crab_simple_usd_path()` in `crab_hex_scene_cfg.py`).
+
+Optional override (Docker or non-standard layouts):
 
 ```bash
-export KRABBY_HEX_USD_PATH="$KRABBY_ROOT/krabby-research/assets/crab_hex.usda"
+export KRABBY_HEX_USD_PATH="$KRABBY_ROOT/krabby-research/assets/crab_simple.usda"
 ```
 
-You can later freeze a binary `.usd` export and point `KRABBY_HEX_USD_PATH` at that file for deployment / Docker, but all training and play examples in this README work with the `.usda`.
+You can point `KRABBY_HEX_USD_PATH` at a flattened `.usd` export for deployment; the default authoring file is `crab_simple.usda`.
 
 ---
 
@@ -67,8 +69,8 @@ You can later freeze a binary `.usd` export and point `KRABBY_HEX_USD_PATH` at t
 
 - **Scene / robot / sensors:**  
   `parkour_tasks/crab_hexapod_task/config/crab_hex/crab_hex_scene_cfg.py`  
-  - Loads the hexapod from `KRABBY_HEX_USD_PATH`  
-  - Sets solver iterations, stand pose, hex-specific actuators, height scanner (and depth camera for the student).
+  - Loads **`crab_simple.usda`** by default (or `KRABBY_HEX_USD_PATH` if set); USD default prim `krabby` composes under **`{ENV_REGEX_NS}/Robot`**, base link **`body`** at **`.../Robot/body`**
+  - Sets solver iterations, reset pose, 18-DOF revolute actuators, height scanner and (student) depth camera on `krabby/body`
 
 - **Env configuration (teacher + student MDP):**  
   `parkour_tasks/crab_hexapod_task/config/crab_hex/crab_hex_env_cfg.py`  
@@ -85,7 +87,7 @@ You can later freeze a binary `.usd` export and point `KRABBY_HEX_USD_PATH` at t
 - **Rewards and actions for the hexapod:**  
   `parkour_tasks/crab_hexapod_task/config/crab_hex/agents/parkour_mdp_cfg.py`
   - `CrabHexRewardsCfg` wires high-level reward terms into the Isaac Lab reward functions in `parkour_isaaclab/envs/mdp/rewards.py`:
-    - `reward_collision` (weight **-10.0**): collisions on `Plate_Bottom`, tibias, and femurs  
+    - `reward_collision` (weight **-10.0**): collisions on `body`, tibias, and femurs  
     - `reward_feet_edge` (weight **-1.0**): feet near terrain edges on the parkour course  
     - `reward_feet_stumble` (weight **-1.0**): stumble signal from tibia contacts  
     - `reward_hip_pos` (weight **-0.5**): regularize hip revolute positions  
@@ -95,14 +97,14 @@ You can later freeze a binary `.usd` export and point `KRABBY_HEX_USD_PATH` at t
     `total_terminates` DoneTerm using `terminate_episode`, which OR-combines
     roll/pitch cutoff, time-out, parkour goal reached, and base-too-low.
   - `CrabHexActionsCfg` defines:
-    - A **delayed joint position** action over the three actuated DOFs per leg (hip revolute, hip–femur prismatic, femur–tibia prismatic), with tuned scales, history length, and clip ranges.
+    - A **delayed joint position** action over **18 revolute DOFs** (three per leg: body–hip yaw, hip–femur, femur–tibia), with tuned scales, history length, and clip ranges.
 
 The **low-level** math for each reward term (errors, masks, exponents, etc.) is implemented in  
 `parkour_isaaclab/envs/mdp/rewards.py`; `CrabHexRewardsCfg` just chooses which ones to use, with what weights and bodies/joints.
 
 ### Design notes (reward intuition)
 
-- `reward_collision` (**-10.0**): a strong penalty so the policy quickly learns “stay out of trouble” (plate/tibia/femur contacts are bad on the parkour course).
+- `reward_collision` (**-10.0**): a strong penalty so the policy quickly learns “stay out of trouble” (chassis `body` / tibia / femur contacts are bad on the parkour course).
 - `reward_feet_edge` (**-1.0**) and `reward_feet_stumble` (**-1.0**): gentler penalties to discourage edge scraping and toe/tibia stumbles without making the task overly brittle.
 - `reward_hip_pos` (**-0.5**): a light regularizer on hip revolute angles to keep the crab from drifting into extreme / unsafe joint configurations while still allowing motion freedom.
 - `reward_tracking_goal_vel` (**+1.5**): the main “progress” term—it rewards moving with the desired parkour goal motion along the course.
@@ -118,7 +120,8 @@ All commands in this section assume:
 export KRABBY_ROOT=/home/sanjay/Projects/krabby
 conda activate env_isaaclab
 export PYTHONPATH="$KRABBY_ROOT/krabby-research/parkour/parkour_tasks:$KRABBY_ROOT/krabby-research/parkour:${PYTHONPATH}"
-export KRABBY_HEX_USD_PATH="$KRABBY_ROOT/krabby-research/assets/crab_hex.usda"
+# Optional if the default path resolver finds crab_simple.usda:
+# export KRABBY_HEX_USD_PATH="$KRABBY_ROOT/krabby-research/assets/crab_simple.usda"
 cd "$KRABBY_ROOT/krabby-research/parkour"
 ```
 
@@ -275,4 +278,4 @@ cd "$KRABBY_ROOT/IsaacLab"
 ```
 
 The hexapod task mirrors this layout (Gym registrations, env cfgs, reward wiring, and train/play scripts), so anyone familiar with the Go2 extreme parkour examples should find the crab hexapod task immediately recognizable.  
-The only extra requirement is to set **`KRABBY_HEX_USD_PATH`** to point at the `crab_hex` USD before training or playing. 
+Training uses **`crab_simple.usda`** only; set **`KRABBY_HEX_USD_PATH`** only if your checkout or container layout is non-standard. 

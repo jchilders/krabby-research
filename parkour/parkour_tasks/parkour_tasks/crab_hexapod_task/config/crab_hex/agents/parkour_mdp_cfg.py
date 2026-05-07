@@ -59,7 +59,7 @@ class CrabHexRewardsCfg:
         func=mdp_rewards.reward_collision,
         weight=-10.0,
         params={
-            "sensor_cfg": SceneEntityCfg("robot", body_names=["Plate_Bottom", ".*_Tibia", ".*_Femur"]),
+            "sensor_cfg": SceneEntityCfg("robot", body_names=["body", ".*_Tibia", ".*_Femur"]),
         },
     )
     reward_feet_edge = RewTerm(
@@ -79,7 +79,7 @@ class CrabHexRewardsCfg:
     reward_hip_pos = RewTerm(
         func=mdp_rewards.reward_hip_pos,
         weight=-0.5,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_HipMount_HipRevoluteJoint"])},
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_Body_Hip_RevoluteJoint"])},
     )
     reward_tracking_goal_vel = RewTerm(
         func=mdp_rewards.reward_tracking_goal_vel,
@@ -89,7 +89,7 @@ class CrabHexRewardsCfg:
     reward_tracking_yaw = RewTerm(
         func=mdp_rewards.reward_tracking_yaw,
         weight=0.5,
-        params={"asset_cfg": SceneEntityCfg("robot"), "parkour_name": "base_parkour"        },
+        params={"asset_cfg": SceneEntityCfg("robot"), "parkour_name": "base_parkour"},
     )
 
 
@@ -109,15 +109,14 @@ class CrabHexActionsCfg:
     joint_pos = DelayedJointPositionActionCfg(
         asset_name="robot",
         joint_names=[
-            ".*_HipMount_HipRevoluteJoint",
-            ".*_Hip_FemurPrismatic_PrismaticJoint",
-            ".*_Femur_TibiaPrismatic_PrismaticJoint",
+            ".*_Body_Hip_RevoluteJoint",
+            ".*_Hip_Femur_RevoluteJoint",
+            ".*_Femur_Tibia_RevoluteJoint",
         ],
         scale={
-            ".*_HipMount_HipRevoluteJoint": 0.25,
-            # Leg extension authority (too low → little surge; too high → unstable contacts).
-            ".*_Hip_FemurPrismatic_PrismaticJoint": 0.05,
-            ".*_Femur_TibiaPrismatic_PrismaticJoint": 0.05,
+            ".*_Body_Hip_RevoluteJoint": 0.2,
+            ".*_Hip_Femur_RevoluteJoint": 0.25,
+            ".*_Femur_Tibia_RevoluteJoint": 0.25,
         },
         use_default_offset=True,
         action_delay_steps=[1, 1],
@@ -125,9 +124,9 @@ class CrabHexActionsCfg:
         history_length=8,
         use_delay=True,
         clip={
-            ".*_HipMount_HipRevoluteJoint": (-3.5, 3.5),
-            ".*_Hip_FemurPrismatic_PrismaticJoint": (-3.5, 3.5),
-            ".*_Femur_TibiaPrismatic_PrismaticJoint": (-3.5, 3.5),
+            ".*_Body_Hip_RevoluteJoint": (-1.0, 1.0),
+            ".*_Hip_Femur_RevoluteJoint": (-1.0, 1.0),
+            ".*_Femur_Tibia_RevoluteJoint": (-1.0, 1.0),
         },
     )
 

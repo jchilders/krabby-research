@@ -51,7 +51,7 @@ class ExtremeParkourObservations(ManagerTermBase):
         self.env = env
         # Support both "base" (Go2) and "base_link" (e.g. crab_hex). find_bodies raises if no match.
         base_bodies = None
-        for name in ("base", "base_link"):
+        for name in ("base", "base_link", "body"):
             try:
                 base_bodies = self.asset.find_bodies(name)
                 if base_bodies:

@@ -41,7 +41,7 @@ class CrabHexTeacherEnvCfg(UnitreeGo2TeacherParkourEnvCfg):
         self.scene.contact_forces = dummy
         super().__post_init__()
         self.scene.contact_forces = orig
-        base_body_cfg = SceneEntityCfg("robot", body_names="Plate_Bottom")
+        base_body_cfg = SceneEntityCfg("robot", body_names="body")
         if self.events.base_external_force_torque is not None:
             self.events.base_external_force_torque.params["asset_cfg"] = base_body_cfg
         if self.events.randomize_rigid_body_mass is not None:
@@ -117,7 +117,7 @@ class CrabHexStudentEnvCfg(UnitreeGo2StudentParkourEnvCfg):
         self.scene.contact_forces = dummy
         super().__post_init__()
         self.scene.contact_forces = orig
-        base_body_cfg = SceneEntityCfg("robot", body_names="Plate_Bottom")
+        base_body_cfg = SceneEntityCfg("robot", body_names="body")
         if self.events.base_external_force_torque is not None:
             self.events.base_external_force_torque.params["asset_cfg"] = base_body_cfg
         if self.events.randomize_rigid_body_mass is not None:

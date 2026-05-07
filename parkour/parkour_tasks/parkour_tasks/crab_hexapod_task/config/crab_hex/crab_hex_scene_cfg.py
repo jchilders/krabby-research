@@ -1,7 +1,7 @@
 import os
+from pathlib import Path
 
 import isaaclab.sim as sim_utils
-from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg
 from isaaclab.utils import configclass
 
@@ -11,25 +11,26 @@ from parkour_tasks.extreme_parkour_task.config.go2.parkour_student_cfg import Pa
 from parkour_tasks.extreme_parkour_task.config.go2.parkour_teacher_cfg import ParkourTeacherSceneCfg
 
 
-def _crab_hex_usd_path() -> str:
-    return os.environ.get("KRABBY_HEX_USD_PATH", "/workspace/assets/crab_hex.usd")
+def _crab_simple_usd_path() -> str:
+    """USD for crab_hexapod_task. Override with KRABBY_HEX_USD_PATH; default is repo `crab_simple.usda` only."""
+    override = os.environ.get("KRABBY_HEX_USD_PATH")
+    if override:
+        return override
+    # .../krabby-research/parkour/parkour_tasks/parkour_tasks/crab_hexapod_task/config/crab_hex/this_file.py
+    repo_root = Path(__file__).resolve().parents[6]
+    default = repo_root / "assets" / "crab_simple.usda"
+    if default.is_file():
+        return str(default)
+    return "/workspace/krabby-research/assets/crab_simple.usda"
 
 
-def _crab_hex_robot_cfg() -> ArticulationCfg:
-    """Hexapod: explicit PD (ParkourDCMotor) so PhysX does not double-actuate with USD drives."""
-    _krabby_root_rot_wxyz = (
-        0.9271838665008545,
-        0.0,
-        0.0,
-        -0.37460654973983765,
-    )
-    # Nominal stand stroke (within USD limits ±0.2 / ±0.25); see init_state comment below.
-    _stand_hip_femur_prismatic = 0.10
-    _stand_femur_tibia_prismatic = 0.12
+def _crab_simple_robot_cfg() -> ArticulationCfg:
+    """``crab_simple.usda`` (``defaultPrim = "krabby"``): reference composes into ``{ENV_REGEX_NS}/Robot`` — leave
+    ``articulation_root_prim_path`` unset so Isaac Lab discovers the root on ``Robot``. Base link ``body``."""
     return ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
-            usd_path=_crab_hex_usd_path(),
+            usd_path=_crab_simple_usd_path(),
             activate_contact_sensors=True,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
@@ -42,22 +43,15 @@ def _crab_hex_robot_cfg() -> ArticulationCfg:
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
                 enabled_self_collisions=False,
-                # Closed-loop legs (excludeFromArticulation pins in USD) need more solver work with stiff drives.
                 solver_position_iteration_count=32,
                 solver_velocity_iteration_count=8,
             ),
         ),
-        # Root pos.z matches KrabbyUno's USD xformOp:translate (0, 0, 1.25). USD drive targetPosition is 0 on
-        # prismatics, but that stroke is mid-range in [-0.2,0.2]/[-0.25,0.25] — not a guaranteed stand: with all
-        # prismatics at 0 the closed-loop legs often collapse so the chassis rests on the terrain ("belly").
-        # Positive extension on both prismatic DOFs per leg gives a nominal load-bearing stand at reset.
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 1.25),
-            rot=_krabby_root_rot_wxyz,
+            pos=(0.0, 0.0, 1.05),
+            rot=(1.0, 0.0, 0.0, 0.0),
             joint_pos={
-                ".*_HipMount_HipRevoluteJoint": 0.0,
-                ".*_Hip_FemurPrismatic_PrismaticJoint": _stand_hip_femur_prismatic,
-                ".*_Femur_TibiaPrismatic_PrismaticJoint": _stand_femur_tibia_prismatic,
+                ".*_Body_Hip_RevoluteJoint": 0.0,
                 ".*_Hip_Femur_RevoluteJoint": 0.0,
                 ".*_Femur_Tibia_RevoluteJoint": 0.0,
             },
@@ -65,38 +59,32 @@ def _crab_hex_robot_cfg() -> ArticulationCfg:
         ),
         soft_joint_pos_limit_factor=0.9,
         actuators={
-            "hip_revolutes": ParkourDCMotorCfg(
-                joint_names_expr=[".*_HipMount_HipRevoluteJoint"],
-                effort_limit=100.0,
-                saturation_effort=120.0,
+            "body_hip_yaw": ParkourDCMotorCfg(
+                joint_names_expr=[".*_Body_Hip_RevoluteJoint"],
+                effort_limit=80.0,
+                saturation_effort=100.0,
                 velocity_limit=6.0,
-                stiffness=50.0,
+                stiffness=45.0,
                 damping=1.2,
                 friction=0.0,
             ),
-            "leg_prismatics": ParkourDCMotorCfg(
-                joint_names_expr=[
-                    ".*_Hip_FemurPrismatic_PrismaticJoint",
-                    ".*_Femur_TibiaPrismatic_PrismaticJoint",
-                ],
-                effort_limit=5000.0,
-                saturation_effort=6500.0,
-                velocity_limit=0.45,
-                stiffness=1800.0,
-                damping=120.0,
+            "hip_femur": ParkourDCMotorCfg(
+                joint_names_expr=[".*_Hip_Femur_RevoluteJoint"],
+                effort_limit=120.0,
+                saturation_effort=150.0,
+                velocity_limit=6.0,
+                stiffness=55.0,
+                damping=1.5,
                 friction=0.0,
             ),
-            # 12 DOFs: in-articulation passive revolutes (no RL action). Without these, Isaac logs
-            # "18 != 30" and leaves their sim gains in an ill-defined state vs the explicit groups.
-            "passive_hip_femur_revolute": ImplicitActuatorCfg(
-                joint_names_expr=[".*_Hip_Femur_RevoluteJoint"],
-                stiffness=0.0,
-                damping=0.5,
-            ),
-            "passive_femur_tibia_revolute": ImplicitActuatorCfg(
+            "femur_tibia": ParkourDCMotorCfg(
                 joint_names_expr=[".*_Femur_Tibia_RevoluteJoint"],
-                stiffness=0.0,
-                damping=0.5,
+                effort_limit=120.0,
+                saturation_effort=150.0,
+                velocity_limit=6.0,
+                stiffness=55.0,
+                damping=1.5,
+                friction=0.0,
             ),
         },
     )
@@ -106,17 +94,17 @@ def _crab_hex_robot_cfg() -> ArticulationCfg:
 class CrabHexTeacherSceneCfg(ParkourTeacherSceneCfg):
     def __post_init__(self):
         super().__post_init__()
-        self.robot = _crab_hex_robot_cfg()
-        self.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/KrabbyUno/base_link"
+        self.robot = _crab_simple_robot_cfg()
+        self.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/body"
         self.contact_forces = None
 
 
 @configclass
 class CrabHexStudentSceneCfg(ParkourStudentSceneCfg):
-    depth_camera = CAMERA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot/KrabbyUno/base_link/depth_camera")
+    depth_camera = CAMERA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot/body")
 
     def __post_init__(self):
         super().__post_init__()
-        self.robot = _crab_hex_robot_cfg()
-        self.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/KrabbyUno/base_link"
+        self.robot = _crab_simple_robot_cfg()
+        self.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/body"
         self.contact_forces = None
