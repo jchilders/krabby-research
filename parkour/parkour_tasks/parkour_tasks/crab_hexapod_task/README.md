@@ -122,8 +122,15 @@ conda activate env_isaaclab
 export PYTHONPATH="$KRABBY_ROOT/krabby-research/parkour/parkour_tasks:$KRABBY_ROOT/krabby-research/parkour:${PYTHONPATH}"
 # Optional if the default path resolver finds crab_simple.usda:
 # export KRABBY_HEX_USD_PATH="$KRABBY_ROOT/krabby-research/assets/crab_simple.usda"
-cd "$KRABBY_ROOT/krabby-research/parkour"
 ```
+
+**Where checkpoints are written:** [`parkour/scripts/rsl_rl/train.py`](../../../scripts/rsl_rl/train.py) sets the log root to `abspath("logs/rsl_rl/<experiment_name>")`, i.e. it is **relative to the shell’s current working directory**. There is no separate `--log_root` flag.
+
+- **Recommended (checkpoints under `krabby-research`):** `cd` into **`$KRABBY_ROOT/krabby-research/parkour`**, then run **`$KRABBY_ROOT/IsaacLab/isaaclab.sh`** with an **absolute** `-p` path to `train.py` / `play.py`. Artifacts land in **`krabby-research/parkour/logs/rsl_rl/...`**.
+- **Resume training** must use the **same** `cd` as the original run, because `--resume` / `--load_run` resolve under that directory’s `logs/rsl_rl/<experiment_name>/`.
+- **Play** with an explicit **`--checkpoint`** uses that file path for inference; cwd does not change which weights load. You may still see a line like `Loading experiment from directory: ...` that reflects cwd-based `log_root_path`—when you pass `--checkpoint`, the run uses the checkpoint path you gave.
+
+**Alternative:** if you `cd "$KRABBY_ROOT/IsaacLab"` and run `./isaaclab.sh`, checkpoints go under **`IsaacLab/logs/rsl_rl/...`** instead (same script, different cwd).
 
 ### 3.1 Train the teacher
 
@@ -132,8 +139,8 @@ The teacher uses privileged observations (terrain, dynamics, etc.) and trains wi
 **Example: 256 envs, 10 000 PPO iterations (≈ 6 h on an RTX 5080–class GPU):**
 
 ```bash
-cd "$KRABBY_ROOT/IsaacLab"
-./isaaclab.sh -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/train.py" \
+cd "$KRABBY_ROOT/krabby-research/parkour"
+"$KRABBY_ROOT/IsaacLab/isaaclab.sh" -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/train.py" \
   --task Isaac-Crab-Hex-Teacher-v0 \
   --headless \
   --num_envs 256 \
@@ -148,17 +155,36 @@ The script logs runs under:
 krabby-research/parkour/logs/rsl_rl/crab_hex_teacher/<TIMESTAMP>/
 ```
 
+That is **`$KRABBY_ROOT/krabby-research/parkour/logs/rsl_rl/crab_hex_teacher/<TIMESTAMP>/`** on disk when you launch from `krabby-research/parkour` as above (the job also prints `Logging experiment in directory: ...` at startup).
+
 Inside each timestamped folder you will see:
 
 - `model_0.pt`, `model_100.pt`, …, `model_9900.pt`, **`model_9999.pt`** (checkpoints)
 - `events.out.tfevents.*` (TensorBoard)
 - `params/agent.yaml`, `params/env.yaml` (frozen configs)
 
-You can stop a long run early and still use the last `model_<iter>.pt` that was saved.  
-To resume from a specific checkpoint:
+**TensorBoard:** Run it with **`conda activate env_isaaclab`**. The default `(base)` Python often fails TensorBoard with `ModuleNotFoundError: No module named 'pkg_resources'`.
+
+Point `--logdir` at the parent **`logs/rsl_rl`** directory that matches **how you trained** (same rule as checkpoints: relative to the shell’s current working directory):
 
 ```bash
-./isaaclab.sh -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/train.py" \
+conda activate env_isaaclab
+# If you trained from krabby-research/parkour (recommended above):
+tensorboard --logdir "$KRABBY_ROOT/krabby-research/parkour/logs/rsl_rl" --port 6006 --bind_all
+# If you trained from IsaacLab instead:
+# tensorboard --logdir "$KRABBY_ROOT/IsaacLab/logs/rsl_rl" --port 6006 --bind_all
+```
+
+Open **http://localhost:6006/** (or another `--port` if 6006 is in use). A single `--logdir` on **`logs/rsl_rl`** lists every experiment underneath (e.g. teacher and **§3.3** student runs). Scalars keep updating while training is running; quit TensorBoard with **Ctrl+C** in that terminal.
+
+In **Scalars**, search for **`mean_reward`** / **`Train/`** and **`Episode_Reward/`** (per-term curves such as `reward_tracking_goal_vel`, `reward_collision`, matching the training log).
+
+You can stop a long run early and still use the last `model_<iter>.pt` that was saved.  
+To resume from a specific checkpoint (use the **same** `cd` as training so `--load_run` resolves correctly):
+
+```bash
+cd "$KRABBY_ROOT/krabby-research/parkour"
+"$KRABBY_ROOT/IsaacLab/isaaclab.sh" -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/train.py" \
   --task Isaac-Crab-Hex-Teacher-v0 \
   --headless \
   --num_envs 256 \
@@ -178,8 +204,8 @@ To **watch** the trained hexapod on parkour terrain in the Isaac Sim GUI, use `s
 - Training-style env (exact MDP used for training):
 
 ```bash
-cd "$KRABBY_ROOT/IsaacLab"
-./isaaclab.sh -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/play.py" \
+cd "$KRABBY_ROOT/krabby-research/parkour"
+"$KRABBY_ROOT/IsaacLab/isaaclab.sh" -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/play.py" \
   --task Isaac-Crab-Hex-Teacher-v0 \
   --num_envs 1 \
   --real-time \
@@ -189,39 +215,44 @@ cd "$KRABBY_ROOT/IsaacLab"
 - Play-style env (longer episodes, follow-cam, parkour + command debug, harder terrain mix):
 
 ```bash
-cd "$KRABBY_ROOT/IsaacLab"
-./isaaclab.sh -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/play.py" \
+cd "$KRABBY_ROOT/krabby-research/parkour"
+"$KRABBY_ROOT/IsaacLab/isaaclab.sh" -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/play.py" \
   --task Isaac-Crab-Hex-Teacher-Play-v0 \
   --num_envs 1 \
   --real-time \
   --checkpoint "$KRABBY_ROOT/krabby-research/parkour/logs/rsl_rl/crab_hex_teacher/<TIMESTAMP>/model_9999.pt"
 ```
 
-Replace `<TIMESTAMP>` with the folder name printed in your training log (for example `2026-05-04_18-14-19`).
+Replace `<TIMESTAMP>` with the folder name printed in your training log (for example `2026-05-07_17-23-43`).
 
 ### 3.3 Train (and later distill) the student
 
 The student uses the same hexapod env but with **student** observations (e.g. depth input) and a **distillation** algorithm. A minimal training command is:
 
 ```bash
-cd "$KRABBY_ROOT/IsaacLab"
-./isaaclab.sh -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/train.py" \
+cd "$KRABBY_ROOT/krabby-research/parkour"
+"$KRABBY_ROOT/IsaacLab/isaaclab.sh" -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/train.py" \
   --task Isaac-Crab-Hex-Student-v0 \
   --headless \
   --num_envs 1024 \
   --seed 1
 ```
 
-Student training uses the same log root:
+Student training uses the same layout under `krabby-research/parkour`:
 
 ```text
 krabby-research/parkour/logs/rsl_rl/crab_hex_student/<TIMESTAMP>/
 ```
 
+(i.e. **`$KRABBY_ROOT/krabby-research/parkour/logs/rsl_rl/crab_hex_student/<TIMESTAMP>/`** when launched from `krabby-research/parkour` as above.)
+
+**TensorBoard** for the student is the same as for the teacher: use **`tensorboard --logdir "$KRABBY_ROOT/krabby-research/parkour/logs/rsl_rl"`** (see **§3.1**).
+
 You can play a student checkpoint with:
 
 ```bash
-./isaaclab.sh -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/play.py" \
+cd "$KRABBY_ROOT/krabby-research/parkour"
+"$KRABBY_ROOT/IsaacLab/isaaclab.sh" -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/play.py" \
   --task Isaac-Crab-Hex-Student-v0 \
   --num_envs 1 \
   --real-time \
@@ -278,4 +309,4 @@ cd "$KRABBY_ROOT/IsaacLab"
 ```
 
 The hexapod task mirrors this layout (Gym registrations, env cfgs, reward wiring, and train/play scripts), so anyone familiar with the Go2 extreme parkour examples should find the crab hexapod task immediately recognizable.  
-Training uses **`crab_simple.usda`** only; set **`KRABBY_HEX_USD_PATH`** only if your checkout or container layout is non-standard. 
+Training uses **`crab_simple.usda`** only; set **`KRABBY_HEX_USD_PATH`** only if your checkout or container layout is non-standard. RSL-RL checkpoints for the commands in **§3** are kept under **`krabby-research/parkour/logs/rsl_rl/`** by running from that directory as documented there. 
