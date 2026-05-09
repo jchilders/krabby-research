@@ -14,6 +14,29 @@
   if (controllerDiagnosticDetails) {
     controllerDiagnosticDetails.open = false;
   }
+
+  function setConnectionStatus(message) {
+    if (status) {
+      status.textContent = message;
+    }
+    var m = String(message || '').toLowerCase();
+    var phase = 'idle';
+    if (m.indexOf('playing') !== -1) {
+      phase = 'live';
+    } else if (m.indexOf('error') !== -1 || m.indexOf('websocket error') !== -1) {
+      phase = 'error';
+    } else if (
+      m.indexOf('negotiating') !== -1 ||
+      m.indexOf('connecting') !== -1 ||
+      m.indexOf('waiting') !== -1 ||
+      m.indexOf('loading') !== -1 ||
+      m.indexOf('hello') !== -1 ||
+      m.indexOf('not ready') !== -1
+    ) {
+      phase = 'connecting';
+    }
+    document.body.setAttribute('data-teleop-phase', phase);
+  }
   var params = new URLSearchParams(location.search);
   var token = params.get('token');
   var qs = token ? '?token=' + encodeURIComponent(token) : '';
@@ -206,11 +229,12 @@
     }
     catalogListEl.innerHTML = '';
     var label = document.createElement('div');
-    label.textContent = 'Available sensors:';
+    label.className = 'catalog-list-heading';
+    label.textContent = 'Available sensors';
     catalogListEl.appendChild(label);
     ids.forEach(function (cid) {
       var row = document.createElement('label');
-      row.style.display = 'block';
+      row.className = 'catalog-row';
       var cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.setAttribute('data-catalog-id', cid);
@@ -251,7 +275,7 @@
 
   async function startRtc(numStreams) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      status.textContent = 'WebSocket not ready';
+      setConnectionStatus('WebSocket not ready');
       return;
     }
     if (pc) {
@@ -265,7 +289,7 @@
     if (streamStatus) {
       streamStatus.textContent = 'Requested ' + numStreams + ' stream(s); negotiating...';
     }
-    status.textContent = 'Negotiating WebRTC...';
+    setConnectionStatus('Negotiating WebRTC...');
 
     pc = new RTCPeerConnection({ iceServers: stunTurnServers });
     controlDc = pc.createDataChannel('krabby-control-v1', { ordered: true });
@@ -330,7 +354,7 @@
       ws.send(JSON.stringify(offerPayload(pc.localDescription.sdp)));
     });
     await pc.setRemoteDescription({ type: 'answer', sdp: ans.sdp });
-    status.textContent = 'Playing';
+    setConnectionStatus('Playing');
     updateDebug();
   }
 
@@ -347,7 +371,7 @@
       initialRtcFallbackTimer = null;
     }
     startRtc(rtcRecvonlyVideoLineCount()).catch(function (err) {
-      status.textContent = 'WebRTC error: ' + (err && err.message ? err.message : String(err));
+      setConnectionStatus('WebRTC error: ' + (err && err.message ? err.message : String(err)));
     });
   }
 
@@ -359,7 +383,7 @@
     }
     ws = new WebSocket(wsUrl);
     ws.onerror = function () {
-      status.textContent = 'WebSocket error';
+      setConnectionStatus('WebSocket error');
       stopGamepadLoop();
     };
     ws.onclose = function () {
@@ -429,14 +453,14 @@
     };
 
     ws.onopen = function () {
-      status.textContent = 'Waiting for robot hello…';
+      setConnectionStatus('Waiting for robot hello…');
       try {
         ws.send(JSON.stringify(helloPayload()));
       } catch (e) {}
       initialRtcFallbackTimer = setTimeout(function () {
         initialRtcFallbackTimer = null;
         if (!initialRtcStarted && ws && ws.readyState === WebSocket.OPEN) {
-          status.textContent = 'No hello_ack yet; starting WebRTC with current selection…';
+          setConnectionStatus('No hello_ack yet; starting WebRTC with current selection…');
           tryStartInitialRtc();
         }
       }, 8000);
@@ -449,7 +473,7 @@
   }
 
   function boot() {
-    status.textContent = 'Loading config...';
+    setConnectionStatus('Loading config...');
     fetch(cfgUrl)
       .then(function (r) {
         if (!r.ok) return Promise.reject(new Error('config ' + r.status));
@@ -459,11 +483,11 @@
         if (j && Array.isArray(j.iceServers) && j.iceServers.length) {
           stunTurnServers = j.iceServers;
         }
-        status.textContent = 'Connecting...';
+        setConnectionStatus('Connecting...');
         openWebSocket();
       })
       .catch(function () {
-        status.textContent = 'Connecting...';
+        setConnectionStatus('Connecting...');
         openWebSocket();
       });
   }
@@ -472,7 +496,7 @@
   if (applyCatalogBtn) {
     applyCatalogBtn.addEventListener('click', function () {
       startRtc(rtcRecvonlyVideoLineCount()).catch(function (err) {
-        status.textContent = 'WebRTC error: ' + (err && err.message ? err.message : String(err));
+        setConnectionStatus('WebRTC error: ' + (err && err.message ? err.message : String(err)));
       });
     });
   }
