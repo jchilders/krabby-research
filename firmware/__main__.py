@@ -16,7 +16,8 @@ JOINTS_RIGHT = ["RRKL", "RRHL", "RRHY", "MRHY", "MRHL", "MRKL"]
 # Extend: Q W E R T Y  |  Retract: A S D F G H
 EXTEND_KEYS = ["q", "w", "e", "r", "t", "y"]
 RETRACT_KEYS = ["a", "s", "d", "f", "g", "h"]
-JOG_PWM = 200
+# analogWrite is 0-255 duty; 200 is ~78% -> ~18.8 V average from a 24 V rail. 255 is ~100% duty.
+JOG_PWM = 255
 
 
 def main():
