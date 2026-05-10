@@ -6,6 +6,9 @@ task packages under ``parkour/``. Imports ``CAMERA_CFG`` from ``parkour_tasks.de
 
 from __future__ import annotations
 
+import math
+
+import numpy as np
 import torch
 
 import isaaclab.sim as sim_utils
@@ -19,17 +22,102 @@ _FRONT_POS = (0.33, 0.0, 0.08)
 # (IsaacLab ``quat_from_euler_xyz`` omits parkour's sign convention on the quaternion).
 _FRONT_EULER_DEG = (180.0, 70.0, -90.0)
 
-# Right flank (~ ``-Body Y`` / ``_SIDE_POS``). Tuned vs front `(180°, 70°, −90°)`: ψ = ``0°`` aims the
-# frustum sideways (prior ``ψ = 180°`` matched front’s modulo-360 yaw and pointed forward). Roll
-# ``270°`` is front roll + ``90°`` to fix side image / lens axis twist.
+# Same pinhole optics for front RGB USD camera and RayCaster depth pattern (`PinholeCameraPatternCfg`).
+# Parkour‘s default CAMERA_CFG uses a different focal / resolution; HAL keeps pose from parkour but
+# overrides rays so RGB and depth share FOV at native resolution (Isaac HAL does not resize).
+_FRONT_RGB_HEIGHT = 480
+_FRONT_RGB_WIDTH = 640
+_FRONT_RGB_FOCAL_LENGTH = 24.0
+_FRONT_RGB_HORIZONTAL_APERTURE = 20.955
+
+
+def front_raycast_pattern_matching_rgb() -> PinholeCameraPatternCfg:
+    """Ray-cast sampler matching ``front_rgb`` ``PinholeCameraCfg`` (focal_length + aperture, 4:3)."""
+
+    ha = _FRONT_RGB_HORIZONTAL_APERTURE
+    return PinholeCameraPatternCfg(
+        focal_length=_FRONT_RGB_FOCAL_LENGTH,
+        horizontal_aperture=ha,
+        vertical_aperture=ha * (_FRONT_RGB_HEIGHT / float(_FRONT_RGB_WIDTH)),
+        height=_FRONT_RGB_HEIGHT,
+        width=_FRONT_RGB_WIDTH,
+    )
+
+
+def side_raycast_pattern_matching_rgb() -> PinholeCameraPatternCfg:
+    """Same as ``front_raycast_pattern_matching_rgb``: ``side_rgb`` uses identical pinhole intrinsics/resolution."""
+
+    return front_raycast_pattern_matching_rgb()
+
+# Right flank (~ body ``−Y``, ROS ``base_link``: ``X`` forward, ``Y`` left). Side optical axis matches
+# the front camera tilt then is yawed −90° about body ``+Z`` (forward ``+X`` → right ``−Y``). Euler
+# ``(180°, pitch ≈70°, ψ)`` is near gimbal lock, so ``ψ`` barely moves the optic axis; compose a
+# fixed body yaw with the front rotation matrix instead of a second Euler triple.
 _SIDE_POS = (0.0, -0.08, 0.12)
-_SIDE_EULER_DEG = (270.0, 70.0, 0.0)
 
 
 def _ros_offset_rot_from_euler_deg(euler_deg: tuple[float, float, float]) -> tuple[float, ...]:
     r, p, y_deg = euler_deg
     radians = torch.deg2rad(torch.tensor([float(r), float(p), float(y_deg)]))
     return quat_from_euler_xyz_tuple(*tuple(radians))
+
+
+def _rotmat_camera_from_quat_ros_wxyz(q: tuple[float, float, float, float]) -> np.ndarray:
+    """rotation ``R`` with ``v_body = R @ v_cam`` (ROS camera optical: ``+Z`` forward). Matches ``offset.rot``."""
+
+    w, x, y, z = map(float, q)
+    return np.array(
+        [
+            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - w * z), 2.0 * (x * z + w * y)],
+            [2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - w * x)],
+            [2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _quat_ros_wxyz_from_rotmat(R: np.ndarray) -> tuple[float, float, float, float]:
+    """Inverse of ``_rotmat_camera_from_quat_ros_wxyz`` (Shepperd, ``w,x,y,z``)."""
+
+    m = np.asarray(R, dtype=np.float64)
+    trace = np.trace(m)
+    if trace > 0.0:
+        s = 2.0 * np.sqrt(trace + 1.0)
+        w = 0.25 * s
+        x = (m[2, 1] - m[1, 2]) / s
+        y = (m[0, 2] - m[2, 0]) / s
+        z = (m[1, 0] - m[0, 1]) / s
+    elif m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
+        s = 2.0 * np.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2])
+        w = (m[2, 1] - m[1, 2]) / s
+        x = 0.25 * s
+        y = (m[0, 1] + m[1, 0]) / s
+        z = (m[0, 2] + m[2, 0]) / s
+    elif m[1, 1] > m[2, 2]:
+        s = 2.0 * np.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2])
+        w = (m[0, 2] - m[2, 0]) / s
+        x = (m[0, 1] + m[1, 0]) / s
+        y = 0.25 * s
+        z = (m[1, 2] + m[2, 1]) / s
+    else:
+        s = 2.0 * np.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1])
+        w = (m[1, 0] - m[0, 1]) / s
+        x = (m[0, 2] + m[2, 0]) / s
+        y = (m[1, 2] + m[2, 1]) / s
+        z = 0.25 * s
+    q = np.array([w, x, y, z], dtype=np.float64)
+    q /= np.linalg.norm(q)
+    return (float(q[0]), float(q[1]), float(q[2]), float(q[3]))
+
+
+def _side_ros_offset_rot_from_front() -> tuple[float, ...]:
+    q_front = _ros_offset_rot_from_euler_deg(_FRONT_EULER_DEG)
+    r_front = _rotmat_camera_from_quat_ros_wxyz(q_front)
+    yaw = math.radians(-90.0)
+    c, s = math.cos(yaw), math.sin(yaw)
+    rz = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    r_side = rz @ r_front
+    return _quat_ros_wxyz_from_rotmat(r_side)
 
 
 def sim_rgbd_camera_cfgs_for_robot_link(link_name: str) -> tuple[
@@ -59,18 +147,19 @@ def sim_rgbd_camera_cfgs_for_robot_link(link_name: str) -> tuple[
             rot=front_rot,
             convention="ros",
         ),
+        pattern_cfg=front_raycast_pattern_matching_rgb(),
         max_distance=2.0,
     )
 
     front_rgb = CameraCfg(
         prim_path=f"{base}/front_rgb",
-        height=480,
-        width=640,
+        height=_FRONT_RGB_HEIGHT,
+        width=_FRONT_RGB_WIDTH,
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(
-            focal_length=24.0,
+            focal_length=_FRONT_RGB_FOCAL_LENGTH,
             focus_distance=400.0,
-            horizontal_aperture=20.955,
+            horizontal_aperture=_FRONT_RGB_HORIZONTAL_APERTURE,
             clipping_range=(0.3, 10.0),
         ),
         offset=CameraCfg.OffsetCfg(
@@ -83,7 +172,7 @@ def sim_rgbd_camera_cfgs_for_robot_link(link_name: str) -> tuple[
         colorize_instance_segmentation=False,
     )
 
-    side_rot = _ros_offset_rot_from_euler_deg(_SIDE_EULER_DEG)
+    side_rot = _side_ros_offset_rot_from_front()
 
     side_camera = CAMERA_CFG.replace(
         prim_path=link_prim,
@@ -92,25 +181,19 @@ def sim_rgbd_camera_cfgs_for_robot_link(link_name: str) -> tuple[
             rot=side_rot,
             convention="ros",
         ),
-        pattern_cfg=PinholeCameraPatternCfg(
-            focal_length=11.041,
-            horizontal_aperture=20.955,
-            vertical_aperture=12.240,
-            height=48,
-            width=64,
-        ),
+        pattern_cfg=side_raycast_pattern_matching_rgb(),
         max_distance=1.5,
     )
 
     side_rgb = CameraCfg(
         prim_path=f"{base}/side_rgb",
-        height=480,
-        width=640,
+        height=_FRONT_RGB_HEIGHT,
+        width=_FRONT_RGB_WIDTH,
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(
-            focal_length=24.0,
+            focal_length=_FRONT_RGB_FOCAL_LENGTH,
             focus_distance=400.0,
-            horizontal_aperture=20.955,
+            horizontal_aperture=_FRONT_RGB_HORIZONTAL_APERTURE,
             clipping_range=(0.15, 4.0),
         ),
         offset=CameraCfg.OffsetCfg(

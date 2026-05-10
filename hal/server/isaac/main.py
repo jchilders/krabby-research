@@ -187,10 +187,10 @@ def main():
         "--teleop",
         action="store_true",
         help=(
-            "Start outbound WebRTC teleop viewer (polls HAL observations only; no HAL commands). "
-            "Signaling URL is ws://127.0.0.1:9000/ws/robot (portal on same host). "
-            "ICE/STUN still come from teleop/edge/robot_settings.py. "
-            "Independent of --joystick (add --joystick when krabby-uno-sim should drive commands over TCP)."
+            "Outbound WebRTC teleop to the portal: HAL observation poll + signaling. When the viewer enables "
+            "operator_override and sends controller state, the teleop HalClient PUSHes OPERATOR JointCommands "
+            "to command_bind (same socket as inference; operator wins precedence). Signaling ws://127.0.0.1:9000/ws/robot. "
+            "ICE/STUN from teleop/edge/robot_settings.py. Combine with --joystick for krabby-uno-sim on TCP."
         ),
     )
 
@@ -400,6 +400,7 @@ def main():
     transport_context = hal_server.get_transport_context()
     # Same ZMQ connect URL for every HalClient that SUBscribes to HAL observations (inproc unchanged).
     observation_client_endpoint = _zmq_client_connect_url(args.observation_bind)
+    command_client_endpoint = _zmq_client_connect_url(args.command_bind)
 
     if args.teleop:
         base_teleop = build_teleop_edge_settings()
@@ -411,7 +412,7 @@ def main():
         bootstrap_ids = list(TELEOP_BOOTSTRAP_SENSOR_CATALOG_IDS)
         teleop_hal_cfg = HalClientConfig(
             observation_endpoint=observation_client_endpoint,
-            command_endpoint=None,
+            command_endpoint=command_client_endpoint,
         )
         teleop_thread = start_hal_teleop_signaling_thread(
             teleop_hal_cfg,
@@ -421,12 +422,14 @@ def main():
             bootstrap_sensor_catalog_ids=bootstrap_ids,
             teleop_edge_settings=teleop_settings,
             robot_definition=robot_definition,
-            send_hal_commands=False,
+            send_hal_commands=True,
         )
         logger.info(
-            "Teleop signaling thread started (url=%s, observation=%s, viewer-only HalClient, bootstrap=%s)",
+            "Teleop signaling thread started (url=%s, observation=%s, command_connect=%s, "
+            "operator_override→OPERATOR PUSH, bootstrap=%s)",
             teleop_settings.server_signaling_ws_url,
             observation_client_endpoint,
+            command_client_endpoint,
             bootstrap_ids,
         )
 
@@ -501,6 +504,11 @@ def main():
             "Joystick: main loop ready, waiting for first command on %s (start krabby-uno-sim on host if not already)",
             args.command_bind,
         )
+        if args.teleop:
+            logger.info(
+                "Joystick+teleop: enable operator_override in the portal to drive from the browser controller; "
+                "otherwise krabby-uno-sim (TCP) pushes commands.",
+            )
 
     timestep = 0
     loop_start_t = time.time()

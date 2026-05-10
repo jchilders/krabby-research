@@ -96,6 +96,8 @@ RUN echo "export PYTHONPATH=\"\$PYTHONPATH:/isaac-sim/python_packages\"" >> /wor
 # Copy and install wheels (built via 'make build-wheels')
 # Note: Wheels must be built before building this Docker image
 COPY hal/client/dist/*.whl /tmp/wheels/
+# Local wheel — without this line pip pulls krabby-controller from PyPI (often stale vs this repo).
+COPY controller/dist/*.whl /tmp/wheels/
 COPY hal/server/dist/*.whl /tmp/wheels/
 COPY hal/server/isaac/dist/*.whl /tmp/wheels/
 COPY hal/tools/dist/*.whl /tmp/wheels/

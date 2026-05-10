@@ -5,21 +5,25 @@ This module provides a ControlLoop class that wires singleton components
 
 """
 
+from __future__ import annotations
+
 import logging
 import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from controller.input import InputController
-from controller.input.webrtc_input_controller import WebRTCInputController
 from controller.input.state import ControllerState
 from controller.mappers.gamepad_to_isaacsim_hal_mapper import GamepadToIsaacSimHALMapper
 from controller.mappers.gamepad_to_krabby_hal_mapper import GamepadToKrabbyHALMapper
 from hal.client import HalClient
 from hal.client.config import HalClientConfig
 from hal.server.robot_definition import RobotDefinition
+
+if TYPE_CHECKING:
+    from teleop.edge.webrtc_input_controller import WebRTCInputController
 
 logger = logging.getLogger(__name__)
 

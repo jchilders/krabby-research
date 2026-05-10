@@ -9,6 +9,7 @@ import torch
 import isaaclab.sim as sim_utils
 from isaaclab.sensors import CameraCfg
 from isaaclab.utils import configclass
+from hal.server.isaac.sim_rgbd_camera_cfgs import front_raycast_pattern_matching_rgb
 from parkour_tasks.default_cfg import (
     CAMERA_CFG,
     ParkourDefaultSceneCfg,
@@ -49,6 +50,6 @@ FRONT_RGB_CAMERA_CFG = CameraCfg(
 class ZedLikeSceneCfg(ParkourDefaultSceneCfg):
     """Parkour default scene plus front ZED-like camera (depth + RGB)."""
 
-    # Depth uses ``CAMERA_CFG`` (RayCaster on ``Robot/base``); RGB spawned at ``base/front_rgb``.
-    front_camera = CAMERA_CFG
+    # Depth: same RayCaster pose as parkour default, but pattern intrinsics match ``front_rgb``.
+    front_camera = CAMERA_CFG.replace(pattern_cfg=front_raycast_pattern_matching_rgb())
     front_rgb = FRONT_RGB_CAMERA_CFG

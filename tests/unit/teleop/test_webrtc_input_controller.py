@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from controller.input.webrtc_input_controller import WebRTCInputController
+from teleop.edge.webrtc_input_controller import WebRTCInputController
 
 
 def test_webrtc_input_controller_applies_payload_and_notifies_callback() -> None:

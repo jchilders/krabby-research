@@ -1,7 +1,4 @@
-"""Outbound portal teleop (WebSocket signaling + WebRTC) using a dedicated HalClient for viewer frames.
-
-Shared by Isaac sim (viewer-only HalClient) and Jetson (full command path). Not Jetson-specific.
-"""
+"""Outbound portal teleop (WebSocket signaling + WebRTC) using a dedicated HalClient for viewer frames."""
 
 from __future__ import annotations
 
@@ -9,7 +6,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 import numpy as np
 import zmq
@@ -24,9 +21,7 @@ from teleop.edge.depth_preview import depth_meters_to_rgb24_u8
 from teleop.edge.hal_rgb_track import HalRgbSnapshotVideoTrack
 from teleop.edge.portal_client import portal_client_loop
 from teleop.edge.viewer_catalog import parse_viewer_catalog_ids_from_payload
-
-if TYPE_CHECKING:
-    from controller.input.webrtc_input_controller import WebRTCInputController
+from teleop.edge.webrtc_input_controller import WebRTCInputController
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +96,9 @@ def start_hal_teleop_signaling_thread(
     produces the same joint count/order as ``apply_command``.
 
     When ``send_hal_commands`` is False, use ``HalClientConfig(..., command_endpoint=None)``
-    so this thread only subscribes for WebRTC video (Isaac sim viewer-only, or Jetson
-    viewer-only). When inference and portal both PUSH to the HAL command socket,
-    ``JointCommand.source`` (operator vs inference) selects precedence on the server.
+    so this thread only subscribes for WebRTC video (e.g. diagnostics). When inference and
+    portal both PUSH to the HAL command socket, ``JointCommand.source`` (operator vs inference)
+    selects precedence on the server.
 
     Portal ``operator_override`` (checkbox): when enabled, teleop sends operator joint commands
     (they win over autonomy when both queue); when disabled, teleop does not send commands.
@@ -192,9 +187,8 @@ def start_hal_teleop_signaling_thread(
         hal_client_lock = threading.Lock()
         hal_ready = threading.Event()
         operator_override_gate = _OperatorOverrideGate()
-        webrtc_input: Optional["WebRTCInputController"] = None
+        webrtc_input: Optional[WebRTCInputController] = None
         if send_hal_commands:
-            from controller.input.webrtc_input_controller import WebRTCInputController
             from controller.mappers.gamepad_to_krabby_hal_mapper import GamepadToKrabbyHALMapper
 
             webrtc_input = WebRTCInputController()
