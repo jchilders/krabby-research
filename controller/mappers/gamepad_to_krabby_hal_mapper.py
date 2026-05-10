@@ -11,7 +11,7 @@ from typing import Dict, Optional, Set
 import numpy as np
 
 from controller.input.state import ControllerState, LegIdentifier
-from hal.client.data_structures.hardware import JointCommand
+from hal.client.data_structures.hardware import JointCommand, JointCommandSource
 from hal.server.robot_definition import RobotDefinition
 from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
 
@@ -151,6 +151,7 @@ class GamepadToKrabbyHALMapper:
             timestamp_ns=current_timestamp_ns,
             observation_timestamp_ns=observation_timestamp_ns,
             joint_names=joint_names,
+            source=JointCommandSource.OPERATOR,
         )
 
         logger.debug(

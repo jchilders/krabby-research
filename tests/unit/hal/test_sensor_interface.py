@@ -2,10 +2,7 @@
 
 import pytest
 
-from hal.server.isaac.sensor_backend_isaac import (
-    ISAAC_PIPELINE_EXAMPLE_SENSORS,
-    IsaacSensorInterface,
-)
+from hal.server.isaac.sensor_backend_isaac import IsaacSensorInterface
 from hal.server.jetson.front_camera_factory import FRONT_RGB_DEPTH_CAMERA_FACTORIES
 from hal.server.jetson.sensor_backend_jetson import (
     JETSON_SENSOR_CATALOG,
@@ -13,6 +10,8 @@ from hal.server.jetson.sensor_backend_jetson import (
     front_observation_camera_catalog_entry,
 )
 from hal.server.sensor_interface import GStreamerHandle, SensorInfo, SensorPose
+
+from tests.unit.hal.isaac_sensor_fixtures import ISAAC_CONFIGURED_SENSORS_FIXTURE
 
 
 def test_jetson_catalog_single_primary_front_rgbd():
@@ -150,9 +149,9 @@ def test_jetson_depth_gray16_nvenc_pipeline_shape():
 
 
 def test_isaac_list_and_handle_and_pipeline_shape():
-    iface = IsaacSensorInterface(configured_sensors=ISAAC_PIPELINE_EXAMPLE_SENSORS)
+    iface = IsaacSensorInterface(configured_sensors=ISAAC_CONFIGURED_SENSORS_FIXTURE)
     sensors = iface.list_sensors()
-    assert len(sensors) == len(ISAAC_PIPELINE_EXAMPLE_SENSORS)
+    assert len(sensors) == len(ISAAC_CONFIGURED_SENSORS_FIXTURE)
 
     front = next(s for s in sensors if s.id == "front_rgbd")
     handle = iface.get_gstreamer_handle(front)
@@ -167,7 +166,7 @@ def test_isaac_list_and_handle_and_pipeline_shape():
 
 
 def test_isaac_radar_handle_uses_gray8_in_pipeline():
-    iface = IsaacSensorInterface(configured_sensors=ISAAC_PIPELINE_EXAMPLE_SENSORS)
+    iface = IsaacSensorInterface(configured_sensors=ISAAC_CONFIGURED_SENSORS_FIXTURE)
     radar = next(s for s in iface.list_sensors() if s.id == "radar_front")
     handle = iface.get_gstreamer_handle(radar)
     assert handle.appsrc_pixel_format == "GRAY8"
@@ -177,7 +176,7 @@ def test_isaac_radar_handle_uses_gray8_in_pipeline():
 
 
 def test_isaac_depth_gray16_handle_and_pipeline_shape():
-    iface = IsaacSensorInterface(configured_sensors=ISAAC_PIPELINE_EXAMPLE_SENSORS)
+    iface = IsaacSensorInterface(configured_sensors=ISAAC_CONFIGURED_SENSORS_FIXTURE)
     depth = next(s for s in iface.list_sensors() if s.id == "front_rgbd_gray16_depth")
     handle = iface.get_gstreamer_handle(depth)
     assert handle.appsrc_pixel_format == "GRAY16_LE"

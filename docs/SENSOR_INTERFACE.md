@@ -47,7 +47,7 @@ Pipeline strings can be used with `Gst.parse_launch()` or `gst-launch-1.0` (repl
 ## Obtaining the interface
 
 - **Jetson**: `JetsonHalServer.get_sensor_interface()` returns a `JetsonSensorInterface` built from `JETSON_SENSOR_CATALOG`. The **front observation** camera is the unique catalog row with **`is_primary=True`**: that row sets resolution, FPS, **`camera_driver`**, and **`depth_mode`** for `initialize_cameras()` (registered in `hal.server.jetson.front_camera_factory.FRONT_RGB_DEPTH_CAMERA_FACTORIES`). The matching **`SensorInfo`** in **`list_sensors()`** carries the same **`camera_driver`**.
-- **Isaac**: `IsaacSimHalServer.get_sensor_interface()` passes `scene_sensors`; `IsaacSensorInterface` **introspects** `front_rgb` + `front_camera` into **`front_rgbd`** with **`camera_driver="isaac_scene"`** when present, otherwise **`list_sensors()` is empty**. For docs/tests, pass **`configured_sensors=`** (see `ISAAC_PIPELINE_EXAMPLE_SENSORS` in `sensor_backend_isaac.py`).
+- **Isaac**: `IsaacSimHalServer.get_sensor_interface()` passes `scene_sensors`; `IsaacSensorInterface` **introspects** `front_rgb` + `front_camera` into **`front_rgbd`** with **`camera_driver="isaac_scene"`** when present, otherwise **`list_sensors()` is empty**. Callers may pass a fixed **`configured_sensors=`** tuple when no scene exists (e.g. unit tests under `tests/unit/hal/`).
 
 Both implement the same abstract `SensorInterface`: `list_sensors()`, `get_gstreamer_handle(sensor)`, `build_pipeline(handle, ...)`.
 

@@ -25,7 +25,7 @@ from typing import Optional, Set
 import numpy as np
 
 from controller.input.state import ControllerState, LegIdentifier
-from hal.client.data_structures.hardware import JointCommand
+from hal.client.data_structures.hardware import JointCommand, JointCommandSource
 from hal.server.robot_definition import RobotDefinition
 
 logger = logging.getLogger(__name__)
@@ -212,6 +212,7 @@ class GamepadToIsaacSimHALMapper:
             timestamp_ns=current_timestamp_ns,
             observation_timestamp_ns=observation_timestamp_ns,
             joint_names=self._robot.get_joint_names(),
+            source=JointCommandSource.OPERATOR,
         )
         
         logger.debug(

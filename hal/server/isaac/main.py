@@ -30,6 +30,27 @@ from data_collection.config import load_config
 
 logger = logging.getLogger(__name__)
 CONTROL_RATE_HZ = 100.0
+# Sensor catalog ids passed to teleop signaling when HAL introspects RGB-D streams (--teleop).
+TELEOP_BOOTSTRAP_SENSOR_CATALOG_IDS: tuple[str, ...] = ("front_rgbd", "side_rgbd")
+
+
+def _sim_rgbd_mount_link(robot: str) -> str | None:
+    """USD link under ``Robot/<link>/`` for HAL sim RGB-D prims; ``None`` if ``robot`` is ``auto``."""
+
+    if robot == "hex":
+        return "crab_hex"
+    if robot in ("go2", "quad"):
+        return "base"
+    return None
+
+
+def _zmq_client_connect_url(bind: str) -> str:
+    """HAL server ``bind`` address → ZMQ ``connect`` URL for in-process or localhost clients."""
+    if bind.startswith("tcp://*:"):
+        return "tcp://127.0.0.1:" + bind[len("tcp://*:") :]
+    if bind.startswith("tcp://0.0.0.0:"):
+        return "tcp://127.0.0.1:" + bind[len("tcp://0.0.0.0:") :]
+    return bind
 
 
 def _ensure_server_log_visible(debug: bool = False) -> None:
@@ -157,6 +178,15 @@ def main():
             "HAL endpoints are always enforced from --observation_bind/--command_bind."
         ),
     )
+    parser.add_argument(
+        "--teleop",
+        action="store_true",
+        help=(
+            "Start outbound WebRTC teleop viewer (polls HAL observations only; no HAL commands). "
+            "Configure teleop/edge/robot_settings.py (TELEOP_EDGE_MODE=agent, SERVER_SIGNALING_WS_URL). "
+            "Independent of --joystick (add --joystick when krabby-uno-sim should drive commands over TCP)."
+        ),
+    )
 
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
@@ -172,6 +202,8 @@ def main():
         logger.info("Using --usd: task=%s, robot=hex, KRABBY_HEX_USD_PATH=%s", args.task, args.usd)
     elif args.task is None:
         parser.error("--task required unless --usd is given")
+    if args.teleop and args.robot == "auto":
+        parser.error("--teleop requires --robot go2, quad, or hex (not auto)")
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
         logger.setLevel(logging.DEBUG)
@@ -186,8 +218,8 @@ def main():
     if args.command_bind is None:
         args.command_bind = "tcp://*:5556" if args.joystick else "inproc://hal_commands"
 
-    args.enable_cameras = True
-    logger.info("Setting enable_cameras=True (required for camera sensors)")
+    args.enable_cameras = bool(args.teleop)
+    logger.info("enable_cameras=%s (sim RGB-D sensors only with --teleop)", args.enable_cameras)
 
     # Launch IsaacLab
     app_launcher = AppLauncher(args)
@@ -229,20 +261,25 @@ def main():
     from hal.client.config import HalClientConfig
     from hal.server import HalServerConfig
     from hal.server.isaac import IsaacSimHalServer
+    from hal.server.isaac.sim_rgbd_camera_cfgs import attach_sim_rgbd_sensors_to_scene_cfg
+    from hal.server.jetson.teleop_integration import start_jetson_teleop_signaling_thread
     from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
     from hal.server.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
     from hal.server.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
     from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
     from compute.parkour.inference_client import ParkourInferenceClient
     from compute.parkour.policy_interface import ModelWeights
+    from teleop.edge.robot_settings import build_teleop_edge_settings
 
     # Running flag for graceful shutdown
     running = True
+    teleop_stop = threading.Event()
 
     def signal_handler(sig, frame):
         """Handle interrupt signals."""
         nonlocal running
         logger.info("Received interrupt signal, stopping...")
+        teleop_stop.set()
         running = False
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -253,6 +290,7 @@ def main():
     env = None
     collector_stop: threading.Event | None = None
     collector_thread: threading.Thread | None = None
+    teleop_thread: threading.Thread | None = None
 
     # Parse environment configuration
     # Note: parse_env_cfg() will import parkour_tasks internally, which triggers
@@ -268,6 +306,23 @@ def main():
     if args.joystick:
         # One env is enough for joystick control and significantly speeds up startup and step time.
         env_cfg.scene.num_envs = 1
+
+    if args.teleop:
+        sim_rgbd_link = _sim_rgbd_mount_link(args.robot)
+        if sim_rgbd_link is None:
+            raise ValueError(
+                f"Cannot resolve sim RGB-D mount link for --robot {args.robot!r} with --teleop"
+            )
+        attach_sim_rgbd_sensors_to_scene_cfg(env_cfg.scene, sim_rgbd_link)
+        _sensor_dt = env_cfg.sim.dt * env_cfg.decimation
+        env_cfg.scene.front_camera.update_period = _sensor_dt
+        env_cfg.scene.front_rgb.update_period = _sensor_dt
+        env_cfg.scene.side_camera.update_period = _sensor_dt
+        env_cfg.scene.side_rgb.update_period = _sensor_dt
+        logger.info(
+            "HAL sim RGB-D sensors on Robot/%s (front_rgb, front_camera, side_rgb, side_camera)",
+            sim_rgbd_link,
+        )
 
     # Determine render mode based on video flag
     # For visual display, use None (default window rendering)
@@ -337,11 +392,42 @@ def main():
 
     # Get transport context for inproc connections
     transport_context = hal_server.get_transport_context()
+    # Same ZMQ connect URL for every HalClient that SUBscribes to HAL observations (inproc unchanged).
+    observation_client_endpoint = _zmq_client_connect_url(args.observation_bind)
+
+    if args.teleop:
+        teleop_settings = build_teleop_edge_settings()
+        if not teleop_settings.agent_enabled:
+            logger.warning(
+                "--teleop ignored: edge agent disabled (set TELEOP_EDGE_MODE=agent and "
+                "SERVER_SIGNALING_WS_URL in teleop/edge/robot_settings.py)"
+            )
+        else:
+            bootstrap_ids = list(TELEOP_BOOTSTRAP_SENSOR_CATALOG_IDS)
+            teleop_hal_cfg = HalClientConfig(
+                observation_endpoint=observation_client_endpoint,
+                command_endpoint=None,
+            )
+            teleop_thread = start_jetson_teleop_signaling_thread(
+                teleop_hal_cfg,
+                transport_context,
+                hal_server.get_sensor_interface(),
+                stop_event=teleop_stop,
+                bootstrap_sensor_catalog_ids=bootstrap_ids,
+                teleop_edge_settings=teleop_settings,
+                robot_definition=robot_definition,
+                send_hal_commands=False,
+            )
+            logger.info(
+                "Teleop signaling thread started (observation=%s, viewer-only HalClient, bootstrap=%s)",
+                observation_client_endpoint,
+                bootstrap_ids,
+            )
 
     if not args.joystick:
         # Create HAL client config
         hal_client_config = HalClientConfig(
-            observation_endpoint=args.observation_bind,
+            observation_endpoint=observation_client_endpoint,
             command_endpoint=args.command_bind,
         )
         model_weights = ModelWeights(
@@ -371,13 +457,13 @@ def main():
         if args.data_collector_config is not None:
             dc_cfg = load_config(args.data_collector_config)
             # Entry-point transport wiring is authoritative for this process.
-            dc_cfg.hal.observation_endpoint = args.observation_bind
+            dc_cfg.hal.observation_endpoint = observation_client_endpoint
             dc_cfg.hal.command_endpoint = args.command_bind
             if args.data_collector_output_dir is not None:
                 dc_cfg.output_dir = Path(args.data_collector_output_dir).expanduser()
         else:
             dc_cfg = build_data_collector_config(
-                observation_endpoint=args.observation_bind,
+                observation_endpoint=observation_client_endpoint,
                 command_endpoint=args.command_bind,
                 output_dir=args.data_collector_output_dir,
             )
@@ -500,6 +586,11 @@ def main():
                 time.sleep(sleep_time)
 
     # Clean up in reverse order of creation
+    teleop_stop.set()
+    if teleop_thread is not None and teleop_thread.is_alive():
+        teleop_thread.join(timeout=12.0)
+        if teleop_thread.is_alive():
+            logger.warning("Teleop signaling thread did not exit within timeout")
     if collector_stop is not None:
         collector_stop.set()
     if collector_thread is not None and collector_thread.is_alive():

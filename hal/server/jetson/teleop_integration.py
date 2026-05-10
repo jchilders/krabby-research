@@ -27,6 +27,24 @@ from teleop.edge.viewer_catalog import parse_viewer_catalog_ids_from_payload
 logger = logging.getLogger(__name__)
 
 
+class _OperatorOverrideGate:
+    """Latest ``operator_override`` flag from portal control frames (thread-safe)."""
+
+    __slots__ = ("_lock", "_value")
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._value = False
+
+    def set(self, value: bool) -> None:
+        with self._lock:
+            self._value = value
+
+    def get(self) -> bool:
+        with self._lock:
+            return self._value
+
+
 class _ViewerCatalogIds:
     """Thread-safe catalog id list; browser updates via signaling ``catalog_ids``."""
 
@@ -68,6 +86,7 @@ def start_jetson_teleop_signaling_thread(
     bootstrap_sensor_catalog_ids: list[str],
     teleop_edge_settings: TeleopEdgeSettings,
     robot_definition: RobotDefinition,
+    send_hal_commands: bool = True,
 ) -> threading.Thread:
     """Start outbound teleop: HalClient poll thread + asyncio signaling; stop when ``stop_event`` is set.
 
@@ -76,6 +95,14 @@ def start_jetson_teleop_signaling_thread(
 
     ``robot_definition`` must match the Jetson HAL server's ``--robot`` topology so gamepad
     mapping produces the same joint count/order as ``apply_command``.
+
+    When ``send_hal_commands`` is False, use ``HalClientConfig(..., command_endpoint=None)``
+    so this thread only subscribes for WebRTC video (Isaac + ``krabby-uno-sim``, or Jetson
+    viewer-only). When inference and portal both PUSH to the HAL command socket,
+    ``JointCommand.source`` (operator vs inference) selects precedence on the server.
+
+    Portal ``operator_override`` (checkbox): when enabled, teleop sends operator joint commands
+    (they win over autonomy when both queue); when disabled, teleop does not send commands.
     """
 
     def _thread_main() -> None:
@@ -89,6 +116,19 @@ def start_jetson_teleop_signaling_thread(
 
         if not bootstrap_sensor_catalog_ids:
             logger.error("Teleop requires non-empty bootstrap_sensor_catalog_ids; signaling thread not started")
+            return
+
+        if send_hal_commands:
+            if hal_client_config.command_endpoint is None:
+                logger.error(
+                    "Teleop send_hal_commands=True requires a non-null HalClientConfig.command_endpoint"
+                )
+                return
+        elif hal_client_config.command_endpoint is not None:
+            logger.error(
+                "Teleop send_hal_commands=False requires HalClientConfig.command_endpoint=None "
+                "(observation-only client)"
+            )
             return
 
         catalog_state = _ViewerCatalogIds(bootstrap_sensor_catalog_ids, settings)
@@ -147,21 +187,26 @@ def start_jetson_teleop_signaling_thread(
         hal_teleop = HalClient(hal_client_config, context=transport_context)
         hal_client_lock = threading.Lock()
         hal_ready = threading.Event()
-        webrtc_input = WebRTCInputController()
-        mapper = GamepadToKrabbyHALMapper(robot_definition=robot_definition)
+        operator_override_gate = _OperatorOverrideGate()
+        webrtc_input: Optional[WebRTCInputController] = None
+        if send_hal_commands:
+            webrtc_input = WebRTCInputController()
+            gamepad_mapper = GamepadToKrabbyHALMapper(robot_definition=robot_definition)
 
-        def _on_webrtc_state(state: Any) -> None:
-            if not hal_ready.is_set():
-                return
-            try:
-                cmd = mapper.map(state, observation_timestamp_ns=None)
-                with hal_client_lock:
-                    hal_teleop.put_joint_command(cmd)
-            except Exception:
-                logger.warning("teleop control: failed to map/send command", exc_info=True)
+            def _on_webrtc_state(state: Any) -> None:
+                if not hal_ready.is_set():
+                    return
+                if not operator_override_gate.get():
+                    return
+                try:
+                    cmd = gamepad_mapper.map(state, observation_timestamp_ns=None)
+                    with hal_client_lock:
+                        hal_teleop.put_joint_command(cmd)
+                except Exception:
+                    logger.warning("teleop control: failed to map/send command", exc_info=True)
 
-        webrtc_input.register_callback(_on_webrtc_state)
-        webrtc_input.start(update_rate_hz=50.0)
+            webrtc_input.register_callback(_on_webrtc_state)
+            webrtc_input.start(update_rate_hz=50.0)
 
         def _poll_worker() -> None:
             try:
@@ -260,9 +305,12 @@ def start_jetson_teleop_signaling_thread(
 
             if payload.get("type") != "control":
                 return
+            operator_override_gate.set(bool(payload.get("operator_override", False)))
             st = payload.get("state")
             if not isinstance(st, dict):
                 _warn_rate_limited("Rejected control message: missing or non-object 'state'")
+                return
+            if webrtc_input is None:
                 return
             try:
                 webrtc_input.update_from_payload(st)
@@ -296,7 +344,8 @@ def start_jetson_teleop_signaling_thread(
         except Exception:
             logger.exception("Teleop signaling thread exited with error")
         finally:
-            webrtc_input.stop()
+            if webrtc_input is not None:
+                webrtc_input.stop()
             poll_stop.set()
             poller.join(timeout=5.0)
             if poller.is_alive():

@@ -190,30 +190,41 @@ def main():
         # Get transport context for inproc connections
         transport_context = hal_server.get_transport_context()
 
-        # Create HAL client config
-        hal_client_config = HalClientConfig(
+        # Shared ZMQ context for inproc clients below. Inference and portal teleop both PUSH to COMMAND_ENDPOINT.
+        teleop_send_commands = args.control_source == "portal"
+
+        # Inference/ParkourInferenceClient: SUB observations; PUSH joint commands (source=inference).
+        inference_hal_client_config = HalClientConfig(
             observation_endpoint=OBSERVATION_ENDPOINT,
             command_endpoint=COMMAND_ENDPOINT,
+        )
+        # Teleop thread: SUB observations for WebRTC frames; PUSH to operator bind only when portal drives joints.
+        teleop_hal_client_config = HalClientConfig(
+            observation_endpoint=OBSERVATION_ENDPOINT,
+            command_endpoint=COMMAND_ENDPOINT if teleop_send_commands else None,
         )
 
         if teleop_sensor_ids is not None:
             teleop_stop = threading.Event()
             teleop_thread = start_jetson_teleop_signaling_thread(
-                hal_client_config,
+                teleop_hal_client_config,
                 transport_context,
                 hal_server.get_sensor_interface(),
                 stop_event=teleop_stop,
                 bootstrap_sensor_catalog_ids=teleop_sensor_ids,
                 teleop_edge_settings=_teleop_st,
                 robot_definition=robot_definition,
+                send_hal_commands=teleop_send_commands,
             )
             logger.info(
                 "Teleop outbound signaling started: mode=%s url=%s reconnect_s=%.1f "
-                "(bootstrap catalog ids=%s; viewer may override via signaling ``catalog_ids``)",
+                "(bootstrap catalog ids=%s; viewer may override via signaling ``catalog_ids``); "
+                "webrtc_hal_commands=%s",
                 _teleop_st.mode,
                 _teleop_st.server_signaling_ws_url,
                 _teleop_st.server_reconnect_s,
                 teleop_sensor_ids,
+                teleop_send_commands,
             )
 
         if args.control_source == "inference":
@@ -224,7 +235,7 @@ def main():
             )
 
             parkour_client = ParkourInferenceClient(
-                hal_client_config=hal_client_config,
+                hal_client_config=inference_hal_client_config,
                 model_weights=model_weights,
                 observation_dimensions=observation_dimensions,
                 robot_definition=robot_definition,
@@ -237,9 +248,14 @@ def main():
 
             # Start inference client in separate thread
             parkour_client.start_thread(running_flag=lambda: running)
+            if args.teleop:
+                logger.info(
+                    "Teleop video active; inference commands use source=inference; operator overrides when portal sends",
+                )
         else:
             logger.info(
-                "Portal controller mode active: waiting for teleop control data-channel commands on HAL command socket"
+                f"Portal controller mode active: waiting for teleop control data-channel commands "
+                f"on HAL command socket ({COMMAND_ENDPOINT})",
             )
 
         if args.data_collector_output_dir is not None or args.data_collector_config is not None:

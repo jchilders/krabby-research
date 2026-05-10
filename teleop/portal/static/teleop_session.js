@@ -59,6 +59,7 @@
   var gamepadLoopTimer = null;
   var controlSendCount = 0;
   var lastControlSendMs = 0;
+  var teleopOperatorOverrideEl = document.getElementById('teleopOperatorOverride');
   /** First offer must run after ``hello_ack`` so ``catalog_ids`` matches checkboxes (not ``[]``). */
   var initialRtcStarted = false;
   var initialRtcFallbackTimer = null;
@@ -179,6 +180,7 @@
         JSON.stringify({
           type: 'control',
           sent_browser_ms: Date.now(),
+          operator_override: !!(teleopOperatorOverrideEl && teleopOperatorOverrideEl.checked),
           state: st
         })
       );
