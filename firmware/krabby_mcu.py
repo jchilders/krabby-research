@@ -8,8 +8,6 @@ from typing import Dict, Optional
 from firmware.interfaces.joint_telemetry import JointTelemetry
 from firmware.mcu_port import default_port
 
-import keyboard
-
 # --- LOGGING SETUP ---
 # When run as `python -m firmware --debug`, __main__.py calls basicConfig(DEBUG) before this import.
 # If krabby_mcu is imported alone, ensure a default handler exists.
