@@ -1,4 +1,7 @@
-"""Run teleop robot agent (outbound WebSocket) using a dedicated HalClient for viewer frames."""
+"""Outbound portal teleop (WebSocket signaling + WebRTC) using a dedicated HalClient for viewer frames.
+
+Shared by Isaac sim (viewer-only HalClient) and Jetson (full command path). Not Jetson-specific.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +9,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 import zmq
@@ -16,13 +19,14 @@ from hal.client.client import HalClient
 from hal.client.config import HalClientConfig
 from hal.server.robot_definition import RobotDefinition
 from hal.server.sensor_interface import SensorInterface
-from controller.input import WebRTCInputController
-from controller.mappers.gamepad_to_krabby_hal_mapper import GamepadToKrabbyHALMapper
 from teleop.edge.config import TeleopEdgeSettings
 from teleop.edge.depth_preview import depth_meters_to_rgb24_u8
 from teleop.edge.hal_rgb_track import HalRgbSnapshotVideoTrack
 from teleop.edge.portal_client import portal_client_loop
 from teleop.edge.viewer_catalog import parse_viewer_catalog_ids_from_payload
+
+if TYPE_CHECKING:
+    from controller.input.webrtc_input_controller import WebRTCInputController
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +81,7 @@ class _ViewerCatalogIds:
         return ids[track_index]
 
 
-def start_jetson_teleop_signaling_thread(
+def start_hal_teleop_signaling_thread(
     hal_client_config: HalClientConfig,
     transport_context: zmq.Context,
     sensor_interface: SensorInterface,
@@ -93,11 +97,11 @@ def start_jetson_teleop_signaling_thread(
     ``bootstrap_sensor_catalog_ids`` seeds HAL polling until the browser sends ``catalog_ids``
     on ``hello`` / ``offer`` (see portal viewer); empty list is invalid.
 
-    ``robot_definition`` must match the Jetson HAL server's ``--robot`` topology so gamepad
-    mapping produces the same joint count/order as ``apply_command``.
+    ``robot_definition`` must match the HAL server's ``--robot`` topology so gamepad mapping
+    produces the same joint count/order as ``apply_command``.
 
     When ``send_hal_commands`` is False, use ``HalClientConfig(..., command_endpoint=None)``
-    so this thread only subscribes for WebRTC video (Isaac + ``krabby-uno-sim``, or Jetson
+    so this thread only subscribes for WebRTC video (Isaac sim viewer-only, or Jetson
     viewer-only). When inference and portal both PUSH to the HAL command socket,
     ``JointCommand.source`` (operator vs inference) selects precedence on the server.
 
@@ -188,8 +192,11 @@ def start_jetson_teleop_signaling_thread(
         hal_client_lock = threading.Lock()
         hal_ready = threading.Event()
         operator_override_gate = _OperatorOverrideGate()
-        webrtc_input: Optional[WebRTCInputController] = None
+        webrtc_input: Optional["WebRTCInputController"] = None
         if send_hal_commands:
+            from controller.input.webrtc_input_controller import WebRTCInputController
+            from controller.mappers.gamepad_to_krabby_hal_mapper import GamepadToKrabbyHALMapper
+
             webrtc_input = WebRTCInputController()
             gamepad_mapper = GamepadToKrabbyHALMapper(robot_definition=robot_definition)
 
@@ -261,7 +268,7 @@ def start_jetson_teleop_signaling_thread(
         with hal_client_lock:
             hal_teleop.initialize()
         hal_ready.set()
-        poller = threading.Thread(target=_poll_worker, name="jetson-teleop-hal-poll", daemon=True)
+        poller = threading.Thread(target=_poll_worker, name="hal-teleop-hal-poll", daemon=True)
         poller.start()
 
         def _rgb_copy(catalog_id: str) -> Optional[np.ndarray]:
@@ -351,6 +358,6 @@ def start_jetson_teleop_signaling_thread(
             if poller.is_alive():
                 logger.warning("Teleop HAL poll thread did not exit within timeout")
 
-    t = threading.Thread(target=_thread_main, name="jetson-teleop-signaling", daemon=True)
+    t = threading.Thread(target=_thread_main, name="hal-teleop-signaling", daemon=True)
     t.start()
     return t

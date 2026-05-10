@@ -180,7 +180,7 @@ def test_isaac_depth_gray16_handle_and_pipeline_shape():
     depth = next(s for s in iface.list_sensors() if s.id == "front_rgbd_gray16_depth")
     handle = iface.get_gstreamer_handle(depth)
     assert handle.appsrc_pixel_format == "GRAY16_LE"
-    assert handle.depth_range_m == (0.2, 25.0)
+    assert handle.depth_range_m == (0.2, 2.0)
     pipe = iface.build_pipeline(handle, encoding="h264", output_element="fakesink")
     assert "format=GRAY16_LE" in pipe
     assert "x264enc" in pipe

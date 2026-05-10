@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 _HAL_LEGACY_FRONT_CAMERA_HEIGHT = 480
 _HAL_LEGACY_FRONT_CAMERA_WIDTH = 640
 
+# Clip / preview range for RayCaster ``distance_to_*`` — must align with ``CAMERA_CFG`` /
+# ``sim_rgbd_camera_cfgs`` ``max_distance`` so teleop ``depth_range_m`` and ``nan_to_num`` stay consistent.
+_ISAAC_FRONT_RAYCAST_CLIP_M = 2.0
+_ISAAC_SIDE_RAYCAST_CLIP_M = 1.5
+
 
 def _resize_depth(depth_np: np.ndarray, height: int, width: int) -> np.ndarray:
     if depth_np.shape == (height, width):
@@ -44,15 +49,40 @@ def _resize_rgb(rgb_np: np.ndarray, height: int, width: int) -> np.ndarray:
 
 
 def _depth_tensor_to_numpy(depth_data) -> Optional[np.ndarray]:
+    """Flatten RayCasterCamera output to a single-env (H, W) meters array.
+
+    Shapes mirror parkour ``Observations``: ``(env, H, W, 1)`` uses ``squeeze(-1)`` then env 0 —
+    indexing ``tensor[0]`` *before* removing a trailing singleton turns ``(H, W, 1)`` into a broken slice.
+    """
     if depth_data is None:
         return None
     if isinstance(depth_data, torch.Tensor):
-        if depth_data.ndim > 2:
-            depth_data = depth_data[0]
-        if depth_data.ndim == 3 and depth_data.shape[-1] == 1:
-            depth_data = depth_data.squeeze(-1)
-        return depth_data.detach().cpu().numpy().astype(np.float32)
-    return np.asarray(depth_data, dtype=np.float32)
+        d = depth_data.detach().cpu().float()
+        if d.numel() == 0:
+            return None
+        while d.ndim > 2 and int(d.shape[-1]) == 1:
+            d = d.squeeze(-1)
+        while d.ndim > 2:
+            d = d[0]
+        if d.ndim != 2:
+            return None
+        return d.numpy().astype(np.float32)
+    arr = np.asarray(depth_data, dtype=np.float32)
+    while arr.ndim > 2 and arr.shape[-1] == 1:
+        arr = np.squeeze(arr, axis=-1)
+    while arr.ndim > 2:
+        arr = arr[0]
+    return arr if arr.ndim == 2 else None
+
+
+def _sanitize_raycast_depth_m(depth_m: np.ndarray, posinf_clip_m: float) -> np.ndarray:
+    """Finite metric depth for HAL / teleop grayscale (Jetson Gst path avoids inf bands)."""
+    return np.nan_to_num(
+        np.asarray(depth_m, dtype=np.float32),
+        nan=0.0,
+        posinf=float(posinf_clip_m),
+        neginf=0.0,
+    )
 
 
 def _rgb_tensor_to_numpy(rgb_data) -> Optional[np.ndarray]:
@@ -427,7 +457,10 @@ class IsaacSimHalServer(HalServerBase):
         rgb_camera_1 = np.zeros((camera_height, camera_width, 3), dtype=np.uint8)
         depth_map = np.zeros((camera_height, camera_width), dtype=np.float32)
         if depth_raw_front is not None:
-            depth_map = _resize_depth(depth_raw_front, camera_height, camera_width)
+            depth_map = _sanitize_raycast_depth_m(
+                _resize_depth(depth_raw_front, camera_height, camera_width),
+                _ISAAC_FRONT_RAYCAST_CLIP_M,
+            )
         if rgb_raw_front is not None:
             rgb_camera_1 = _resize_rgb(rgb_raw_front, camera_height, camera_width)
         else:
@@ -448,11 +481,13 @@ class IsaacSimHalServer(HalServerBase):
 
         rgbd_by_catalog_id: dict[str, RgbdCatalogObservation] = {}
         if depth_raw_front is not None or rgb_raw_front is not None:
-            fr_d = (
-                _resize_depth(depth_raw_front, camera_height, camera_width)
-                if depth_raw_front is not None
-                else np.zeros((camera_height, camera_width), dtype=np.float32)
-            )
+            if depth_raw_front is not None:
+                fr_d = _sanitize_raycast_depth_m(
+                    _resize_depth(depth_raw_front, camera_height, camera_width),
+                    _ISAAC_FRONT_RAYCAST_CLIP_M,
+                )
+            else:
+                fr_d = np.zeros((camera_height, camera_width), dtype=np.float32)
             fr_rgb = (
                 _resize_rgb(rgb_raw_front, camera_height, camera_width)
                 if rgb_raw_front is not None
@@ -475,7 +510,10 @@ class IsaacSimHalServer(HalServerBase):
             if depth_raw_side is None:
                 d_s = np.zeros((rgb_s.shape[0], rgb_s.shape[1]), dtype=np.float32)
             else:
-                d_s = _resize_depth(depth_raw_side, rgb_s.shape[0], rgb_s.shape[1])
+                d_s = _sanitize_raycast_depth_m(
+                    _resize_depth(depth_raw_side, rgb_s.shape[0], rgb_s.shape[1]),
+                    _ISAAC_SIDE_RAYCAST_CLIP_M,
+                )
             rgbd_by_catalog_id["side_rgbd"] = RgbdCatalogObservation(rgb=rgb_s, depth=d_s)
             side_camera_rgb = rgb_s
             side_camera_depth = d_s

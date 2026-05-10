@@ -108,6 +108,11 @@ COPY teleop/edge/dist/*.whl /tmp/wheels/
 RUN . /workspace/testenv/bin/activate && \
     bash -c "pip install --no-cache-dir /tmp/wheels/*.whl"
 
+# krabby-controller (and other wheels) pull scipy; venv scipy must not shadow Isaac Sim's bundled
+# scipy in omni.pip.compute/pip_prebundle or imports mix (e.g. ComplexWarning from _lib._util).
+RUN . /workspace/testenv/bin/activate && \
+    pip uninstall -y scipy || true
+
 # Isaac Lab's install script and/or wheels can drop or override venv packages; reinstall PyGObject
 # so hal.server.gstreamer_runtime keeps working: venv Python + system Gst typelibs from apt above.
 RUN . /workspace/testenv/bin/activate && \

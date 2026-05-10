@@ -52,8 +52,8 @@ Use **`aiortc`** for the live robot-side WebRTC path (`teleop.edge` session/sign
 
 | Piece | Role |
 |--------|------|
-| **`JetsonHalServer`** (Isaac equivalent) | Cameras, **`get_observations()`**, publishes observations on the HAL **PUB** socket |
-| **`hal.server.jetson.teleop_integration`** | Dedicated **`HalClient`** poll thread (latest RGB for catalog ids chosen by the **portal viewer** over signaling, bootstrapped from the primary HAL catalog id until **`catalog_ids`** is sent) plus **`teleop.edge`** outbound signaling and **`HalRgbSnapshotVideoTrack`** |
+| **`JetsonHalServer`** / **`IsaacSimHalServer`** | Cameras / sim sensors, **`get_observations()`**, publishes observations on the HAL **PUB** socket |
+| **`hal.server.teleop_portal_signaling`** | Dedicated **`HalClient`** poll thread (latest RGB for catalog ids chosen by the **portal viewer** over signaling, bootstrapped from the primary HAL catalog id until **`catalog_ids`** is sent) plus **`teleop.edge`** outbound signaling and **`HalRgbSnapshotVideoTrack`** (shared by Jetson and Isaac; not Jetson-specific) |
 | **`krabby-teleop-portal`** | Remote server: UI + config + relay **`/ws/browser`** ↔ **`/ws/robot`** |
 | **Browser** (`teleop_session.js` / portal viewer) | Loads UI from the **portal** origin, **`/ws/browser`**, WebRTC **offer** / **answer**, re-offer for stream count |
 

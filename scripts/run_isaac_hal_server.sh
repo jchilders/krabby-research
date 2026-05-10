@@ -1,12 +1,15 @@
 #!/bin/bash
 # Isaac Sim HAL + joystick demo in Docker. Build: make build-isaacsim-image
 #
-#   ./scripts/run_isaac_hal_server.sh              # Go2 play + krabby-uno-sim on :5555 / :5556
+#   ./scripts/run_isaac_hal_server.sh              # Go2 play + krabby-uno-sim (HAL TCP :5555 / :5556 on host)
 #   ./scripts/run_isaac_hal_server.sh --hexapod  # Hex USD from repo assets/
+#
+# Uses Docker --network host (Linux) so HAL and teleop edge can use ws://127.0.0.1:9000/ws/robot when the
+# portal runs on the same machine (e.g. another container publishing 9000 on the host). Omitting bridge
+# NAT avoids 127.0.0.1 inside the Isaac container pointing at the wrong namespace.
 #
 # Optional flags (--teleop, --hexapod) may appear anywhere among script arguments.
 # Everything else is passed through to the container entrypoint.
-# Teleop signaling is configured inside the image (teleop/edge/robot_settings.py).
 
 set -e
 
@@ -52,14 +55,14 @@ xhost +local:docker 2>/dev/null || true
 
 if [ "$want_hexapod" -eq 1 ]; then
   exec docker run --rm --gpus all \
-    -p 5555:5555 -p 5556:5556 \
+    --network host \
     -e "DISPLAY=${DISPLAY}" \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v "${REPO_ROOT}/assets:/workspace/assets" \
     "$IMAGE" "${py[@]}"
 else
   exec docker run --rm --gpus all \
-    -p 5555:5555 -p 5556:5556 \
+    --network host \
     -e "DISPLAY=${DISPLAY}" \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     "$IMAGE" "${py[@]}"

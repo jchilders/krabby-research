@@ -15,6 +15,7 @@ import argparse
 import logging
 import os
 import signal
+from dataclasses import replace
 import sys
 import threading
 import time
@@ -32,6 +33,10 @@ logger = logging.getLogger(__name__)
 CONTROL_RATE_HZ = 100.0
 # Sensor catalog ids passed to teleop signaling when HAL introspects RGB-D streams (--teleop).
 TELEOP_BOOTSTRAP_SENSOR_CATALOG_IDS: tuple[str, ...] = ("front_rgbd", "side_rgbd")
+
+# Outbound WebSocket to krabby-teleop-portal ``/ws/robot``. Default for Isaac sim when the portal
+# runs alongside on the same machine (see Docker note in docs / reply when using bridge networks).
+ISAAC_TELEOP_SIGNALING_WS_URL: str = "ws://127.0.0.1:9000/ws/robot"
 
 
 def _sim_rgbd_mount_link(robot: str) -> str | None:
@@ -183,7 +188,8 @@ def main():
         action="store_true",
         help=(
             "Start outbound WebRTC teleop viewer (polls HAL observations only; no HAL commands). "
-            "Configure teleop/edge/robot_settings.py (TELEOP_EDGE_MODE=agent, SERVER_SIGNALING_WS_URL). "
+            "Signaling URL is ws://127.0.0.1:9000/ws/robot (portal on same host). "
+            "ICE/STUN still come from teleop/edge/robot_settings.py. "
             "Independent of --joystick (add --joystick when krabby-uno-sim should drive commands over TCP)."
         ),
     )
@@ -262,13 +268,13 @@ def main():
     from hal.server import HalServerConfig
     from hal.server.isaac import IsaacSimHalServer
     from hal.server.isaac.sim_rgbd_camera_cfgs import attach_sim_rgbd_sensors_to_scene_cfg
-    from hal.server.jetson.teleop_integration import start_jetson_teleop_signaling_thread
     from hal.server.robot_definition_krabby_hex import KRABBY_HEX_DEFINITION
     from hal.server.robot_definition_krabby_quad import KRABBY_QUAD_DEFINITION
     from hal.server.robot_definition_unitree_go2 import UNITREE_GO2_DEFINITION
     from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
     from compute.parkour.inference_client import ParkourInferenceClient
     from compute.parkour.policy_interface import ModelWeights
+    from hal.server.teleop_portal_signaling import start_hal_teleop_signaling_thread
     from teleop.edge.robot_settings import build_teleop_edge_settings
 
     # Running flag for graceful shutdown
@@ -396,33 +402,33 @@ def main():
     observation_client_endpoint = _zmq_client_connect_url(args.observation_bind)
 
     if args.teleop:
-        teleop_settings = build_teleop_edge_settings()
-        if not teleop_settings.agent_enabled:
-            logger.warning(
-                "--teleop ignored: edge agent disabled (set TELEOP_EDGE_MODE=agent and "
-                "SERVER_SIGNALING_WS_URL in teleop/edge/robot_settings.py)"
-            )
-        else:
-            bootstrap_ids = list(TELEOP_BOOTSTRAP_SENSOR_CATALOG_IDS)
-            teleop_hal_cfg = HalClientConfig(
-                observation_endpoint=observation_client_endpoint,
-                command_endpoint=None,
-            )
-            teleop_thread = start_jetson_teleop_signaling_thread(
-                teleop_hal_cfg,
-                transport_context,
-                hal_server.get_sensor_interface(),
-                stop_event=teleop_stop,
-                bootstrap_sensor_catalog_ids=bootstrap_ids,
-                teleop_edge_settings=teleop_settings,
-                robot_definition=robot_definition,
-                send_hal_commands=False,
-            )
-            logger.info(
-                "Teleop signaling thread started (observation=%s, viewer-only HalClient, bootstrap=%s)",
-                observation_client_endpoint,
-                bootstrap_ids,
-            )
+        base_teleop = build_teleop_edge_settings()
+        teleop_settings = replace(
+            base_teleop,
+            mode="agent",
+            server_signaling_ws_url=ISAAC_TELEOP_SIGNALING_WS_URL,
+        )
+        bootstrap_ids = list(TELEOP_BOOTSTRAP_SENSOR_CATALOG_IDS)
+        teleop_hal_cfg = HalClientConfig(
+            observation_endpoint=observation_client_endpoint,
+            command_endpoint=None,
+        )
+        teleop_thread = start_hal_teleop_signaling_thread(
+            teleop_hal_cfg,
+            transport_context,
+            hal_server.get_sensor_interface(),
+            stop_event=teleop_stop,
+            bootstrap_sensor_catalog_ids=bootstrap_ids,
+            teleop_edge_settings=teleop_settings,
+            robot_definition=robot_definition,
+            send_hal_commands=False,
+        )
+        logger.info(
+            "Teleop signaling thread started (url=%s, observation=%s, viewer-only HalClient, bootstrap=%s)",
+            teleop_settings.server_signaling_ws_url,
+            observation_client_endpoint,
+            bootstrap_ids,
+        )
 
     if not args.joystick:
         # Create HAL client config

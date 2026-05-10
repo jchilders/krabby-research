@@ -24,7 +24,7 @@ from data_collection.config import load_config
 from hal.client.config import HalClientConfig
 from hal.server import HalServerConfig
 from hal.server.jetson import JetsonHalServer
-from hal.server.jetson.teleop_integration import start_jetson_teleop_signaling_thread
+from hal.server.teleop_portal_signaling import start_hal_teleop_signaling_thread
 from compute.parkour.inference_client import ParkourInferenceClient
 from compute.parkour.policy_interface import ModelWeights
 from compute.parkour.model_definition import PARKOUR_MODEL_OBSERVATION_DEFINITION
@@ -206,7 +206,7 @@ def main():
 
         if teleop_sensor_ids is not None:
             teleop_stop = threading.Event()
-            teleop_thread = start_jetson_teleop_signaling_thread(
+            teleop_thread = start_hal_teleop_signaling_thread(
                 teleop_hal_client_config,
                 transport_context,
                 hal_server.get_sensor_interface(),

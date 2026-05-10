@@ -64,7 +64,8 @@ def _sensor_infos_from_scene_cameras(scene_sensors: dict) -> list[SensorInfo]:
                 camera_driver="isaac_scene",
                 extra={
                     "isaac_sensor_depth": "front_camera",
-                    "depth_range_m": (0.2, 25.0),
+                    # Match RayCaster ``max_distance`` (see ``hal.server.isaac.sim_rgbd_camera_cfgs``): teleop grayscale uses this band.
+                    "depth_range_m": (0.2, 2.0),
                     "gst_depth_source_catalog_id": "front_rgbd",
                 },
             )
