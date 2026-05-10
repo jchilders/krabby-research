@@ -115,7 +115,7 @@ class KrabbyMCUSDK:
                 if self.running:
                     logger.exception("Reader loop error")
                 else:
-                    logger.info("Reader loop stopped: %s", e)
+                    logger.debug("Reader loop stopped: %s", e)
                 self.last_error = e
                 self.running = False
                 break

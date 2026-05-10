@@ -203,6 +203,9 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Where Claude Code stores project-local settings
+.claude
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
@@ -216,3 +219,6 @@ __marimo__/
 # Parkour RL training artifacts (RSL-RL logs, Hydra outputs)
 parkour/logs/
 parkour/outputs/
+
+# macOS Finder artifact
+.DS_Store
