@@ -6,6 +6,7 @@ from isaaclab.assets import ArticulationCfg
 from isaaclab.utils import configclass
 
 from parkour_isaaclab.actuators.parkour_actuator_cfg import ParkourDCMotorCfg
+from parkour_tasks.crab_hexapod_task.sensors import ParkourHexContactSensorCfg
 from parkour_tasks.default_cfg import CAMERA_CFG
 from parkour_tasks.extreme_parkour_task.config.go2.parkour_student_cfg import ParkourStudentSceneCfg
 from parkour_tasks.extreme_parkour_task.config.go2.parkour_teacher_cfg import ParkourTeacherSceneCfg
@@ -26,7 +27,10 @@ def _crab_simple_usd_path() -> str:
 
 def _crab_simple_robot_cfg() -> ArticulationCfg:
     """``crab_simple.usda`` (``defaultPrim = "krabby"``): reference composes into ``{ENV_REGEX_NS}/Robot`` — leave
-    ``articulation_root_prim_path`` unset so Isaac Lab discovers the root on ``Robot``. Base link ``body``."""
+    ``articulation_root_prim_path`` unset so Isaac Lab discovers the root on ``Robot``. Base link ``chassis/body``."""
+    # USD lifts ``krabby`` by +1 m; tune root spawn so feet sit on terrain without huge drop or penetration.
+    # Default 0.79 m (override ``KRABBY_HEX_SPAWN_Z``); lower if hover-then-slam, raise if hips scrape or interpenetration.
+    spawn_z = float(os.environ.get("KRABBY_HEX_SPAWN_Z", "0.79"))
     return ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
@@ -42,18 +46,20 @@ def _crab_simple_robot_cfg() -> ArticulationCfg:
                 max_depenetration_velocity=1.0,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                enabled_self_collisions=False,
-                solver_position_iteration_count=32,
-                solver_velocity_iteration_count=8,
+                enabled_self_collisions=True,
+                solver_position_iteration_count=20,
+                solver_velocity_iteration_count=6,
             ),
         ),
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 1.05),
+            pos=(0.0, 0.0, spawn_z),
             rot=(1.0, 0.0, 0.0, 0.0),
             joint_pos={
                 ".*_Body_Hip_RevoluteJoint": 0.0,
-                ".*_Hip_Femur_RevoluteJoint": 0.0,
-                ".*_Femur_Tibia_RevoluteJoint": 0.0,
+                # Load-bearing stance (rad): slightly more thigh lift + straighter knee so feet—not hip boxes—meet terrain first.
+                ".*_Hip_Femur_RevoluteJoint": 0.35,
+                # Within soft knee limits (~±0.31 rad); less flex than -0.20 lengthens the leg chain under the chassis.
+                ".*_Femur_Tibia_RevoluteJoint": -0.14,
             },
             joint_vel={".*": 0.0},
         ),
@@ -64,26 +70,27 @@ def _crab_simple_robot_cfg() -> ArticulationCfg:
                 effort_limit=80.0,
                 saturation_effort=100.0,
                 velocity_limit=6.0,
-                stiffness=45.0,
-                damping=1.2,
+                stiffness=50.0,
+                damping=1.35,
                 friction=0.0,
             ),
+            # Femur–tibia stiffer than hip–femur: knee chain dominates collapse under zero-action / gravity.
             "hip_femur": ParkourDCMotorCfg(
                 joint_names_expr=[".*_Hip_Femur_RevoluteJoint"],
                 effort_limit=120.0,
                 saturation_effort=150.0,
                 velocity_limit=6.0,
-                stiffness=55.0,
-                damping=1.5,
+                stiffness=102.0,
+                damping=2.4,
                 friction=0.0,
             ),
             "femur_tibia": ParkourDCMotorCfg(
                 joint_names_expr=[".*_Femur_Tibia_RevoluteJoint"],
-                effort_limit=120.0,
-                saturation_effort=150.0,
+                effort_limit=150.0,
+                saturation_effort=185.0,
                 velocity_limit=6.0,
-                stiffness=55.0,
-                damping=1.5,
+                stiffness=132.0,
+                damping=2.85,
                 friction=0.0,
             ),
         },
@@ -95,16 +102,30 @@ class CrabHexTeacherSceneCfg(ParkourTeacherSceneCfg):
     def __post_init__(self):
         super().__post_init__()
         self.robot = _crab_simple_robot_cfg()
-        self.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/body"
-        self.contact_forces = None
+        self.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/chassis/body"
+        # Aggregate chassis + all leg links (``ParkourHexContactSensor``): default nested ``Robot/krabby/.*/.*``
+        # only reports ``chassis/body``; Isaac composes ``krabby`` children flat under ``Robot`` at runtime.
+        self.contact_forces = ParkourHexContactSensorCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/.*",
+            history_length=2,
+            track_air_time=True,
+            debug_vis=False,
+            force_threshold=1.0,
+        )
 
 
 @configclass
 class CrabHexStudentSceneCfg(ParkourStudentSceneCfg):
-    depth_camera = CAMERA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot/body")
+    depth_camera = CAMERA_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot/chassis/body")
 
     def __post_init__(self):
         super().__post_init__()
         self.robot = _crab_simple_robot_cfg()
-        self.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/body"
-        self.contact_forces = None
+        self.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/chassis/body"
+        self.contact_forces = ParkourHexContactSensorCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/.*",
+            history_length=2,
+            track_air_time=True,
+            debug_vis=False,
+            force_threshold=1.0,
+        )

@@ -21,7 +21,7 @@ from parkour_tasks.extreme_parkour_task.config.go2.agents.rsl_teacher_ppo_cfg im
 class CrabHexTeacherPPORunnerCfg(UnitreeGo2ParkourTeacherPPORunnerCfg):
     experiment_name = "crab_hex_teacher"
     policy = ParkourRslRlPpoActorCriticCfg(
-        init_noise_std=1.0,
+        init_noise_std=0.65,
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         scan_encoder_dims=[128, 64, 32],
@@ -41,7 +41,7 @@ class CrabHexTeacherPPORunnerCfg(UnitreeGo2ParkourTeacherPPORunnerCfg):
 class CrabHexStudentPPORunnerCfg(UnitreeGo2ParkourStudentPPORunnerCfg):
     experiment_name = "crab_hex_student"
     policy = ParkourRslRlPpoActorCriticCfg(
-        init_noise_std=1.0,
+        init_noise_std=0.65,
         actor_hidden_dims=[512, 256, 128],
         critic_hidden_dims=[512, 256, 128],
         scan_encoder_dims=[128, 64, 32],

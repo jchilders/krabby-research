@@ -31,10 +31,25 @@ def test_crab_hexapod_action_joint_regexes() -> None:
     mdp_cfg = importlib.import_module(
         "parkour_tasks.crab_hexapod_task.config.crab_hex.agents.parkour_mdp_cfg"
     )
-    joint_names = mdp_cfg.CrabHexActionsCfg.joint_pos.joint_names
-    assert ".*_HipMount_HipRevoluteJoint" in joint_names
-    assert ".*_Hip_FemurPrismatic_PrismaticJoint" in joint_names
-    assert ".*_Femur_TibiaPrismatic_PrismaticJoint" in joint_names
+    # Same delayed joint-position action as Go2 extreme parkour (`ActionsCfg`).
+    joint_names = mdp_cfg.ActionsCfg.joint_pos.joint_names
+    assert joint_names == [".*"]
+
+
+def test_crab_hex_scene_contact_and_base_paths() -> None:
+    """Crab USD nests base under ``krabby/chassis/body``; contact sensor must match two levels under ``krabby``."""
+    pytest.importorskip("pxr")
+    pytest.importorskip("isaaclab")
+    scene_mod = importlib.import_module(
+        "parkour_tasks.crab_hexapod_task.config.crab_hex.crab_hex_scene_cfg"
+    )
+    teacher = scene_mod.CrabHexTeacherSceneCfg(num_envs=1, env_spacing=1.0)
+    assert teacher.height_scanner.prim_path == "{ENV_REGEX_NS}/Robot/krabby/chassis/body"
+    assert teacher.contact_forces.prim_path == "{ENV_REGEX_NS}/Robot/krabby/.*/.*"
+    student = scene_mod.CrabHexStudentSceneCfg(num_envs=1, env_spacing=1.0)
+    assert student.height_scanner.prim_path == "{ENV_REGEX_NS}/Robot/krabby/chassis/body"
+    assert student.depth_camera.prim_path == "{ENV_REGEX_NS}/Robot/krabby/chassis/body"
+    assert student.contact_forces.prim_path == "{ENV_REGEX_NS}/Robot/krabby/.*/.*"
 
 
 def _require_runtime_smoke() -> None:

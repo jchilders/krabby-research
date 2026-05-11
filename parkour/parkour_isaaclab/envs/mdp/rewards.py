@@ -24,7 +24,6 @@ class reward_feet_edge(ManagerTermBase):
         self.sensor_cfg = cfg.params["sensor_cfg"]
         self.asset_cfg = cfg.params["asset_cfg"]
         self.parkour_event: ParkourEvent = env.parkour_manager.get_term(cfg.params["parkour_name"])
-        self.body_id = self.contact_sensor.find_bodies("base")[0] if self.contact_sensor else 0
         self.horizontal_scale = env.scene.terrain.cfg.terrain_generator.horizontal_scale
         size_x, size_y = env.scene.terrain.cfg.terrain_generator.size
         self.rows_offset = (size_x * env.scene.terrain.cfg.terrain_generator.num_rows/2)
@@ -187,8 +186,15 @@ def reward_tracking_goal_vel(
     target_vel = target_pos_rel / (torch.norm(target_pos_rel, dim=-1, keepdim=True) + 1e-5)
     cur_vel = asset.data.root_vel_w[:, :2]
     proj_vel = torch.sum(target_vel * cur_vel, dim=-1)
-    command_vel = env.command_manager.get_command('base_velocity')[:, 0]
-    rew_move = torch.minimum(proj_vel, command_vel) / (command_vel + 1e-5)
+    command_vel = env.command_manager.get_command("base_velocity")[:, 0]
+    # Avoid division blow-ups when |command_vel| is tiny (stabilizes logging / value learning).
+    v_min = 0.05
+    sign = torch.sign(command_vel)
+    sign = torch.where(sign == 0, torch.ones_like(sign), sign)
+    denom = torch.where(torch.abs(command_vel) < v_min, sign * v_min, command_vel)
+    rew_move = torch.minimum(proj_vel, command_vel) / denom
+    rew_move = torch.nan_to_num(rew_move, nan=0.0, posinf=0.0, neginf=0.0)
+    rew_move = torch.clamp(rew_move, -10.0, 10.0)
     return rew_move
 
 def reward_tracking_yaw(     

@@ -252,7 +252,7 @@ def Xform "krabby" (
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.02, 0.127, 0.61)
+            double3 xformOp:scale = (0.02, 0.127, 0.48)
             double3 xformOp:translate = (-0.355, -0.678, 0.05)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
@@ -314,7 +314,7 @@ def Xform "krabby" (
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.02, 0.127, 0.61)
+            double3 xformOp:scale = (0.02, 0.127, 0.48)
             double3 xformOp:translate = (-0.355, 0.678, 0.05)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
@@ -376,7 +376,7 @@ def Xform "krabby" (
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.02, 0.127, 0.61)
+            double3 xformOp:scale = (0.02, 0.127, 0.48)
             double3 xformOp:translate = (0.355, -0.678, 0.05)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
@@ -438,7 +438,7 @@ def Xform "krabby" (
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.02, 0.127, 0.61)
+            double3 xformOp:scale = (0.02, 0.127, 0.48)
             double3 xformOp:translate = (0.355, 0.678, 0.05)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
@@ -500,7 +500,7 @@ def Xform "krabby" (
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.02, 0.127, 0.61)
+            double3 xformOp:scale = (0.02, 0.127, 0.48)
             double3 xformOp:translate = (0, -0.678, 0.05)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
@@ -562,7 +562,7 @@ def Xform "krabby" (
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.02, 0.127, 0.61)
+            double3 xformOp:scale = (0.02, 0.127, 0.48)
             double3 xformOp:translate = (0, 0.678, 0.05)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
@@ -577,6 +577,15 @@ def Xform "krabby" (
         float physics:staticFriction = 0.45
     }
 
+    def Material "FootRubber" (
+        prepend apiSchemas = ["PhysicsMaterialAPI"]
+    )
+    {
+        float physics:dynamicFriction = 0.75
+        float physics:restitution = 0.15
+        float physics:staticFriction = 0.9
+    }
+
     def Scope "Joints"
     {
         def PhysicsRevoluteJoint "FL_Body_Hip_RevoluteJoint" (
@@ -586,7 +595,7 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 50000
             float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "Z"
-            rel physics:body0 = </krabby/body>
+            rel physics:body0 = </krabby/chassis/body>
             rel physics:body1 = </krabby/Leg_FL/FL_Hip>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
@@ -595,8 +604,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
+            float physics:lowerLimit = -50
+            float physics:upperLimit = 50
         }
 
         def PhysicsRevoluteJoint "FL_Hip_Femur_RevoluteJoint" (
@@ -614,8 +623,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -20
-            float physics:upperLimit = 20
+            float physics:lowerLimit = -75
+            float physics:upperLimit = 75
         }
 
         def PhysicsRevoluteJoint "FL_Femur_Tibia_RevoluteJoint" (
@@ -633,8 +642,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0, 0.4)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -20
-            float physics:upperLimit = 20
+            float physics:lowerLimit = -100
+            float physics:upperLimit = 100
         }
 
         def PhysicsRevoluteJoint "FR_Body_Hip_RevoluteJoint" (
@@ -644,7 +653,7 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 50000
             float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "Z"
-            rel physics:body0 = </krabby/body>
+            rel physics:body0 = </krabby/chassis/body>
             rel physics:body1 = </krabby/Leg_FR/FR_Hip>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
@@ -653,8 +662,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, -0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
+            float physics:lowerLimit = -50
+            float physics:upperLimit = 50
         }
 
         def PhysicsRevoluteJoint "FR_Hip_Femur_RevoluteJoint" (
@@ -672,8 +681,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, -0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -20
-            float physics:upperLimit = 20
+            float physics:lowerLimit = -75
+            float physics:upperLimit = 75
         }
 
         def PhysicsRevoluteJoint "FR_Femur_Tibia_RevoluteJoint" (
@@ -691,8 +700,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0, 0.4)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -20
-            float physics:upperLimit = 20
+            float physics:lowerLimit = -100
+            float physics:upperLimit = 100
         }
 
         def PhysicsRevoluteJoint "ML_Body_Hip_RevoluteJoint" (
@@ -702,7 +711,7 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 50000
             float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "Z"
-            rel physics:body0 = </krabby/body>
+            rel physics:body0 = </krabby/chassis/body>
             rel physics:body1 = </krabby/Leg_ML/ML_Hip>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
@@ -711,8 +720,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
+            float physics:lowerLimit = -50
+            float physics:upperLimit = 50
         }
 
         def PhysicsRevoluteJoint "ML_Hip_Femur_RevoluteJoint" (
@@ -730,8 +739,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -20
-            float physics:upperLimit = 20
+            float physics:lowerLimit = -75
+            float physics:upperLimit = 75
         }
 
         def PhysicsRevoluteJoint "ML_Femur_Tibia_RevoluteJoint" (
@@ -749,8 +758,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0, 0.4)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -20
-            float physics:upperLimit = 20
+            float physics:lowerLimit = -100
+            float physics:upperLimit = 100
         }
 
         def PhysicsRevoluteJoint "MR_Body_Hip_RevoluteJoint" (
@@ -760,7 +769,7 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 50000
             float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "Z"
-            rel physics:body0 = </krabby/body>
+            rel physics:body0 = </krabby/chassis/body>
             rel physics:body1 = </krabby/Leg_MR/MR_Hip>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
@@ -769,8 +778,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, -0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
+            float physics:lowerLimit = -50
+            float physics:upperLimit = 50
         }
 
         def PhysicsRevoluteJoint "MR_Hip_Femur_RevoluteJoint" (
@@ -788,8 +797,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, -0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -20
-            float physics:upperLimit = 20
+            float physics:lowerLimit = -75
+            float physics:upperLimit = 75
         }
 
         def PhysicsRevoluteJoint "MR_Femur_Tibia_RevoluteJoint" (
@@ -807,8 +816,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0, 0.4)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -20
-            float physics:upperLimit = 20
+            float physics:lowerLimit = -100
+            float physics:upperLimit = 100
         }
 
         def PhysicsRevoluteJoint "RL_Body_Hip_RevoluteJoint" (
@@ -818,7 +827,7 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 50000
             float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "Z"
-            rel physics:body0 = </krabby/body>
+            rel physics:body0 = </krabby/chassis/body>
             rel physics:body1 = </krabby/Leg_RL/RL_Hip>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
@@ -827,8 +836,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
+            float physics:lowerLimit = -50
+            float physics:upperLimit = 50
         }
 
         def PhysicsRevoluteJoint "RL_Hip_Femur_RevoluteJoint" (
@@ -846,8 +855,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -20
-            float physics:upperLimit = 20
+            float physics:lowerLimit = -75
+            float physics:upperLimit = 75
         }
 
         def PhysicsRevoluteJoint "RL_Femur_Tibia_RevoluteJoint" (
@@ -865,8 +874,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0, 0.4)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -20
-            float physics:upperLimit = 20
+            float physics:lowerLimit = -100
+            float physics:upperLimit = 100
         }
 
         def PhysicsRevoluteJoint "RR_Body_Hip_RevoluteJoint" (
@@ -876,7 +885,7 @@ def Xform "krabby" (
             float drive:angular:physics:damping = 50000
             float drive:angular:physics:stiffness = 800000
             uniform token physics:axis = "Z"
-            rel physics:body0 = </krabby/body>
+            rel physics:body0 = </krabby/chassis/body>
             rel physics:body1 = </krabby/Leg_RR/RR_Hip>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
@@ -885,8 +894,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, -0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -14
-            float physics:upperLimit = 14
+            float physics:lowerLimit = -50
+            float physics:upperLimit = 50
         }
 
         def PhysicsRevoluteJoint "RR_Hip_Femur_RevoluteJoint" (
@@ -904,8 +913,8 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, -0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -20
-            float physics:upperLimit = 20
+            float physics:lowerLimit = -75
+            float physics:upperLimit = 75
         }
 
         def PhysicsRevoluteJoint "RR_Femur_Tibia_RevoluteJoint" (
@@ -923,27 +932,35 @@ def Xform "krabby" (
             point3f physics:localPos1 = (0, 0, 0.4)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
-            float physics:lowerLimit = -20
-            float physics:upperLimit = 20
+            float physics:lowerLimit = -100
+            float physics:upperLimit = 100
         }
     }
 
-    def Cube "body" (
-        prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]
-    )
+    def Xform "chassis"
     {
-        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
-        rel material:binding = </krabby/PlyWood> (
-            bindMaterialAs = "weakerThanDescendants"
-        )
-        bool physics:collisionEnabled = 1
-        bool physics:kinematicEnabled = 0
-        bool physics:rigidBodyEnabled = 1
-        double size = 1
         quatd xformOp:orient = (1, 0, 0, 0)
-        double3 xformOp:scale = (0.7110000252723694, 1.218999981880188, 0.25)
+        double3 xformOp:scale = (1, 1, 1)
         double3 xformOp:translate = (0, 0, 0)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+
+        def Cube "body" (
+            prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]
+        )
+        {
+            float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
+            rel material:binding = </krabby/PlyWood> (
+                bindMaterialAs = "weakerThanDescendants"
+            )
+            bool physics:collisionEnabled = 1
+            bool physics:kinematicEnabled = 0
+            bool physics:rigidBodyEnabled = 1
+            double size = 1
+            quatd xformOp:orient = (1, 0, 0, 0)
+            double3 xformOp:scale = (0.7110000252723694, 1.218999981880188, 0.25)
+            double3 xformOp:translate = (0, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
+        }
     }
 
     def Scope "Graphs"
@@ -1016,14 +1033,14 @@ def Xform "krabby" (
                         bool isExecution = 1
                     }
                 )
-                prepend uint inputs:execIn.connect = </krabby/Graphs/Position_Controller/OnPlaybackTick.outputs:tick>
+                prepend uint inputs:execIn.connect = <../OnPlaybackTick.outputs:tick>
                 custom int[] inputs:jointIndices
                 custom token[] inputs:jointNames
-                prepend token[] inputs:jointNames.connect = </krabby/Graphs/Position_Controller/JointNameArray.outputs:array>
+                prepend token[] inputs:jointNames.connect = <../JointNameArray.outputs:array>
                 custom double[] inputs:positionCommand
-                prepend double[] inputs:positionCommand.connect = </krabby/Graphs/Position_Controller/JointCommandArray.outputs:array>
-                custom string inputs:robotPath = "/krabby"
-                custom rel inputs:targetPrim = </krabby> (
+                prepend double[] inputs:positionCommand.connect = <../JointCommandArray.outputs:array>
+                custom string inputs:robotPath = ""
+                custom rel inputs:targetPrim = <../../..> (
                     customData = {
                         dictionary omni = {
                             dictionary graph = {

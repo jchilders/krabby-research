@@ -2,10 +2,10 @@
 # Policy layout sizes for ``ExtremeParkourObservations`` (see parkour_isaaclab.envs.mdp.observations).
 #
 # Krabby ``crab_simple.usda``: ``num_joints = 18``, joint_pos action dim ``18``.
-#   obs_buf_dim = 13 + 2 * num_joints + action_dim + 4  ->  13 + 36 + 18 + 4 = 71  (= num_prop)
+#   obs_buf_dim = 13 + 2 * num_joints + action_dim + num_contact  ->  13 + 36 + 18 + 6 = 73  (= num_prop; six Tibia contacts)
 #   priv_latent   = mass(1+3) + friction(1) + stiffness(N) + damping(N)  ->  4 + 1 + 18 + 18 = 41
 #   policy flat len = (1 + history_length) * obs_buf_dim + 132 + 9 + priv_latent
-#                   = 11 * 71 + 141 + 41 = 963
+#                   = 11 * 73 + 141 + 41 = 975  (141 = 132 scan + 9 priv_explicit)
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import 
 class CrabHexParkourRslRlBaseCfg(ParkourRslRlBaseCfg):
     """Crab simple: must match ``ExtremeParkourObservations`` tensor layout (see module docstring)."""
 
-    num_prop: int = 71
+    num_prop: int = 73
     num_priv_latent: int = 41
     # num_scan=132, num_hist=10, num_priv_explicit=9 — inherited
 
