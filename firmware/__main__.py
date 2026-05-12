@@ -2,8 +2,6 @@
 Interactive MCU menu. Run with: python -m firmware [--debug]
 """
 import sys
-import tty
-import termios
 import logging
 import time
 
@@ -67,12 +65,7 @@ def main():
     listener = pynput_keyboard.Listener(on_press=_on_press, on_release=_on_release)
     listener.start()
 
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-
     try:
-        tty.setcbreak(fd)
-
         print("\n=== Krabby MCU — Direct key control (18 joints) ===")
         print("Extend: Q W E R T Y  |  Retract: A S D F G H")
         print("Hold 1: LEFT set  |  Hold 2: RIGHT set  |  Hold 1+2: all 18  |  No 1/2: FRONT")
@@ -126,8 +119,6 @@ def main():
     except KeyboardInterrupt:
         mcu.send_command_joints_hold()
     finally:
-        termios.tcflush(fd, termios.TCIFLUSH)
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         listener.stop()
         mcu.close()
 
