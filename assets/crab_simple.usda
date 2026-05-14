@@ -679,7 +679,7 @@ def Xform "krabby" (
             float physics:breakTorque = 3.4028235e38
             point3f physics:localPos0 = (-0.5, 0, -0.38151386)
             point3f physics:localPos1 = (0, -0.4, 0)
-            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot0 = (0, 0, 1, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
             float physics:lowerLimit = -75
             float physics:upperLimit = 75
@@ -698,7 +698,7 @@ def Xform "krabby" (
             float physics:breakTorque = 3.4028235e38
             point3f physics:localPos0 = (0.5, 0.470481, -0.1)
             point3f physics:localPos1 = (0, 0, 0.4)
-            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot0 = (0, 0, 1, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
             float physics:lowerLimit = -100
             float physics:upperLimit = 100
@@ -735,7 +735,7 @@ def Xform "krabby" (
             rel physics:body1 = </krabby/Leg_ML/ML_Femur>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
-            point3f physics:localPos0 = (-0.5, 0, -0.38151386)
+            point3f physics:localPos0 = (0, 0, -0.38151386)
             point3f physics:localPos1 = (0, 0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
@@ -754,7 +754,7 @@ def Xform "krabby" (
             rel physics:body1 = </krabby/Leg_ML/ML_Tibia>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
-            point3f physics:localPos0 = (0.5, -0.470481, -0.1)
+            point3f physics:localPos0 = (0, -0.470481, -0.1)
             point3f physics:localPos1 = (0, 0, 0.4)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
@@ -793,9 +793,9 @@ def Xform "krabby" (
             rel physics:body1 = </krabby/Leg_MR/MR_Femur>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
-            point3f physics:localPos0 = (-0.5, 0, -0.38151386)
+            point3f physics:localPos0 = (0, 0, -0.38151386)
             point3f physics:localPos1 = (0, -0.4, 0)
-            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot0 = (0, 0, 1, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
             float physics:lowerLimit = -75
             float physics:upperLimit = 75
@@ -812,9 +812,9 @@ def Xform "krabby" (
             rel physics:body1 = </krabby/Leg_MR/MR_Tibia>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
-            point3f physics:localPos0 = (0.5, 0.470481, -0.1)
+            point3f physics:localPos0 = (0, 0.470481, -0.1)
             point3f physics:localPos1 = (0, 0, 0.4)
-            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot0 = (0, 0, 1, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
             float physics:lowerLimit = -100
             float physics:upperLimit = 100
@@ -851,7 +851,7 @@ def Xform "krabby" (
             rel physics:body1 = </krabby/Leg_RL/RL_Femur>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
-            point3f physics:localPos0 = (-0.5, 0, -0.38151386)
+            point3f physics:localPos0 = (0.5, 0, -0.38151386)
             point3f physics:localPos1 = (0, 0.4, 0)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
@@ -870,7 +870,7 @@ def Xform "krabby" (
             rel physics:body1 = </krabby/Leg_RL/RL_Tibia>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
-            point3f physics:localPos0 = (0.5, -0.470481, -0.1)
+            point3f physics:localPos0 = (-0.5, -0.470481, -0.1)
             point3f physics:localPos1 = (0, 0, 0.4)
             quatf physics:localRot0 = (1, 0, 0, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
@@ -909,9 +909,9 @@ def Xform "krabby" (
             rel physics:body1 = </krabby/Leg_RR/RR_Femur>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
-            point3f physics:localPos0 = (-0.5, 0, -0.38151386)
+            point3f physics:localPos0 = (0.5, 0, -0.38151386)
             point3f physics:localPos1 = (0, -0.4, 0)
-            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot0 = (0, 0, 1, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
             float physics:lowerLimit = -75
             float physics:upperLimit = 75
@@ -928,9 +928,9 @@ def Xform "krabby" (
             rel physics:body1 = </krabby/Leg_RR/RR_Tibia>
             float physics:breakForce = 3.4028235e38
             float physics:breakTorque = 3.4028235e38
-            point3f physics:localPos0 = (0.5, 0.470481, -0.1)
+            point3f physics:localPos0 = (-0.5, 0.470481, -0.1)
             point3f physics:localPos1 = (0, 0, 0.4)
-            quatf physics:localRot0 = (1, 0, 0, 0)
+            quatf physics:localRot0 = (0, 0, 1, 0)
             quatf physics:localRot1 = (1, 0, 0, 0)
             float physics:lowerLimit = -100
             float physics:upperLimit = 100
