@@ -1,5 +1,6 @@
 import os
 
+from isaaclab.envs import ViewerCfg
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.utils import configclass
 
@@ -21,14 +22,22 @@ from parkour_tasks.crab_hexapod_task.config.crab_hex.crab_hex_scene_cfg import (
 from parkour_tasks.extreme_parkour_task.config.go2.parkour_student_cfg import (
     UnitreeGo2StudentParkourEnvCfg,
 )
-from parkour_tasks.default_cfg import VIEWER
 from parkour_tasks.extreme_parkour_task.config.go2.parkour_teacher_cfg import (
     UnitreeGo2TeacherParkourEnvCfg,
+)
+
+# Front 3/4 view: FL/FR at −x; Go2 ``VIEWER`` is a tight +y side shot.
+CRAB_HEX_VIEWER = ViewerCfg(
+    eye=(-4.0, 0.5, 1.55),
+    lookat=(0.0, 0.0, 0.35),
+    asset_name="robot",
+    origin_type="asset_root",
 )
 
 
 @configclass
 class CrabHexTeacherEnvCfg(UnitreeGo2TeacherParkourEnvCfg):
+    viewer = CRAB_HEX_VIEWER
     scene: CrabHexTeacherSceneCfg = CrabHexTeacherSceneCfg(num_envs=6144, env_spacing=1.0)
     observations: CrabHexTeacherObservationsCfg = CrabHexTeacherObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
@@ -78,7 +87,7 @@ class CrabHexTeacherEnvCfgPLAY(CrabHexTeacherEnvCfg):
     Set ``KRABBY_HEX_PLAY_HARD=1`` for the previous high-difficulty play preset (no flat, 0.7–1.0 difficulty).
     """
 
-    viewer = VIEWER
+    viewer = CRAB_HEX_VIEWER
 
     def __post_init__(self):
         super().__post_init__()

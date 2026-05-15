@@ -29,8 +29,8 @@ def _crab_simple_robot_cfg() -> ArticulationCfg:
     """``crab_simple.usda`` (``defaultPrim = "krabby"``): reference composes into ``{ENV_REGEX_NS}/Robot`` — leave
     ``articulation_root_prim_path`` unset so Isaac Lab discovers the root on ``Robot``. Base link ``chassis/body``."""
     # USD lifts ``krabby`` by +1 m; tune root spawn so feet sit on terrain without huge drop or penetration.
-    # Default 0.79 m (override ``KRABBY_HEX_SPAWN_Z``); lower if hover-then-slam, raise if hips scrape or interpenetration.
-    spawn_z = float(os.environ.get("KRABBY_HEX_SPAWN_Z", "0.79"))
+    # Default 0.93 m (override ``KRABBY_HEX_SPAWN_Z``); lower if hover-then-slam, raise if hips scrape or interpenetration.
+    spawn_z = float(os.environ.get("KRABBY_HEX_SPAWN_Z", "0.93"))
     return ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
@@ -55,11 +55,17 @@ def _crab_simple_robot_cfg() -> ArticulationCfg:
             pos=(0.0, 0.0, spawn_z),
             rot=(1.0, 0.0, 0.0, 0.0),
             joint_pos={
-                ".*_Body_Hip_RevoluteJoint": 0.0,
-                # Load-bearing stance (rad): slightly more thigh lift + straighter knee so feet—not hip boxes—meet terrain first.
-                ".*_Hip_Femur_RevoluteJoint": 0.35,
-                # Within soft knee limits (~±0.31 rad); less flex than -0.20 lengthens the leg chain under the chassis.
-                ".*_Femur_Tibia_RevoluteJoint": -0.14,
+                # Body–hip yaw (Z): front/rear splay; L/R mirrored (right-side signs verified in top view).
+                "FR_Body_Hip_RevoluteJoint": 0.6,
+                "FL_Body_Hip_RevoluteJoint": -0.6,
+                "ML_Body_Hip_RevoluteJoint": 0.0,
+                "MR_Body_Hip_RevoluteJoint": 0.0,
+                "RR_Body_Hip_RevoluteJoint": -0.6,
+                "RL_Body_Hip_RevoluteJoint": 0.6,
+                # Straighter stance (rad) for corrected USD leg reach; less inward knee flex at contact.
+                ".*_Hip_Femur_RevoluteJoint": 0.30,
+                # Within soft knee limits (~±0.31 rad).
+                ".*_Femur_Tibia_RevoluteJoint": -0.10,
             },
             joint_vel={".*": 0.0},
         ),

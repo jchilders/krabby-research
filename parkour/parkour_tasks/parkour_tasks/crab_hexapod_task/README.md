@@ -57,9 +57,9 @@ export KRABBY_HEX_USD_PATH="$KRABBY_ROOT/krabby-research/assets/crab_simple.usda
 
 You can point `KRABBY_HEX_USD_PATH` at a flattened `.usd` export for deployment; the default authoring file is `crab_simple.usda`.
 
-**Spawn height:** The USD root `krabby` is offset upward in the file; `[_crab_simple_robot_cfg()](config/crab_hex/crab_hex_scene_cfg.py)` sets the articulation world `z` from `KRABBY_HEX_SPAWN_Z` (with a default for `crab_simple.usda`). If the robot **floats then slams**, **lower** slightly; if **hips scrape** or the root **interpenetrates** the ground after touchdown, **raise** in ~**0.02** m steps on a **flat** tile.
+**Spawn height:** The USD root `krabby` is offset **+1 m** in the file; `[_crab_simple_robot_cfg()](config/crab_hex/crab_hex_scene_cfg.py)` sets articulation spawn `z` from `KRABBY_HEX_SPAWN_Z` (default **`0.93`** m). Use the same value for train, play, and stance checks. If the robot **floats then slams**, **lower** slightly; if **hips scrape** or the root **interpenetrates**, **raise** in ~**0.02** m steps on flat ground.
 
-**Default joint pose:** Initial `Hip_Femur` / `Femur_Tibia` angles (rad) are set in the same function for a symmetric, load-bearing stance (within soft knee limits); adjust there if the default stance is wrong for your terrain.
+**Default joint pose (rad):** body–hip yaw splay **±0.6** on front/rear legs (middle legs **0**); `Hip_Femur` **0.30**; `Femur_Tibia` **−0.10**. Tune in `crab_hex_scene_cfg.py` if the passive stance is wrong.
 
 ---
 
@@ -82,7 +82,7 @@ You can point `KRABBY_HEX_USD_PATH` at a flattened `.usd` export for deployment;
   - **Env counts:** teacher `**num_envs=6144`**, student `**num_envs=192**` (same as Go2 defaults).  
   - **Optional easier train terrain:** set `**export KRABBY_HEX_TRAIN_EASY=1`** before `train.py` to use a lower difficulty band and **50%** `parkour_flat` (same mix idea as play-easy); teacher does **not** enable this by default.  
   - `CrabHexTeacherEnvCfgPLAY` is the **play/eval** variant:
-    - Viewer follow-cam (uses `VIEWER` from `default_cfg.py`)  
+    - Viewer follow-cam (`CRAB_HEX_VIEWER` in `crab_hex_env_cfg.py` — front 3/4, tracks `robot` root; same on `CrabHexTeacherEnvCfg`)  
     - Longer episodes (~60 s)  
     - Parkour + base velocity debug visualization  
     - **Default terrain:** easier / flat-heavy mix (difficulty **0.15–0.55**, **50%** `parkour_flat`) unless `**export KRABBY_HEX_PLAY_HARD=1`**, which restores a harder band (**0.7–1.0**, no flat). You can still force easy with `**export KRABBY_HEX_PLAY_EASY=1`**.
@@ -118,6 +118,7 @@ All commands in this section assume:
 
 ```bash
 export KRABBY_ROOT=/home/sanjay/Projects/krabby
+export KRABBY_HEX_SPAWN_Z=0.93
 conda activate env_isaaclab
 export PYTHONPATH="$KRABBY_ROOT/krabby-research/parkour/parkour_tasks:$KRABBY_ROOT/krabby-research/parkour:${PYTHONPATH}"
 # Optional if the default path resolver finds crab_simple.usda:
@@ -131,6 +132,28 @@ export PYTHONPATH="$KRABBY_ROOT/krabby-research/parkour/parkour_tasks:$KRABBY_RO
 - **Play** with an explicit `**--checkpoint`** uses that file path for inference; cwd does not change which weights load. You may still see a line like `Loading experiment from directory: ...` that reflects cwd-based `log_root_path`—when you pass `--checkpoint`, the run uses the checkpoint path you gave.
 
 **Alternative:** if you `cd "$KRABBY_ROOT/IsaacLab"` and run `./isaaclab.sh`, checkpoints go under `**IsaacLab/logs/rsl_rl/...`** instead (same script, different cwd).
+
+### 3.0 Zero-agent stance check (no policy)
+
+[`parkour/scripts/zero_agent.py`](../../../scripts/zero_agent.py) runs any registered `parkour_tasks` env with **all-zero actions** (hold default joint targets from `crab_hex_scene_cfg.py`; no checkpoint). Use this to verify **spawn height**, **default pose**, and **`CRAB_HEX_VIEWER`** before training.
+
+**Recommended for a flat stance check** (easy terrain, hex camera, one env):
+
+```bash
+export KRABBY_ROOT=/home/sanjay/Projects/krabby
+export KRABBY_HEX_SPAWN_Z=0.93
+conda activate env_isaaclab
+
+cd "$KRABBY_ROOT/krabby-research/parkour"
+"$KRABBY_ROOT/IsaacLab/isaaclab.sh" -p "$KRABBY_ROOT/krabby-research/parkour/scripts/zero_agent.py" \
+  --task Isaac-Crab-Hex-Teacher-Play-v0 \
+  --num_envs 1
+```
+
+- Default `--task` is `Isaac-Crab-Hex-Teacher-Play-v0`; use `Isaac-Crab-Hex-Teacher-v0` to match the training MDP (parkour terrain mix).
+- Add `--headless` for no GUI (physics only).
+- The script must be launched via `isaaclab.sh -p` (do not run `zero_agent.py` directly — you will get `Permission denied`).
+- Passive stability is **not** the same as a trained policy: the robot only holds the configured default pose under gravity. A few tens of seconds upright is normal; long collapse means retune spawn or joint defaults in `crab_hex_scene_cfg.py`.
 
 ### 3.1 Train the teacher
 
