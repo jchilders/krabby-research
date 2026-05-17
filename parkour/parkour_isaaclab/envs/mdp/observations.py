@@ -40,7 +40,7 @@ class ExtremeParkourObservations(ManagerTermBase):
         # Contact channels: match configured foot/body indices (e.g. 4 Go2 feet, 6 crab tibias).
         _ids = getattr(self.sensor_cfg, "body_ids", None)
         self._num_contact = len(_ids) if _ids is not None and len(_ids) > 0 else 4
-        # obs_buf dim: 13 (base/imu/cmd) + 2*num_joints (pos, vel) + action_dim (last_act from joint_pos term) + contact
+        # obs_buf dim: 13 (base/imu/cmd) + 2*num_joints (pos, vel) + action_dim (last_act) + contact
         num_joints = self.asset.num_joints
         joint_pos_term = env.action_manager.get_term("joint_pos")
         action_dim = getattr(joint_pos_term, "_num_joints", num_joints)

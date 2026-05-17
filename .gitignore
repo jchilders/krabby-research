@@ -220,5 +220,8 @@ __marimo__/
 parkour/logs/
 parkour/outputs/
 
+# Crab hex local-only scripts (RSL runner, diagnostics; not committed)
+parkour/parkour_tasks/parkour_tasks/crab_hexapod_task/tempscripts/
+
 # macOS Finder artifact
 .DS_Store

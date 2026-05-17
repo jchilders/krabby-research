@@ -237,3 +237,99 @@ def reward_collision(
         return torch.zeros(env.num_envs, device=env.device)
     net_contact_forces = contact_sensor.data.net_forces_w_history[:, 0, sensor_cfg.body_ids]
     return torch.sum(1.0 * (torch.norm(net_contact_forces, dim=-1) > 0.1), dim=1)
+
+
+def reward_feet_air_time_positive(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float,
+) -> torch.Tensor:
+    """Reward swing duration above ``threshold`` at touchdown (no penalty for short swings).
+
+    Unlike Isaac Lab ``feet_air_time``, uses ``relu(last_air_time - threshold)`` so brief contacts
+    do not get a negative contribution at first contact.
+    """
+    contact_sensor = env.scene.sensors.get(sensor_cfg.name)
+    if contact_sensor is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+    excess = torch.relu(last_air_time - threshold)
+    reward = torch.sum(excess * first_contact, dim=1)
+    reward *= torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.1
+    return reward
+
+
+def penalty_excess_feet_in_contact_forward(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    max_feet_on_ground: int,
+    contact_force_threshold: float = 0.1,
+    min_forward_speed_cmd: float = 0.12,
+) -> torch.Tensor:
+    """Penalize having too many feet on the ground while commanding forward motion (hexapod gait nudge).
+
+    Counts feet with net contact force magnitude above ``contact_force_threshold``. When
+    ``|base_velocity command x|`` exceeds ``min_forward_speed_cmd``, returns
+    ``relu(count - max_feet_on_ground)`` per env (0 if not commanding forward).
+    """
+    contact_sensor = env.scene.sensors.get(sensor_cfg.name)
+    if contact_sensor is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    net_contact_forces = contact_sensor.data.net_forces_w_history[:, 0, sensor_cfg.body_ids]
+    in_contact = torch.norm(net_contact_forces, dim=-1) > contact_force_threshold
+    num_feet = torch.sum(in_contact.float(), dim=1)
+    excess = torch.relu(num_feet - float(max_feet_on_ground))
+    cmd = env.command_manager.get_command(command_name)
+    moving = torch.abs(cmd[:, 0]) > min_forward_speed_cmd
+    return excess * moving.float()
+
+
+def reward_forward_progress_along_command(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    min_cmd_norm: float = 0.12,
+    max_speed_scale: float = 2.0,
+) -> torch.Tensor:
+    """Dense nonnegative progress: base linear velocity (body frame) along commanded planar direction.
+
+    Matches body-frame velocity commands. Only applies when planar command norm exceeds ``min_cmd_norm``.
+    Clips at ``max_speed_scale`` [m/s] along the projection.
+    """
+    asset = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    cmd_xy = cmd[:, :2]
+    norm = torch.norm(cmd_xy, dim=1)
+    active = norm > min_cmd_norm
+    dir_xy = cmd_xy / (norm.unsqueeze(-1) + 1e-8)
+    vel_b_xy = asset.data.root_lin_vel_b[:, :2]
+    progress = torch.sum(vel_b_xy * dir_xy, dim=1)
+    progress = torch.clamp(progress, min=0.0, max=max_speed_scale)
+    return progress * active.float()
+
+
+def reward_stance_support_feet_when_forward(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    min_feet_loaded: int = 3,
+    contact_force_threshold: float = 0.1,
+    min_forward_speed_cmd: float = 0.12,
+) -> torch.Tensor:
+    """Binary bonus when at least ``min_feet_loaded`` tibias show contact while commanding forward.
+
+    Complements ``penalty_excess_feet_in_contact_forward``: rewards a load-bearing stance for pushing.
+    """
+    contact_sensor = env.scene.sensors.get(sensor_cfg.name)
+    if contact_sensor is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    net_contact_forces = contact_sensor.data.net_forces_w_history[:, 0, sensor_cfg.body_ids]
+    in_contact = torch.norm(net_contact_forces, dim=-1) > contact_force_threshold
+    num_feet = torch.sum(in_contact.float(), dim=1)
+    cmd = env.command_manager.get_command(command_name)
+    moving = torch.abs(cmd[:, 0]) > min_forward_speed_cmd
+    has_support = num_feet.float() >= float(min_feet_loaded)
+    return has_support.float() * moving.float()

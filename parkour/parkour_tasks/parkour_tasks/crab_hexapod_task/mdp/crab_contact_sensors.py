@@ -1,4 +1,4 @@
-"""Per-foot contact sensors for crab_hex (Isaac Lab ContactSensor is one parent prim per env)."""
+"""Per-foot contact helpers for crab_hex (feet are ``*_Footpad`` rigid bodies)."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ if TYPE_CHECKING:
     from isaaclab.scene import InteractiveScene
     from isaaclab.sensors import ContactSensor
 
-# Scene sensor keys and matching tibia prim names (ContactSensor.body_names last path segment).
-CRAB_HEX_TIBIA_CONTACT_KEYS: tuple[str, ...] = (
+# Legacy scene keys (unused when using aggregate ``contact_forces`` sensor).
+CRAB_HEX_FOOTPAD_CONTACT_KEYS: tuple[str, ...] = (
     "contact_feet_fl",
     "contact_feet_fr",
     "contact_feet_ml",
@@ -18,20 +18,33 @@ CRAB_HEX_TIBIA_CONTACT_KEYS: tuple[str, ...] = (
     "contact_feet_rr",
 )
 
-CRAB_HEX_TIBIA_BODY_NAMES: tuple[str, ...] = (
-    "FL_Tibia",
-    "FR_Tibia",
-    "ML_Tibia",
-    "MR_Tibia",
-    "RL_Tibia",
-    "RR_Tibia",
+# Foot rigid-body names on ``ParkourHexContactSensor`` / articulation (distal contact pads).
+CRAB_HEX_FOOTPAD_BODY_NAMES: tuple[str, ...] = (
+    "FL_Footpad",
+    "FR_Footpad",
+    "ML_Footpad",
+    "MR_Footpad",
+    "RL_Footpad",
+    "RR_Footpad",
 )
+
+# Backward-compatible aliases (deprecated).
+CRAB_HEX_TIBIA_CONTACT_KEYS = CRAB_HEX_FOOTPAD_CONTACT_KEYS
+CRAB_HEX_TIBIA_BODY_NAMES = CRAB_HEX_FOOTPAD_BODY_NAMES
+
+
+def crab_hex_footpad_contacts_ready(scene: InteractiveScene) -> bool:
+    s = scene.sensors
+    return all(k in s for k in CRAB_HEX_FOOTPAD_CONTACT_KEYS)
+
+
+def iter_crab_hex_footpad_contact_sensors(scene: InteractiveScene) -> list[ContactSensor]:
+    return [scene.sensors[k] for k in CRAB_HEX_FOOTPAD_CONTACT_KEYS]
 
 
 def crab_hex_tibia_contacts_ready(scene: InteractiveScene) -> bool:
-    s = scene.sensors
-    return all(k in s for k in CRAB_HEX_TIBIA_CONTACT_KEYS)
+    return crab_hex_footpad_contacts_ready(scene)
 
 
 def iter_crab_hex_tibia_contact_sensors(scene: InteractiveScene) -> list[ContactSensor]:
-    return [scene.sensors[k] for k in CRAB_HEX_TIBIA_CONTACT_KEYS]
+    return iter_crab_hex_footpad_contact_sensors(scene)

@@ -3,7 +3,33 @@
 import gymnasium as gym
 
 from . import agents
-from .crab_hex_env_cfg import CrabHexStudentEnvCfg, CrabHexTeacherEnvCfg, CrabHexTeacherEnvCfgPLAY
+from .crab_hex_env_cfg import (
+    CrabHexFlatWalkEnvCfg,
+    CrabHexFlatWalkEnvCfgPLAY,
+    CrabHexStudentEnvCfg,
+    CrabHexTeacherEnvCfg,
+    CrabHexTeacherEnvCfgPLAY,
+)
+
+gym.register(
+    id="Isaac-Crab-Hex-Flat-Walk-v0",
+    entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CrabHexFlatWalkEnvCfg,
+        "rsl_rl_cfg_entry_point": agents.rsl_rl_ppo_cfg.CrabHexFlatWalkPPORunnerCfg,
+    },
+)
+
+gym.register(
+    id="Isaac-Crab-Hex-Flat-Walk-Play-v0",
+    entry_point="parkour_isaaclab.envs:ParkourManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": CrabHexFlatWalkEnvCfgPLAY,
+        "rsl_rl_cfg_entry_point": agents.rsl_rl_ppo_cfg.CrabHexFlatWalkPPORunnerCfg,
+    },
+)
 
 gym.register(
     id="Isaac-Crab-Hex-Teacher-v0",

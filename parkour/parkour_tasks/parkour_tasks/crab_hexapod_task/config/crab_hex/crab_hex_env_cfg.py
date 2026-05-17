@@ -7,6 +7,9 @@ from isaaclab.utils import configclass
 from parkour_tasks.crab_hexapod_task.config.crab_hex.agents.parkour_mdp_cfg import (
     ActionsCfg,
     CommandsCfg,
+    CrabHexFlatWalkActionsCfg,
+    CrabHexFlatWalkRewardsCfg,
+    CrabHexFlatWalkTerminationsCfg,
     CrabHexRewardsCfg,
     CrabHexStudentObservationsCfg,
     CrabHexStudentRewardsCfg,
@@ -33,6 +36,13 @@ CRAB_HEX_VIEWER = ViewerCfg(
     asset_name="robot",
     origin_type="asset_root",
 )
+# Top view: directly above root (raise z for wider view)
+# CRAB_HEX_VIEWER = ViewerCfg(
+#     eye=(0.0, 0.0, 6.0),      # directly above root (raise z for wider view)
+#     lookat=(0.0, 0.0, 0.35),  # same as now — chassis height
+#     asset_name="robot",
+#     origin_type="asset_root",
+# )
 
 
 @configclass
@@ -77,6 +87,46 @@ class CrabHexTeacherEnvCfg(UnitreeGo2TeacherParkourEnvCfg):
                     else:
                         sub_terrain.proportion = share
                     sub_terrain.noise_range = (0.02, 0.02)
+
+
+@configclass
+class CrabHexFlatWalkEnvCfg(CrabHexTeacherEnvCfg):
+    """Stage-1 flat walk: 100% ``parkour_flat``, minimal rewards, reduced domain randomization."""
+
+    actions: CrabHexFlatWalkActionsCfg = CrabHexFlatWalkActionsCfg()
+    rewards: CrabHexFlatWalkRewardsCfg = CrabHexFlatWalkRewardsCfg()
+    terminations: CrabHexFlatWalkTerminationsCfg = CrabHexFlatWalkTerminationsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.commands.base_velocity.ranges.lin_vel_x = (0.35, 0.7)
+        self.events.push_by_setting_velocity = None
+        self.events.randomize_rigid_body_mass = None
+        self.events.randomize_rigid_body_com = None
+        tg = getattr(self.scene.terrain, "terrain_generator", None) if self.scene.terrain else None
+        if tg is not None:
+            tg.curriculum = False
+            tg.difficulty_range = (0.1, 0.25)
+            for key, sub_terrain in tg.sub_terrains.items():
+                if key == "parkour_flat":
+                    sub_terrain.proportion = 1.0
+                else:
+                    sub_terrain.proportion = 0.0
+
+
+@configclass
+class CrabHexFlatWalkEnvCfgPLAY(CrabHexFlatWalkEnvCfg):
+    """Flat-walk visualization: follow-cam and command debug."""
+
+    viewer = CRAB_HEX_VIEWER
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.episode_length_s = 60.0
+        self.parkours.base_parkour.debug_vis = True
+        self.commands.base_velocity.debug_vis = True
+        if self.scene.terrain is not None:
+            self.scene.terrain.max_init_terrain_level = None
 
 
 @configclass

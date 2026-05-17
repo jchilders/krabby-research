@@ -25,12 +25,50 @@ def _crab_simple_usd_path() -> str:
     return "/workspace/krabby-research/assets/crab_simple.usda"
 
 
+# All body hips share identical drive (USD joints are symmetric).
+_BODY_HIP_STIFFNESS = {
+    "FL_Body_Hip_RevoluteJoint": 95.0,
+    "FR_Body_Hip_RevoluteJoint": 95.0,
+    "ML_Body_Hip_RevoluteJoint": 95.0,
+    "MR_Body_Hip_RevoluteJoint": 95.0,
+    "RL_Body_Hip_RevoluteJoint": 95.0,
+    "RR_Body_Hip_RevoluteJoint": 95.0,
+}
+_BODY_HIP_DAMPING = {name: 1.9 for name in _BODY_HIP_STIFFNESS}
+_BODY_HIP_EFFORT = {name: 130.0 for name in _BODY_HIP_STIFFNESS}
+_BODY_HIP_SATURATION = {name: 160.0 for name in _BODY_HIP_STIFFNESS}
+
+_HIP_FEMUR_STIFFNESS = {name: 130.0 for name in [
+    "FL_Hip_Femur_RevoluteJoint",
+    "FR_Hip_Femur_RevoluteJoint",
+    "ML_Hip_Femur_RevoluteJoint",
+    "MR_Hip_Femur_RevoluteJoint",
+    "RL_Hip_Femur_RevoluteJoint",
+    "RR_Hip_Femur_RevoluteJoint",
+]}
+_HIP_FEMUR_DAMPING = {name: 2.8 for name in _HIP_FEMUR_STIFFNESS}
+_HIP_FEMUR_EFFORT = {name: 150.0 for name in _HIP_FEMUR_STIFFNESS}
+_HIP_FEMUR_SATURATION = {name: 185.0 for name in _HIP_FEMUR_STIFFNESS}
+
+_FEMUR_TIBIA_STIFFNESS = {name: 160.0 for name in [
+    "FL_Femur_Tibia_RevoluteJoint",
+    "FR_Femur_Tibia_RevoluteJoint",
+    "ML_Femur_Tibia_RevoluteJoint",
+    "MR_Femur_Tibia_RevoluteJoint",
+    "RL_Femur_Tibia_RevoluteJoint",
+    "RR_Femur_Tibia_RevoluteJoint",
+]}
+_FEMUR_TIBIA_DAMPING = {name: 3.2 for name in _FEMUR_TIBIA_STIFFNESS}
+_FEMUR_TIBIA_EFFORT = {name: 170.0 for name in _FEMUR_TIBIA_STIFFNESS}
+_FEMUR_TIBIA_SATURATION = {name: 210.0 for name in _FEMUR_TIBIA_STIFFNESS}
+
+
 def _crab_simple_robot_cfg() -> ArticulationCfg:
     """``crab_simple.usda`` (``defaultPrim = "krabby"``): reference composes into ``{ENV_REGEX_NS}/Robot`` — leave
     ``articulation_root_prim_path`` unset so Isaac Lab discovers the root on ``Robot``. Base link ``chassis/body``."""
     # USD lifts ``krabby`` by +1 m; tune root spawn so feet sit on terrain without huge drop or penetration.
-    # Default 0.93 m (override ``KRABBY_HEX_SPAWN_Z``); lower if hover-then-slam, raise if hips scrape or interpenetration.
-    spawn_z = float(os.environ.get("KRABBY_HEX_SPAWN_Z", "0.93"))
+    # Default 0.95 m (override ``KRABBY_HEX_SPAWN_Z``); lower if hover-then-slam, raise if hips scrape or interpenetration.
+    spawn_z = float(os.environ.get("KRABBY_HEX_SPAWN_Z", "0.95"))
     return ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
@@ -73,30 +111,30 @@ def _crab_simple_robot_cfg() -> ArticulationCfg:
         actuators={
             "body_hip_yaw": ParkourDCMotorCfg(
                 joint_names_expr=[".*_Body_Hip_RevoluteJoint"],
-                effort_limit=80.0,
-                saturation_effort=100.0,
+                effort_limit=_BODY_HIP_EFFORT,
+                saturation_effort=_BODY_HIP_SATURATION,
                 velocity_limit=6.0,
-                stiffness=50.0,
-                damping=1.35,
+                stiffness=_BODY_HIP_STIFFNESS,
+                damping=_BODY_HIP_DAMPING,
                 friction=0.0,
             ),
             # Femur–tibia stiffer than hip–femur: knee chain dominates collapse under zero-action / gravity.
             "hip_femur": ParkourDCMotorCfg(
                 joint_names_expr=[".*_Hip_Femur_RevoluteJoint"],
-                effort_limit=120.0,
-                saturation_effort=150.0,
+                effort_limit=_HIP_FEMUR_EFFORT,
+                saturation_effort=_HIP_FEMUR_SATURATION,
                 velocity_limit=6.0,
-                stiffness=102.0,
-                damping=2.4,
+                stiffness=_HIP_FEMUR_STIFFNESS,
+                damping=_HIP_FEMUR_DAMPING,
                 friction=0.0,
             ),
             "femur_tibia": ParkourDCMotorCfg(
                 joint_names_expr=[".*_Femur_Tibia_RevoluteJoint"],
-                effort_limit=150.0,
-                saturation_effort=185.0,
+                effort_limit=_FEMUR_TIBIA_EFFORT,
+                saturation_effort=_FEMUR_TIBIA_SATURATION,
                 velocity_limit=6.0,
-                stiffness=132.0,
-                damping=2.85,
+                stiffness=_FEMUR_TIBIA_STIFFNESS,
+                damping=_FEMUR_TIBIA_DAMPING,
                 friction=0.0,
             ),
         },

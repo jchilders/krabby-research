@@ -6,9 +6,9 @@ Isaac Lab's :class:`~isaaclab.sensors.contact_sensor.contact_sensor.ContactSenso
 ``prim_path`` by taking ``_parent_prims[0]`` and listing **direct** children matching the leaf
 pattern. For ``{ENV_REGEX_NS}/Robot/krabby/.*/.*`` the first ``.*`` under ``krabby`` can be
 ``chassis``, so only ``chassis`` (not ``chassis/body``) is considered — breaking
-``body_names=".*_Tibia"`` on MDP terms. This subclass gathers rigid bodies with
+``body_names=".*_Footpad"`` on crab foot MDP terms. This subclass gathers rigid bodies with
 ``PhysxContactReportAPI`` under the spawned ``Robot`` prim and builds PhysX path globs from the
-**full relative path** from ``Robot`` (e.g. ``chassis/body``, ``Leg_FL/FL_Tibia``), not only the
+**full relative path** from ``Robot`` (e.g. ``chassis/body``, ``Leg_FL/FL_Footpad``), not only the
 final prim name, so nested layouts match ``create_rigid_body_view`` (same idea as stock
 :class:`~isaaclab.sensors.contact_sensor.contact_sensor.ContactSensor`, but multi-level).
 """
@@ -34,7 +34,7 @@ def _collect_hex_contact_suffixes(robot_prim_path: str) -> list[str]:
     """Return unique path suffixes from ``robot_prim_path`` to each contact-reporting rigid body.
 
     Tries both flat layout (``chassis/body``, ``Leg_*/*``) and authored layout under ``krabby/``.
-    Suffixes are used to build PhysX globs; leaf names (e.g. ``FL_Tibia``) still come from the
+    Suffixes are used to build PhysX globs; leaf names (e.g. ``FL_Footpad``) still come from the
     rigid-body view's prim paths for MDP regex resolution.
     """
     suffixes: list[str] = []

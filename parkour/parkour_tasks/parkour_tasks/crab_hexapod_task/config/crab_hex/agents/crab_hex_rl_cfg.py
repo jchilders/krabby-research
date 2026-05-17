@@ -1,11 +1,11 @@
 # Copyright (c) 2022-2025, The Isaac Lab Project Developers.
-# Policy layout sizes for ``ExtremeParkourObservations`` (see parkour_isaaclab.envs.mdp.observations).
+# Policy layout sizes for ``CrabHexParkourObservations`` (see crab_hexapod_task.mdp.observations).
 #
 # Krabby ``crab_simple.usda``: ``num_joints = 18``, joint_pos action dim ``18``.
-#   obs_buf_dim = 13 + 2 * num_joints + action_dim + num_contact  ->  13 + 36 + 18 + 6 = 73  (= num_prop; six Tibia contacts)
+#   obs_buf_dim = 15 + 2 * num_joints + action_dim + num_contact  ->  15 + 36 + 18 + 6 = 75  (= num_prop; +2 root_lin_vel_xy)
 #   priv_latent   = mass(1+3) + friction(1) + stiffness(N) + damping(N)  ->  4 + 1 + 18 + 18 = 41
 #   policy flat len = (1 + history_length) * obs_buf_dim + 132 + 9 + priv_latent
-#                   = 11 * 73 + 141 + 41 = 975  (141 = 132 scan + 9 priv_explicit)
+#                   = 11 * 75 + 141 + 41 = 987  (141 = 132 scan + 9 priv_explicit)
 
 from __future__ import annotations
 
@@ -13,14 +13,33 @@ from dataclasses import MISSING
 
 from isaaclab.utils import configclass
 
-from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import ParkourRslRlBaseCfg
+from parkour_tasks.extreme_parkour_task.config.go2.agents.parkour_rl_cfg import (
+    ParkourRslRlBaseCfg,
+    ParkourRslRlOnPolicyRunnerCfg,
+    ParkourRslRlPpoActorCriticCfg,
+)
+
+
+@configclass
+class CrabHexParkourRslRlOnPolicyRunnerCfg(ParkourRslRlOnPolicyRunnerCfg):
+    """Selects ``OnPolicyRunnerCrabHex`` (exploration-std clamp) in ``train.py`` / ``play.py``."""
+
+    runner_class_name: str = "OnPolicyRunnerCrabHex"
+    num_steps_per_env: int = 24
+    save_interval: int = 100
+    empirical_normalization: bool = False
+
+
+@configclass
+class CrabHexParkourRslRlPpoActorCriticCfg(ParkourRslRlPpoActorCriticCfg):
+    class_name: str = "CrabHexActorCriticRMA"
 
 
 @configclass
 class CrabHexParkourRslRlBaseCfg(ParkourRslRlBaseCfg):
-    """Crab simple: must match ``ExtremeParkourObservations`` tensor layout (see module docstring)."""
+    """Crab simple: must match ``CrabHexParkourObservations`` tensor layout (see module docstring)."""
 
-    num_prop: int = 73
+    num_prop: int = 75
     num_priv_latent: int = 41
     # num_scan=132, num_hist=10, num_priv_explicit=9 — inherited
 
