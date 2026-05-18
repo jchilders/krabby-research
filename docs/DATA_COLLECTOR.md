@@ -79,20 +79,9 @@ rates:
   images_hz: 10.0
   joints_imu_hz: 50.0
 topics:
-  camera_front_rgb: true
-  camera_front_depth: true
-  camera_side_left_rgb: true
-  camera_side_right_rgb: true
-  camera_side_rgbd_depth: true
-  radar_edge: true
   joints_state: true
   joints_command: true
   imu: true
-catalog_map:
-  side_left_rgb_catalog_id: "side_rgbd"
-  side_right_rgb_catalog_id: null
-  side_rgbd_depth_catalog_id: "side_rgbd"
-  radar_edge_catalog_id: null
 joint_names: []
 joints_command_source: "previous_action"
 polling_timeout_ms: 10
@@ -103,8 +92,7 @@ polling_timeout_ms: 10
 | HAL transport | Always enforced from entrypoint runtime endpoints (must match primary `HalClientConfig`; Jetson uses fixed inproc endpoints). |
 | Output | From YAML/default config (`output_dir`) with optional CLI override via **`--data-collector-output-dir`**. |
 | Rates | **`RECORDING_RATES`** — wall-clock caps; actual rate is still bounded by HAL publish rate and **latest-only** `poll()` semantics. |
-| Topics | **`TOPIC_ENABLE`** — booleans per ROS topic (see table below). |
-| Catalog | **`CATALOG_TOPIC_MAP`** — Jetson **`rgbd_by_catalog_id`** keys (e.g. `side_rgbd`). |
+| Topics | **`TOPIC_ENABLE`** — booleans for `/joints/*` and `/imu` only; catalog cameras are always recorded when present in **`rgbd_by_catalog_id`**. |
 | Commands | **`joints_command_source`** is only **`previous_action`** in code — `/joints/command` is filled from **`HardwareObservations.previous_action`**, not from a separate tap on `put_joint_command`. |
 | Joints | **`JOINT_NAMES`** — if empty or length mismatch, serialization uses `joint_0`, `joint_1`, … |
 | Polling | **`POLLING_TIMEOUT_MS`** — ZMQ receive timeout per collector poll. |
@@ -113,12 +101,8 @@ polling_timeout_ms: 10
 
 | HAL source | ROS topic | Message type |
 |------------|-----------|--------------|
-| `camera_rgb` | `/camera/front/rgb` | `sensor_msgs/Image` (`rgb8`) |
-| `camera_depth` | `/camera/front/depth` | `sensor_msgs/Image` (`32FC1`, meters) |
-| `rgbd_by_catalog_id[id].rgb` | `/camera/side_left/rgb` | `sensor_msgs/Image` — when `catalog_map.side_left_rgb_catalog_id` matches, or legacy `side_camera_rgb` if no catalog row wrote that topic yet |
-| `rgbd_by_catalog_id[id].rgb` | `/camera/side_right/rgb` | when `side_right_rgb_catalog_id` matches |
-| `rgbd_by_catalog_id[id].depth` | `/camera/side_rgbd/depth` | `sensor_msgs/Image` (`32FC1`) when `side_rgbd_depth_catalog_id` matches |
-| `rgbd_by_catalog_id[radar].rgb` (mono) | `/radar/edge` | `sensor_msgs/Image` (`mono8`) when `radar_edge_catalog_id` is set |
+| `rgbd_by_catalog_id[id].rgb` | `/camera/{id}/rgb` | `sensor_msgs/Image` (`rgb8`, or `mono8` when the catalog row’s RGB is 2D) |
+| `rgbd_by_catalog_id[id].depth` | `/camera/{id}/depth` | `sensor_msgs/Image` (`32FC1`, meters) |
 | `joint_positions`, `joint_velocities` | `/joints/state` | `sensor_msgs/JointState` |
 | `previous_action` | `/joints/command` | `sensor_msgs/JointState` (positions only; see above) |
 | `base_quat_w`, `base_ang_vel_b` | `/imu` | `sensor_msgs/Imu` — orientation + angular velocity; linear acceleration is zero (not estimated here). |
@@ -126,7 +110,7 @@ polling_timeout_ms: 10
 ## Playback
 
 - **ROS 2:** `ros2 bag info` / `ros2 bag play` on the bag directory.
-- **This repo:** `python scripts/playback_krabby_bag.py <bag_dir> --topic /camera/front/rgb --max 5` (optional `--display` if OpenCV is installed).
+- **This repo:** `python scripts/playback_krabby_bag.py <bag_dir> --topic /camera/front_rgbd/rgb --max 5` (optional `--display` if OpenCV is installed).
 
 ## Architecture
 
@@ -146,7 +130,6 @@ Under `output_dir`, each **segment** is a standard **rosbag2 v9** directory with
 
 ## Configuration semantics
 
-- **`topics.*`:** Only enabled topics are registered on the bag writer, so disabling a stream removes that topic from the segment entirely.
-- **`catalog_map`:** Values are **catalog ids** matching keys in `HardwareObservations.rgbd_by_catalog_id` on Jetson (authoritative list: `JETSON_SENSOR_CATALOG` in `hal/server/jetson/sensor_backend_jetson.py`; overview in [SENSOR_INTERFACE.md](SENSOR_INTERFACE.md)). Use `null` to turn off an optional stream (e.g. no side-right RGB until that camera exists). Side-left RGB can still fall back from legacy `side_camera_rgb` when catalog routing has not produced `/camera/side_left/rgb` yet (see `data_collection/serialization.py`).
+- **`topics.*`:** Disabling `joints_state`, `joints_command`, or `imu` removes those topics from the bag. Catalog camera topics are written for every key in `HardwareObservations.rgbd_by_catalog_id` on each sampled observation (authoritative catalog list: `JETSON_SENSOR_CATALOG` in `hal/server/jetson/sensor_backend_jetson.py`; overview in [SENSOR_INTERFACE.md](SENSOR_INTERFACE.md)).
 - **HAL endpoints:** YAML values are overridden by entrypoint runtime endpoint wiring so transport always matches the primary client.
 - **Source of truth:** Keep defaults in **`collector_settings.py`**; use **`--data-collector-config`** only when you want per-run YAML overrides.

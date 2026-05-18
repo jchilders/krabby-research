@@ -64,23 +64,6 @@ def test_from_dict_missing_hal_key() -> None:
         DataCollectorConfig.from_dict({"output_dir": "/tmp/x"})
 
 
-def test_from_dict_catalog_map_empty_strings() -> None:
-    raw = {
-        "hal": {
-            "observation_endpoint": "inproc://a",
-            "command_endpoint": "inproc://b",
-        },
-        "output_dir": "/tmp/x",
-        "catalog_map": {
-            "side_left_rgb_catalog_id": "",
-            "side_right_rgb_catalog_id": None,
-        },
-    }
-    cfg = DataCollectorConfig.from_dict(raw)
-    assert cfg.catalog_map.side_left_rgb_catalog_id is None
-    assert cfg.catalog_map.side_right_rgb_catalog_id is None
-
-
 def test_from_dict_topics_all_false() -> None:
     raw = {
         "hal": {
@@ -91,5 +74,5 @@ def test_from_dict_topics_all_false() -> None:
         "topics": {f.name: False for f in fields(TopicEnable)},
     }
     cfg = DataCollectorConfig.from_dict(raw)
-    assert cfg.topics.camera_front_rgb is False
+    assert cfg.topics.joints_state is False
     assert cfg.topics.imu is False
