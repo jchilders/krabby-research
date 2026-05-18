@@ -125,7 +125,7 @@ Terminate **TLS** in front of the portal in production; preserve **WebSocket Upg
   - `state` mirrors `ControllerState` keys:
     - buttons: `LT`, `LB`, `LS`, `RS`, `RT`, `RB` (booleans)
     - axes: `LX`, `LY`, `RX`, `RY` (normalized floats in `[-1, 1]`)
-- Browser sends control at **50 Hz** (`20ms` interval) from Gamepad API state in `teleop_session.js`.
+- Browser sends control at **50 Hz** (`20ms` interval) from either a Gamepad API joystick or the on-page virtual joystick/buttons.
 - Robot path:
   - data channel JSON -> `WebRTCInputController` -> `GamepadToKrabbyHALMapper` -> `HalClient.put_joint_command`.
 - Invalid/non-JSON control payloads are rejected with warning logs; malformed fields are rejected by parser without tearing down media.

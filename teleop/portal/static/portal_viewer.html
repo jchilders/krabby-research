@@ -334,6 +334,36 @@
       accent-color: var(--accent);
     }
 
+    .operator-override-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      margin-bottom: 0.75rem;
+    }
+
+    .operator-override-row input {
+      accent-color: var(--accent);
+    }
+
+    .control-mode-status {
+      margin: 0.75rem 0;
+      padding: 0.7rem 0.8rem;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(251, 191, 36, 0.45);
+      background: rgba(251, 191, 36, 0.12);
+      color: #fde68a;
+      font-size: 0.8125rem;
+      font-weight: 650;
+      line-height: 1.35;
+    }
+
+    .control-mode-status[data-enabled="true"] {
+      border-color: rgba(52, 211, 153, 0.5);
+      background: rgba(52, 211, 153, 0.12);
+      color: #bbf7d0;
+    }
+
     #catalogList {
       max-height: 220px;
       overflow-y: auto;
@@ -377,6 +407,143 @@
       overflow-x: auto;
       white-space: pre-wrap;
       word-break: break-word;
+    }
+
+    .virtual-gamepad {
+      margin-top: 0.85rem;
+      padding: 0.75rem;
+      border-radius: var(--radius-sm);
+      background: rgba(0, 0, 0, 0.18);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .virtual-gamepad[data-enabled="false"] {
+      opacity: 0.5;
+    }
+
+    .virtual-gamepad-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.75rem;
+    }
+
+    .virtual-stick-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+
+    .virtual-stick-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .virtual-stick {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1;
+      min-height: 112px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
+        var(--bg-deep);
+      touch-action: none;
+      user-select: none;
+      outline: none;
+    }
+
+    .virtual-gamepad[data-enabled="false"] .virtual-stick,
+    .virtual-button:disabled,
+    .virtual-reset:disabled {
+      cursor: not-allowed;
+    }
+
+    .virtual-stick:focus-visible {
+      box-shadow: 0 0 0 2px var(--accent);
+    }
+
+    .virtual-stick::before,
+    .virtual-stick::after {
+      content: "";
+      position: absolute;
+      background: rgba(255, 255, 255, 0.08);
+      pointer-events: none;
+    }
+
+    .virtual-stick::before {
+      left: 50%;
+      top: 12%;
+      bottom: 12%;
+      width: 1px;
+    }
+
+    .virtual-stick::after {
+      top: 50%;
+      left: 12%;
+      right: 12%;
+      height: 1px;
+    }
+
+    .virtual-stick-knob {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 38%;
+      height: 38%;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      background: linear-gradient(180deg, #3b82f6, var(--accent));
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      box-shadow: 0 6px 18px rgba(56, 189, 248, 0.28);
+      pointer-events: none;
+    }
+
+    .virtual-button-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.45rem;
+    }
+
+    .virtual-button,
+    .virtual-reset {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg-elevated);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.75rem;
+      font-weight: 650;
+      padding: 0.42rem 0.5rem;
+      cursor: pointer;
+    }
+
+    .virtual-button[aria-pressed="true"] {
+      background: var(--accent);
+      color: var(--bg-deep);
+      border-color: transparent;
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.32);
+    }
+
+    .virtual-button:disabled,
+    .virtual-reset:disabled {
+      color: var(--text-muted);
+      box-shadow: none;
+    }
+
+    .virtual-reset {
+      width: 100%;
+      border-radius: var(--radius-sm);
+      color: var(--text-muted);
+    }
+
+    .virtual-gamepad[data-active="false"] {
+      opacity: 0.72;
     }
 
     #debugRtc {
@@ -501,12 +668,43 @@
           <summary>Manual control</summary>
           <div class="panel-inner">
             <p class="hint">
-              Turn on <strong>Operator override</strong> to send gamepad joint commands; they take priority over autonomy when both are active.
+              Use a physical gamepad or the virtual fallback below. Robot motion is gated by operator override.
             </p>
-            <label class="hint" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+            <label class="operator-override-row">
               <input type="checkbox" id="teleopOperatorOverride" />
               <span>Operator override</span>
             </label>
+            <div class="control-mode-status" id="operatorOverrideStatus" data-enabled="false" role="status" aria-live="polite">
+              Override OFF: joystick controls are disabled and will not move the robot.
+            </div>
+            <div class="virtual-gamepad" id="virtualGamepad" data-active="true" data-enabled="false" aria-label="Virtual controller fallback" aria-disabled="true">
+              <p class="hint" id="virtualGamepadStatus" style="margin: 0;">
+                Enable Operator override to use virtual controls.
+              </p>
+              <div class="virtual-gamepad-grid">
+                <div class="virtual-stick-wrap">
+                  <span class="virtual-stick-label">Left stick: knee / hip pitch</span>
+                  <div class="virtual-stick" data-virtual-stick="left" role="application" tabindex="-1" aria-disabled="true" aria-label="Virtual left stick">
+                    <div class="virtual-stick-knob" data-virtual-knob></div>
+                  </div>
+                </div>
+                <div class="virtual-stick-wrap">
+                  <span class="virtual-stick-label">Right stick: hip yaw</span>
+                  <div class="virtual-stick" data-virtual-stick="right" role="application" tabindex="-1" aria-disabled="true" aria-label="Virtual right stick">
+                    <div class="virtual-stick-knob" data-virtual-knob></div>
+                  </div>
+                </div>
+              </div>
+              <div class="virtual-button-grid" aria-label="Virtual leg buttons">
+                <button type="button" class="virtual-button" data-virtual-button="LT" aria-pressed="false" disabled>L2 / LT / FL</button>
+                <button type="button" class="virtual-button" data-virtual-button="LS" aria-pressed="false" disabled>L3 / LS / ML</button>
+                <button type="button" class="virtual-button" data-virtual-button="RT" aria-pressed="false" disabled>R2 / RT / FR</button>
+                <button type="button" class="virtual-button" data-virtual-button="LB" aria-pressed="false" disabled>L1 / LB / RL</button>
+                <button type="button" class="virtual-button" data-virtual-button="RS" aria-pressed="false" disabled>R3 / RS / MR</button>
+                <button type="button" class="virtual-button" data-virtual-button="RB" aria-pressed="false" disabled>R1 / RB / RR</button>
+              </div>
+              <button type="button" class="virtual-reset" id="virtualGamepadReset" disabled>Center sticks and clear virtual buttons</button>
+            </div>
           </div>
         </details>
 

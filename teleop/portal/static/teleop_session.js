@@ -10,6 +10,10 @@
   var controlChannelStatusEl = document.getElementById('controlChannelStatus');
   var controlSendStatusEl = document.getElementById('controlSendStatus');
   var controllerStateMirrorEl = document.getElementById('controllerStateMirror');
+  var virtualGamepadEl = document.getElementById('virtualGamepad');
+  var virtualGamepadStatusEl = document.getElementById('virtualGamepadStatus');
+  var virtualGamepadResetEl = document.getElementById('virtualGamepadReset');
+  var operatorOverrideStatusEl = document.getElementById('operatorOverrideStatus');
   var controllerDiagnosticDetails = document.getElementById('controllerDiagnosticPanel');
   if (controllerDiagnosticDetails) {
     controllerDiagnosticDetails.open = false;
@@ -47,6 +51,15 @@
 
   /** Radius [0,1) for radial stick deadzone (resting jitter); raise if a pad needs more margin. */
   var TELEOP_GAMEPAD_STICK_DEADZONE = 0.1;
+  var VIRTUAL_BUTTON_NAMES = ['LT', 'LB', 'LS', 'RS', 'RT', 'RB'];
+  var virtualControllerButtons = {
+    LT: false, LB: false, LS: false, RS: false, RT: false, RB: false
+  };
+  var virtualControllerAxes = { LX: 0.0, LY: 0.0, RX: 0.0, RY: 0.0 };
+  var virtualStickEls = {};
+  var activeVirtualPointers = {};
+  var virtualControlsEnabled = false;
+  var virtualInputSelected = false;
 
   var stunTurnServers = [{ urls: 'stun:stun.l.google.com:19302' }];
   var ws = null;
@@ -64,6 +77,12 @@
   var initialRtcStarted = false;
   var initialRtcFallbackTimer = null;
 
+  function clampAxis(v) {
+    if (v < -1) return -1;
+    if (v > 1) return 1;
+    return v;
+  }
+
   /** Per-stick radial deadzone: zero inside radius ``zone``, smooth rescale toward full ±1 beyond. */
   function stickPairAfterDeadzone(x, y, zone) {
     if (!(zone > 0)) {
@@ -74,35 +93,283 @@
       return [0.0, 0.0];
     }
     var gain = (m - zone) / (m * (1.0 - zone));
-    function clampAxis(v) {
-      if (v < -1) return -1;
-      if (v > 1) return 1;
-      return v;
-    }
     return [clampAxis(x * gain), clampAxis(y * gain)];
   }
 
-  function readGamepadState() {
-    var pads = (navigator.getGamepads && navigator.getGamepads()) || [];
-    var p = null;
-    for (var i = 0; i < pads.length; i += 1) {
-      if (pads[i]) {
-        p = pads[i];
-        break;
+  function gamepadApiAvailable() {
+    return typeof navigator !== 'undefined' && typeof navigator.getGamepads === 'function';
+  }
+
+  function gamepadSnapshot() {
+    if (!gamepadApiAvailable()) {
+      return [];
+    }
+    try {
+      return navigator.getGamepads() || [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function copyNeutralControllerState() {
+    return {
+      LT: false, LB: false, LS: false, RS: false, RT: false, RB: false,
+      LX: 0.0, LY: 0.0, RX: 0.0, RY: 0.0
+    };
+  }
+
+  function operatorOverrideEnabled() {
+    return !!(teleopOperatorOverrideEl && teleopOperatorOverrideEl.checked);
+  }
+
+  function readVirtualControllerState() {
+    var st = copyNeutralControllerState();
+    VIRTUAL_BUTTON_NAMES.forEach(function (name) {
+      st[name] = !!virtualControllerButtons[name];
+    });
+    st.LX = clampAxis(virtualControllerAxes.LX);
+    st.LY = clampAxis(virtualControllerAxes.LY);
+    st.RX = clampAxis(virtualControllerAxes.RX);
+    st.RY = clampAxis(virtualControllerAxes.RY);
+    return st;
+  }
+
+  function normalizeStickPair(x, y) {
+    x = clampAxis(x);
+    y = clampAxis(y);
+    var m = Math.sqrt(x * x + y * y);
+    if (m > 1) {
+      x /= m;
+      y /= m;
+    }
+    return [x, y];
+  }
+
+  function setVirtualStick(name, x, y) {
+    var pair = normalizeStickPair(x, y);
+    if (name === 'left') {
+      virtualControllerAxes.LX = pair[0];
+      virtualControllerAxes.LY = pair[1];
+    } else if (name === 'right') {
+      virtualControllerAxes.RX = pair[0];
+      virtualControllerAxes.RY = pair[1];
+    }
+    updateVirtualStickKnob(name);
+  }
+
+  function updateVirtualStickKnob(name) {
+    var stick = virtualStickEls[name];
+    if (!stick) return;
+    var knob = stick.querySelector('[data-virtual-knob]');
+    if (!knob) return;
+    var x = name === 'left' ? virtualControllerAxes.LX : virtualControllerAxes.RX;
+    var y = name === 'left' ? virtualControllerAxes.LY : virtualControllerAxes.RY;
+    knob.style.left = (50 + (x * 31)) + '%';
+    knob.style.top = (50 + (y * 31)) + '%';
+  }
+
+  function pointerEventToStickPair(stick, ev) {
+    var rect = stick.getBoundingClientRect();
+    var halfW = rect.width / 2.0;
+    var halfH = rect.height / 2.0;
+    var x = halfW > 0 ? (ev.clientX - (rect.left + halfW)) / halfW : 0.0;
+    var y = halfH > 0 ? (ev.clientY - (rect.top + halfH)) / halfH : 0.0;
+    return normalizeStickPair(x, y);
+  }
+
+  function syncVirtualButtonEls() {
+    if (!virtualGamepadEl) return;
+    VIRTUAL_BUTTON_NAMES.forEach(function (name) {
+      var btn = virtualGamepadEl.querySelector('[data-virtual-button="' + name + '"]');
+      if (btn) {
+        btn.setAttribute('aria-pressed', virtualControllerButtons[name] ? 'true' : 'false');
+      }
+    });
+  }
+
+  function setVirtualControlsEnabled(enabled) {
+    virtualControlsEnabled = !!enabled;
+    if (virtualGamepadEl) {
+      virtualGamepadEl.setAttribute('data-enabled', virtualControlsEnabled ? 'true' : 'false');
+      virtualGamepadEl.setAttribute('aria-disabled', virtualControlsEnabled ? 'false' : 'true');
+    }
+    Object.keys(virtualStickEls).forEach(function (name) {
+      var stick = virtualStickEls[name];
+      if (!stick) return;
+      stick.setAttribute('aria-disabled', virtualControlsEnabled ? 'false' : 'true');
+      stick.setAttribute('tabindex', virtualControlsEnabled ? '0' : '-1');
+    });
+    if (virtualGamepadEl) {
+      VIRTUAL_BUTTON_NAMES.forEach(function (name) {
+        var btn = virtualGamepadEl.querySelector('[data-virtual-button="' + name + '"]');
+        if (btn) {
+          btn.disabled = !virtualControlsEnabled;
+        }
+      });
+    }
+    if (virtualGamepadResetEl) {
+      virtualGamepadResetEl.disabled = !virtualControlsEnabled;
+    }
+    if (!virtualControlsEnabled) {
+      activeVirtualPointers = {};
+      resetVirtualController();
+    }
+  }
+
+  function resetVirtualController() {
+    VIRTUAL_BUTTON_NAMES.forEach(function (name) {
+      virtualControllerButtons[name] = false;
+    });
+    setVirtualStick('left', 0.0, 0.0);
+    setVirtualStick('right', 0.0, 0.0);
+    syncVirtualButtonEls();
+  }
+
+  function updateVirtualGamepadControlState(operatorOverrideOn, physicalGamepad) {
+    var enabled = operatorOverrideOn;
+    setVirtualControlsEnabled(enabled);
+    if (virtualGamepadEl) {
+      virtualGamepadEl.setAttribute('data-active', (!physicalGamepad || virtualInputSelected) ? 'true' : 'false');
+    }
+    if (virtualGamepadStatusEl) {
+      if (!operatorOverrideOn) {
+        virtualGamepadStatusEl.textContent = 'Enable Operator override to use virtual controls.';
+      } else if (physicalGamepad && virtualInputSelected) {
+        virtualGamepadStatusEl.textContent =
+          'Virtual controls active; physical gamepad input resumes when virtual controls are released.';
+      } else if (physicalGamepad) {
+        virtualGamepadStatusEl.textContent =
+          'Physical gamepad active. Touch or click virtual controls to use them instead.';
+      } else {
+        virtualGamepadStatusEl.textContent = gamepadApiAvailable() ?
+          'Virtual controls enabled. Connect a physical gamepad to use hardware by default.' :
+          'Virtual controls enabled because this browser has no Gamepad API.';
       }
     }
-    if (!p) {
-      return {
-        LT: false, LB: false, LS: false, RS: false, RT: false, RB: false,
-        LX: 0.0, LY: 0.0, RX: 0.0, RY: 0.0
-      };
+  }
+
+  function initVirtualGamepad() {
+    if (!virtualGamepadEl) return;
+    var sticks = virtualGamepadEl.querySelectorAll('[data-virtual-stick]');
+    sticks.forEach(function (stick) {
+      var name = stick.getAttribute('data-virtual-stick');
+      if (!name) return;
+      virtualStickEls[name] = stick;
+      updateVirtualStickKnob(name);
+      stick.addEventListener('pointerdown', function (ev) {
+        if (!virtualControlsEnabled) {
+          ev.preventDefault();
+          return;
+        }
+        ev.preventDefault();
+        virtualInputSelected = true;
+        activeVirtualPointers[name] = ev.pointerId;
+        if (stick.setPointerCapture) {
+          stick.setPointerCapture(ev.pointerId);
+        }
+        var pair = pointerEventToStickPair(stick, ev);
+        setVirtualStick(name, pair[0], pair[1]);
+      });
+      stick.addEventListener('pointermove', function (ev) {
+        if (!virtualControlsEnabled) return;
+        if (activeVirtualPointers[name] !== ev.pointerId) return;
+        ev.preventDefault();
+        var pair = pointerEventToStickPair(stick, ev);
+        setVirtualStick(name, pair[0], pair[1]);
+      });
+      function endPointer(ev) {
+        if (activeVirtualPointers[name] !== ev.pointerId) return;
+        ev.preventDefault();
+        delete activeVirtualPointers[name];
+        setVirtualStick(name, 0.0, 0.0);
+        if (stick.releasePointerCapture) {
+          try {
+            stick.releasePointerCapture(ev.pointerId);
+          } catch (e) {}
+        }
+      }
+      stick.addEventListener('pointerup', endPointer);
+      stick.addEventListener('pointercancel', endPointer);
+      stick.addEventListener('lostpointercapture', function (ev) {
+        if (activeVirtualPointers[name] !== ev.pointerId) return;
+        delete activeVirtualPointers[name];
+        setVirtualStick(name, 0.0, 0.0);
+      });
+      stick.addEventListener('keydown', function (ev) {
+        if (!virtualControlsEnabled) return;
+        var step = ev.shiftKey ? 1.0 : 0.45;
+        if (ev.key === 'ArrowLeft') {
+          ev.preventDefault();
+          virtualInputSelected = true;
+          setVirtualStick(name, -step, 0.0);
+        } else if (ev.key === 'ArrowRight') {
+          ev.preventDefault();
+          virtualInputSelected = true;
+          setVirtualStick(name, step, 0.0);
+        } else if (ev.key === 'ArrowUp') {
+          ev.preventDefault();
+          virtualInputSelected = true;
+          setVirtualStick(name, 0.0, -step);
+        } else if (ev.key === 'ArrowDown') {
+          ev.preventDefault();
+          virtualInputSelected = true;
+          setVirtualStick(name, 0.0, step);
+        } else if (ev.key === ' ' || ev.key === 'Enter') {
+          ev.preventDefault();
+          virtualInputSelected = true;
+          setVirtualStick(name, 0.0, 0.0);
+        }
+      });
+      stick.addEventListener('keyup', function (ev) {
+        if (
+          ev.key === 'ArrowLeft' ||
+          ev.key === 'ArrowRight' ||
+          ev.key === 'ArrowUp' ||
+          ev.key === 'ArrowDown'
+        ) {
+          ev.preventDefault();
+          setVirtualStick(name, 0.0, 0.0);
+        }
+      });
+    });
+    VIRTUAL_BUTTON_NAMES.forEach(function (name) {
+      var btn = virtualGamepadEl.querySelector('[data-virtual-button="' + name + '"]');
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        if (!virtualControlsEnabled) return;
+        virtualInputSelected = true;
+        virtualControllerButtons[name] = !virtualControllerButtons[name];
+        syncVirtualButtonEls();
+      });
+    });
+    if (virtualGamepadResetEl) {
+      virtualGamepadResetEl.addEventListener('click', resetVirtualController);
     }
+    window.addEventListener('blur', resetVirtualController);
+    window.addEventListener('pagehide', resetVirtualController);
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') {
+        resetVirtualController();
+      }
+    });
+    if (teleopOperatorOverrideEl) {
+      teleopOperatorOverrideEl.addEventListener('change', function () {
+        if (!operatorOverrideEnabled()) {
+          virtualInputSelected = false;
+          resetVirtualController();
+        }
+        updateControllerDebugPanel();
+      });
+    }
+    setVirtualControlsEnabled(false);
+    syncVirtualButtonEls();
+  }
+
+  function readPhysicalGamepadState(p) {
     function b(idx) { return !!(p.buttons && p.buttons[idx] && p.buttons[idx].pressed); }
     function a(idx) {
       var v = (p.axes && typeof p.axes[idx] === 'number') ? p.axes[idx] : 0.0;
-      if (v < -1) return -1;
-      if (v > 1) return 1;
-      return v;
+      return clampAxis(v);
     }
     var lx0 = a(0);
     var ly0 = a(1);
@@ -119,8 +386,52 @@
     };
   }
 
+  function readGamepadState() {
+    if (!operatorOverrideEnabled()) {
+      return copyNeutralControllerState();
+    }
+    var p = firstConnectedGamepad();
+    var virtualState = readVirtualControllerState();
+    if (!p) {
+      return virtualState;
+    }
+    var physicalState = readPhysicalGamepadState(p);
+    if (virtualInputSelected) {
+      if (controllerStateHasInput(virtualState)) {
+        return virtualState;
+      }
+      virtualInputSelected = false;
+    }
+    return physicalState;
+  }
+
+  function controllerStateHasInput(st) {
+    if (!st) return false;
+    if (st.LT || st.LB || st.LS || st.RS || st.RT || st.RB) {
+      return true;
+    }
+    return (
+      Math.abs(st.LX || 0) > 0.01 ||
+      Math.abs(st.LY || 0) > 0.01 ||
+      Math.abs(st.RX || 0) > 0.01 ||
+      Math.abs(st.RY || 0) > 0.01
+    );
+  }
+
+  function updateOperatorOverrideStatus(enabled, hasInput) {
+    if (!operatorOverrideStatusEl) return;
+    operatorOverrideStatusEl.setAttribute('data-enabled', enabled ? 'true' : 'false');
+    if (enabled) {
+      operatorOverrideStatusEl.textContent =
+        'Override ON: joystick commands can move the robot.';
+    } else {
+      operatorOverrideStatusEl.textContent =
+        'Override OFF: joystick controls are disabled and will not move the robot.';
+    }
+  }
+
   function firstConnectedGamepad() {
-    var pads = (navigator.getGamepads && navigator.getGamepads()) || [];
+    var pads = gamepadSnapshot();
     for (var i = 0; i < pads.length; i += 1) {
       if (pads[i]) return pads[i];
     }
@@ -129,14 +440,25 @@
 
   function updateControllerDebugPanel() {
     var gp = firstConnectedGamepad();
+    var st = readGamepadState();
+    var operatorOverrideOn = !!(teleopOperatorOverrideEl && teleopOperatorOverrideEl.checked);
+    var hasInput = controllerStateHasInput(st);
+    updateOperatorOverrideStatus(operatorOverrideOn, hasInput);
     if (controllerStatusEl) {
-      if (gp) {
+      if (virtualInputSelected) {
+        controllerStatusEl.textContent = gp ?
+          'Controller: virtual controls active (physical gamepad resumes on release)' :
+          'Controller: virtual controls active';
+      } else if (gp) {
         controllerStatusEl.textContent =
           'Controller: connected (' + (gp.id || 'unknown') + ', index ' + gp.index + ')';
       } else {
-        controllerStatusEl.textContent = 'Controller: not connected';
+        controllerStatusEl.textContent = gamepadApiAvailable() ?
+          'Controller: virtual fallback (no physical gamepad connected)' :
+          'Controller: virtual fallback (Gamepad API unavailable)';
       }
     }
+    updateVirtualGamepadControlState(operatorOverrideOn, !!gp);
     if (controlChannelStatusEl) {
       var dcState = controlDc ? controlDc.readyState : 'n/a';
       controlChannelStatusEl.textContent =
@@ -144,7 +466,10 @@
     }
     if (controlSendStatusEl) {
       if (controlDc && controlDc.readyState === 'open') {
-        if (lastControlSendMs > 0) {
+        if (!operatorOverrideOn) {
+          controlSendStatusEl.textContent =
+            'Relayed to robot: override off; joystick controls disabled';
+        } else if (lastControlSendMs > 0) {
           controlSendStatusEl.textContent =
             'Relayed to robot: ' + controlSendCount + ' msgs, last ' +
             (Date.now() - lastControlSendMs) + 'ms ago';
@@ -158,7 +483,7 @@
       }
     }
     if (controllerStateMirrorEl) {
-      controllerStateMirrorEl.textContent = JSON.stringify(readGamepadState(), null, 2);
+      controllerStateMirrorEl.textContent = JSON.stringify(st, null, 2);
     }
   }
 
@@ -503,6 +828,7 @@
     });
   }
 
+  initVirtualGamepad();
   setInterval(updateControllerDebugPanel, 250);
 
   boot();
