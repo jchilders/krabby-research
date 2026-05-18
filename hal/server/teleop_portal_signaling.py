@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 import time
 from typing import Any, Optional
@@ -24,6 +25,71 @@ from teleop.edge.viewer_catalog import parse_viewer_catalog_ids_from_payload
 from teleop.edge.webrtc_input_controller import WebRTCInputController
 
 logger = logging.getLogger(__name__)
+
+
+class _ControlLatencyReporter:
+    """Aggregate browser->robot control receive deltas from ``sent_browser_ms``."""
+
+    _REPORT_INTERVAL_S = 5.0
+
+    def __init__(self) -> None:
+        self._samples_ms: list[float] = []
+        self._total_samples = 0
+        self._last_report_mono_s = time.monotonic()
+
+    def observe_payload(self, payload: dict[str, Any]) -> None:
+        raw_sent_ms = payload.get("sent_browser_ms")
+        if isinstance(raw_sent_ms, bool) or not isinstance(raw_sent_ms, (int, float)):
+            return
+        sent_ms = float(raw_sent_ms)
+        if not math.isfinite(sent_ms):
+            return
+        latency_ms = (time.time() * 1000.0) - sent_ms
+        if not math.isfinite(latency_ms):
+            return
+
+        self._samples_ms.append(latency_ms)
+        self._total_samples += 1
+
+        now_mono_s = time.monotonic()
+        if now_mono_s - self._last_report_mono_s >= self._REPORT_INTERVAL_S:
+            self._report(now_mono_s)
+
+    def _report(self, now_mono_s: float) -> None:
+        if not self._samples_ms:
+            self._last_report_mono_s = now_mono_s
+            return
+        samples = self._samples_ms
+        p50_ms = self._percentile(samples, 50.0)
+        p95_ms = self._percentile(samples, 95.0)
+        max_ms = max(samples)
+        latest_ms = samples[-1]
+        logger.info(
+            "teleop control latency: samples=%d total=%d p50=%.1fms p95=%.1fms max=%.1fms latest=%.1fms",
+            len(samples),
+            self._total_samples,
+            p50_ms,
+            p95_ms,
+            max_ms,
+            latest_ms,
+        )
+        self._samples_ms = []
+        self._last_report_mono_s = now_mono_s
+
+    @staticmethod
+    def _percentile(values: list[float], percentile: float) -> float:
+        if not values:
+            raise ValueError("percentile requires at least one value")
+        ordered = sorted(values)
+        if len(ordered) == 1:
+            return ordered[0]
+        rank = (percentile / 100.0) * (len(ordered) - 1)
+        lo = math.floor(rank)
+        hi = math.ceil(rank)
+        if lo == hi:
+            return ordered[lo]
+        frac = rank - lo
+        return ordered[lo] + ((ordered[hi] - ordered[lo]) * frac)
 
 
 class _OperatorOverrideGate:
@@ -306,6 +372,7 @@ def start_hal_teleop_signaling_thread(
 
             if payload.get("type") != "control":
                 return
+            control_latency.observe_payload(payload)
             operator_override_gate.set(bool(payload.get("operator_override", False)))
             st = payload.get("state")
             if not isinstance(st, dict):
@@ -319,6 +386,7 @@ def start_hal_teleop_signaling_thread(
                 _warn_rate_limited(f"Rejected control message: malformed controller payload ({e})")
 
         _last_bad_control_warn_mono = [0.0]
+        control_latency = _ControlLatencyReporter()
 
         async def _run() -> None:
             task = asyncio.create_task(

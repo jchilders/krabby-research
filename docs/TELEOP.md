@@ -128,6 +128,7 @@ Terminate **TLS** in front of the portal in production; preserve **WebSocket Upg
 - Browser sends control at **50 Hz** (`20ms` interval) from either a Gamepad API joystick or the on-page virtual joystick/buttons.
 - Robot path:
   - data channel JSON -> `WebRTCInputController` -> `GamepadToKrabbyHALMapper` -> `HalClient.put_joint_command`.
+- Robot logs receiver-side control latency from `sent_browser_ms` every ~5s with **p50**, **p95**, **max**, and latest samples. This is a browser wall-clock to robot wall-clock delta, so keep clocks synced for meaningful one-way latency.
 - Invalid/non-JSON control payloads are rejected with warning logs; malformed fields are rejected by parser without tearing down media.
 
 ### HAL vs WebRTC
@@ -142,7 +143,10 @@ Inference uses **`get_observations()`**. Viewer depth previews (if shown) are fo
 
 ### Latency
 
-UI **ping** / **pong** measures **signaling RTT**, not glass-to-glass.
+The UI reports two different latency signals:
+
+- **RTT** comes from WebSocket **ping** / **pong** and measures signaling round-trip time, not media glass-to-glass latency.
+- **g2g** is an estimated capture-to-render value for the first selected stream when robot capture timestamps are available. It uses ping/pong wall-clock offset estimation, so treat it as an approximation and keep browser/robot clocks synced.
 
 ### Troubleshooting
 
