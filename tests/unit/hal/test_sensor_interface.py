@@ -30,6 +30,13 @@ def test_front_observation_camera_catalog_entry():
     assert e.camera_driver in FRONT_RGB_DEPTH_CAMERA_FACTORIES
 
 
+def test_jetson_catalog_has_front_and_side_rgbd_only():
+    ids = {e.id for e in JETSON_SENSOR_CATALOG}
+    assert ids == {"front_rgbd", "side_rgbd"}
+    assert all(e.type == "rgbd" for e in JETSON_SENSOR_CATALOG)
+    assert not any(e.type == "radar" for e in JETSON_SENSOR_CATALOG)
+
+
 def test_jetson_list_sensors_matches_catalog():
     iface = JetsonSensorInterface()
     sensors = iface.list_sensors()
