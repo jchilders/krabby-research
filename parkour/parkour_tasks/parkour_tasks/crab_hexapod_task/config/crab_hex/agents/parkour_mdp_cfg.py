@@ -24,7 +24,6 @@ from parkour_tasks.extreme_parkour_task.config.go2.parkour_mdp_cfg import (
     StudentObservationsCfg,
 )
 
-
 @configclass
 class CrabHexFlatWalkActionsCfg:
     """Aggressive flat-walk exploration: larger scale and ±2 raw clip (matches runner clip_actions)."""
@@ -177,12 +176,12 @@ class CrabHexFlatWalkRewardsCfg:
 
     track_lin_vel_xy_exp = RewTerm(
         func=track_lin_vel_xy_exp,
-        weight=1.6,
+        weight=1.0,
         params={"command_name": "base_velocity", "std": math.sqrt(0.02)},
     )
     track_ang_vel_z_exp = RewTerm(
         func=track_ang_vel_z_exp,
-        weight=0.0,
+        weight=1.2,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
     reward_forward_progress_along_command = RewTerm(
@@ -192,12 +191,12 @@ class CrabHexFlatWalkRewardsCfg:
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg("robot"),
             "min_cmd_norm": 0.12,
-            "max_speed_scale": 2.0,
+            "max_speed_scale": 1.65,
         },
     )
     reward_orientation = RewTerm(
         func=mdp_rewards.reward_orientation,
-        weight=-0.15,
+        weight=-0.7,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "parkour_name": "base_parkour",
@@ -205,7 +204,7 @@ class CrabHexFlatWalkRewardsCfg:
     )
     reward_lin_vel_z = RewTerm(
         func=mdp_rewards.reward_lin_vel_z,
-        weight=0.0,
+        weight=-0.15,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "parkour_name": "base_parkour",
@@ -286,9 +285,9 @@ class CrabHexFlatWalkTerminationsCfg:
         time_out=False,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "limit_angle": 1.6,
+            "limit_angle": 0.5,
             "minimum_root_height_z": None,
-            "contact_force_threshold": 100.0,
+            "contact_force_threshold": 500.0,
             "hip_contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_Hip"]),
         },
     )
@@ -328,10 +327,9 @@ class CrabHexTerminationsCfg:
         time_out=False,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            # Slightly looser than 1.35 / 65 N: fewer false resets; tighten again if hip-scrape persists.
             "limit_angle": 1.5,
             "minimum_root_height_z": None,
-            "contact_force_threshold": 85.0,
+            "contact_force_threshold": 500.0,
             # Hips only: chassis ``body`` contact was ending episodes during benign brushes.
             "hip_contact_sensor_cfg": SceneEntityCfg("contact_forces", body_names=[".*_Hip"]),
         },

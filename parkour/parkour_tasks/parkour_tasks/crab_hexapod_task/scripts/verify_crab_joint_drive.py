@@ -200,12 +200,12 @@ def main() -> None:
 
     def _nominal_effort(jname: str) -> float:
         if "Body_Hip" in jname:
-            return 130.0
+            return 600.0
         if "Hip_Femur" in jname:
-            return 200.0 if jname.startswith("FL_") else 150.0
+            return 1500.0
         if "Femur_Tibia" in jname:
-            return 220.0 if jname.startswith("RR_") else 170.0
-        return 150.0
+            return 800.0
+        return 600.0
 
     print("\n=== Crab joint drive check ===", flush=True)
     print(f"task: {args_cli.task}", flush=True)

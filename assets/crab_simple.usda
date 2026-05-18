@@ -207,18 +207,18 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "MaterialBindingAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI"]
         )
         {
-            float physics:mass = 1.0
+            float physics:mass = 2.8
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
             )
-            bool physics:collisionEnabled = 1
+            bool physics:collisionEnabled = 0
             bool physics:kinematicEnabled = 0
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.02, 0.686, 0.127)
-            double3 xformOp:translate = (-0.365, -0.959503718539794, -0.182723455627554)
+            double3 xformOp:scale = (0.02, 0.45, 0.05)
+            double3 xformOp:translate = (-0.365, -0.959503718539794, 0.02)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
 
@@ -226,7 +226,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "MaterialBindingAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI"]
         )
         {
-            float physics:mass = 0.95
+            float physics:mass = 0.72
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -264,7 +264,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]
         )
         {
-            float physics:mass = 0.5
+            float physics:mass = 2.8
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -291,18 +291,18 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "MaterialBindingAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI"]
         )
         {
-            float physics:mass = 1.0
+            float physics:mass = 2.8
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
             )
-            bool physics:collisionEnabled = 1
+            bool physics:collisionEnabled = 0
             bool physics:kinematicEnabled = 0
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.02, 0.686, 0.127)
-            double3 xformOp:translate = (-0.365, 0.959503718539794, -0.182723455627554)
+            double3 xformOp:scale = (0.02, 0.45, 0.05)
+            double3 xformOp:translate = (-0.365, 0.959503718539794, 0.02)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
 
@@ -310,7 +310,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "MaterialBindingAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI"]
         )
         {
-            float physics:mass = 0.95
+            float physics:mass = 0.72
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -348,7 +348,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]
         )
         {
-            float physics:mass = 0.5
+            float physics:mass = 2.8
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -375,18 +375,18 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "MaterialBindingAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI"]
         )
         {
-            float physics:mass = 1.0
+            float physics:mass = 2.8
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
             )
-            bool physics:collisionEnabled = 1
+            bool physics:collisionEnabled = 0
             bool physics:kinematicEnabled = 0
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.02, 0.686, 0.127)
-            double3 xformOp:translate = (0.365, -0.959503718539794, -0.182723455627554)
+            double3 xformOp:scale = (0.02, 0.45, 0.05)
+            double3 xformOp:translate = (0.365, -0.959503718539794, 0.02)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
 
@@ -394,7 +394,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "MaterialBindingAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI"]
         )
         {
-            float physics:mass = 0.95
+            float physics:mass = 0.72
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -432,7 +432,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]
         )
         {
-            float physics:mass = 0.5
+            float physics:mass = 2.8
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -459,18 +459,18 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "MaterialBindingAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI"]
         )
         {
-            float physics:mass = 1.0
+            float physics:mass = 2.8
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
             )
-            bool physics:collisionEnabled = 1
+            bool physics:collisionEnabled = 0
             bool physics:kinematicEnabled = 0
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.02, 0.686, 0.127)
-            double3 xformOp:translate = (0.365, 0.959503718539794, -0.182723455627554)
+            double3 xformOp:scale = (0.02, 0.45, 0.05)
+            double3 xformOp:translate = (0.365, 0.959503718539794, 0.02)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
 
@@ -478,7 +478,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "MaterialBindingAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI"]
         )
         {
-            float physics:mass = 0.95
+            float physics:mass = 0.72
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -516,7 +516,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]
         )
         {
-            float physics:mass = 0.5
+            float physics:mass = 2.8
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -543,18 +543,18 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "MaterialBindingAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI"]
         )
         {
-            float physics:mass = 1.0
+            float physics:mass = 2.8
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
             )
-            bool physics:collisionEnabled = 1
+            bool physics:collisionEnabled = 0
             bool physics:kinematicEnabled = 0
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.02, 0.686, 0.127)
-            double3 xformOp:translate = (0, -0.959503718539794, -0.182723455627554)
+            double3 xformOp:scale = (0.02, 0.45, 0.05)
+            double3 xformOp:translate = (0, -0.959503718539794, 0.02)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
 
@@ -562,7 +562,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "MaterialBindingAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI"]
         )
         {
-            float physics:mass = 0.95
+            float physics:mass = 0.72
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -600,7 +600,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]
         )
         {
-            float physics:mass = 0.5
+            float physics:mass = 2.8
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -627,18 +627,18 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "MaterialBindingAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI"]
         )
         {
-            float physics:mass = 1.0
+            float physics:mass = 2.8
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
             )
-            bool physics:collisionEnabled = 1
+            bool physics:collisionEnabled = 0
             bool physics:kinematicEnabled = 0
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.02, 0.686, 0.127)
-            double3 xformOp:translate = (0, 0.959503718539794, -0.182723455627554)
+            double3 xformOp:scale = (0.02, 0.45, 0.05)
+            double3 xformOp:translate = (0, 0.959503718539794, 0.02)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }
 
@@ -646,7 +646,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "MaterialBindingAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI"]
         )
         {
-            float physics:mass = 0.95
+            float physics:mass = 0.72
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -684,7 +684,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]
         )
         {
-            float physics:mass = 0.5
+            float physics:mass = 2.8
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -1152,7 +1152,7 @@ def Xform "krabby" (
             prepend apiSchemas = ["PhysicsMassAPI", "PhysicsRigidBodyAPI", "PhysxRigidBodyAPI", "PhysicsCollisionAPI", "PhysxCollisionAPI", "MaterialBindingAPI"]
         )
         {
-            float physics:mass = 10.0
+            float physics:mass = 66.0
             float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
             rel material:binding = </krabby/PlyWood> (
                 bindMaterialAs = "weakerThanDescendants"
@@ -1162,7 +1162,7 @@ def Xform "krabby" (
             bool physics:rigidBodyEnabled = 1
             double size = 1
             quatd xformOp:orient = (1, 0, 0, 0)
-            double3 xformOp:scale = (0.7110000252723694, 1.218999981880188, 0.25)
+            double3 xformOp:scale = (0.7110000252723694, 1.218999981880188, 0.12)
             double3 xformOp:translate = (0, 0, 0)
             uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient", "xformOp:scale"]
         }

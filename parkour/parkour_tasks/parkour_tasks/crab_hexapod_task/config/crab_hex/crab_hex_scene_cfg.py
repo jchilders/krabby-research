@@ -26,19 +26,20 @@ def _crab_simple_usd_path() -> str:
 
 
 # All body hips share identical drive (USD joints are symmetric).
+# PD for ~104 kg; keep Kd ~0.02×Kp (very large Kd values crash Isaac).
 _BODY_HIP_STIFFNESS = {
-    "FL_Body_Hip_RevoluteJoint": 95.0,
-    "FR_Body_Hip_RevoluteJoint": 95.0,
-    "ML_Body_Hip_RevoluteJoint": 95.0,
-    "MR_Body_Hip_RevoluteJoint": 95.0,
-    "RL_Body_Hip_RevoluteJoint": 95.0,
-    "RR_Body_Hip_RevoluteJoint": 95.0,
+    "FL_Body_Hip_RevoluteJoint": 495.0,
+    "FR_Body_Hip_RevoluteJoint": 495.0,
+    "ML_Body_Hip_RevoluteJoint": 495.0,
+    "MR_Body_Hip_RevoluteJoint": 495.0,
+    "RL_Body_Hip_RevoluteJoint": 495.0,
+    "RR_Body_Hip_RevoluteJoint": 495.0,
 }
-_BODY_HIP_DAMPING = {name: 1.9 for name in _BODY_HIP_STIFFNESS}
-_BODY_HIP_EFFORT = {name: 130.0 for name in _BODY_HIP_STIFFNESS}
-_BODY_HIP_SATURATION = {name: 160.0 for name in _BODY_HIP_STIFFNESS}
+_BODY_HIP_DAMPING = {name: 9.9 for name in _BODY_HIP_STIFFNESS}
+_BODY_HIP_EFFORT = {name: 600.0 for name in _BODY_HIP_STIFFNESS}
+_BODY_HIP_SATURATION = {name: 738.5 for name in _BODY_HIP_STIFFNESS}
 
-_HIP_FEMUR_STIFFNESS = {name: 130.0 for name in [
+_HIP_FEMUR_STIFFNESS = {name: 675.0 for name in [
     "FL_Hip_Femur_RevoluteJoint",
     "FR_Hip_Femur_RevoluteJoint",
     "ML_Hip_Femur_RevoluteJoint",
@@ -46,11 +47,11 @@ _HIP_FEMUR_STIFFNESS = {name: 130.0 for name in [
     "RL_Hip_Femur_RevoluteJoint",
     "RR_Hip_Femur_RevoluteJoint",
 ]}
-_HIP_FEMUR_DAMPING = {name: 2.8 for name in _HIP_FEMUR_STIFFNESS}
-_HIP_FEMUR_EFFORT = {name: 150.0 for name in _HIP_FEMUR_STIFFNESS}
-_HIP_FEMUR_SATURATION = {name: 185.0 for name in _HIP_FEMUR_STIFFNESS}
+_HIP_FEMUR_DAMPING = {name: 14.5 for name in _HIP_FEMUR_STIFFNESS}
+_HIP_FEMUR_EFFORT = {name: 1500.0 for name in _HIP_FEMUR_STIFFNESS}
+_HIP_FEMUR_SATURATION = {name: 1850.0 for name in _HIP_FEMUR_STIFFNESS}
 
-_FEMUR_TIBIA_STIFFNESS = {name: 160.0 for name in [
+_FEMUR_TIBIA_STIFFNESS = {name: 912.0 for name in [
     "FL_Femur_Tibia_RevoluteJoint",
     "FR_Femur_Tibia_RevoluteJoint",
     "ML_Femur_Tibia_RevoluteJoint",
@@ -58,17 +59,17 @@ _FEMUR_TIBIA_STIFFNESS = {name: 160.0 for name in [
     "RL_Femur_Tibia_RevoluteJoint",
     "RR_Femur_Tibia_RevoluteJoint",
 ]}
-_FEMUR_TIBIA_DAMPING = {name: 3.2 for name in _FEMUR_TIBIA_STIFFNESS}
-_FEMUR_TIBIA_EFFORT = {name: 170.0 for name in _FEMUR_TIBIA_STIFFNESS}
-_FEMUR_TIBIA_SATURATION = {name: 210.0 for name in _FEMUR_TIBIA_STIFFNESS}
+_FEMUR_TIBIA_DAMPING = {name: 18.2 for name in _FEMUR_TIBIA_STIFFNESS}
+_FEMUR_TIBIA_EFFORT = {name: 600.0 for name in _FEMUR_TIBIA_STIFFNESS}
+_FEMUR_TIBIA_SATURATION = {name: 740.0 for name in _FEMUR_TIBIA_STIFFNESS}
 
 
 def _crab_simple_robot_cfg() -> ArticulationCfg:
     """``crab_simple.usda`` (``defaultPrim = "krabby"``): reference composes into ``{ENV_REGEX_NS}/Robot`` — leave
     ``articulation_root_prim_path`` unset so Isaac Lab discovers the root on ``Robot``. Base link ``chassis/body``."""
     # USD lifts ``krabby`` by +1 m; tune root spawn so feet sit on terrain without huge drop or penetration.
-    # Default 0.95 m (override ``KRABBY_HEX_SPAWN_Z``); lower if hover-then-slam, raise if hips scrape or interpenetration.
-    spawn_z = float(os.environ.get("KRABBY_HEX_SPAWN_Z", "0.95"))
+    # Default 1.05 m (override ``KRABBY_HEX_SPAWN_Z``); lower if hover-then-slam, raise if hips scrape or interpenetration.
+    spawn_z = float(os.environ.get("KRABBY_HEX_SPAWN_Z", "1.05"))
     return ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
