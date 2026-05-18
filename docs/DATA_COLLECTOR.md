@@ -65,6 +65,8 @@ If you launch from an interactive shell inside a running container (instead of `
 
 If **`--data-collector-config`** is provided, the entrypoint loads that YAML and uses it for collector settings. If no config path is provided, defaults are assembled from **`data_collection/collector_settings.py`** via `build_data_collector_config(...)`. In all cases, entrypoints enforce HAL endpoints from runtime server wiring so collector transport matches the primary HAL client endpoints.
 
+Canonical example in-repo: **`data_collection/config/collector.yaml`**. Copy or mount it, then override `output_dir` at runtime with **`--data-collector-output-dir`** when using Docker bind mounts (for example `/workspace/bags`).
+
 Example YAML (`collector.yaml`):
 
 ```yaml
