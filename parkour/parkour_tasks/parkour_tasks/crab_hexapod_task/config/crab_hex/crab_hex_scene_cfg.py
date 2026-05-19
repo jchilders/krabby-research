@@ -101,10 +101,15 @@ def _crab_simple_robot_cfg() -> ArticulationCfg:
                 "MR_Body_Hip_RevoluteJoint": 0.0,
                 "RR_Body_Hip_RevoluteJoint": -0.6,
                 "RL_Body_Hip_RevoluteJoint": 0.6,
-                # Straighter stance (rad) for corrected USD leg reach; less inward knee flex at contact.
+                # Hip–femur: same on all legs. Knee: sign flip on FR/MR/RR (180° Z in USD); left −0.07
+                # vs right +0.10 balances zero-action roll (~−0.14°) with splay unchanged.
                 ".*_Hip_Femur_RevoluteJoint": 0.30,
-                # Within soft knee limits (~±0.31 rad).
-                ".*_Femur_Tibia_RevoluteJoint": -0.10,
+                "FL_Femur_Tibia_RevoluteJoint": -0.07,
+                "ML_Femur_Tibia_RevoluteJoint": -0.07,
+                "RL_Femur_Tibia_RevoluteJoint": -0.07,
+                "FR_Femur_Tibia_RevoluteJoint": 0.10,
+                "MR_Femur_Tibia_RevoluteJoint": 0.10,
+                "RR_Femur_Tibia_RevoluteJoint": 0.10,
             },
             joint_vel={".*": 0.0},
         ),

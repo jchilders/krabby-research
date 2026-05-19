@@ -93,6 +93,23 @@ def reward_ang_vel_xy(
     asset: Articulation = env.scene[asset_cfg.name]
     return torch.sum(torch.square(asset.data.root_ang_vel_b[:,:2]), dim=1)
 
+
+def penalty_lin_vel_y_l2(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    cmd_threshold: float = 0.05,
+    min_forward_speed_cmd: float = 0.12,
+) -> torch.Tensor:
+    """Penalize lateral body velocity when only forward motion is commanded."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    vy = asset.data.root_lin_vel_b[:, 1]
+    no_lateral_cmd = torch.abs(cmd[:, 1]) < cmd_threshold
+    forward_cmd = torch.abs(cmd[:, 0]) > min_forward_speed_cmd
+    return torch.square(vy) * (no_lateral_cmd & forward_cmd).float()
+
+
 class reward_action_rate(ManagerTermBase):
     def __init__(self, cfg: RewardTermCfg, env: ParkourManagerBasedRLEnv):
         super().__init__(cfg, env)

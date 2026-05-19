@@ -99,10 +99,10 @@ class CrabHexFlatWalkEnvCfg(CrabHexTeacherEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        # Straight flat-walk: no heading resample (parent uses heading ±1.6 → yaw via P-control).
-        self.commands.base_velocity.ranges.lin_vel_x = (0.2, 0.45)
+        # Straight flat-walk: fixed world heading 0; P-control corrects slow yaw drift in play/train.
+        self.commands.base_velocity.ranges.lin_vel_x = (0.25, 0.60)
         self.commands.base_velocity.ranges.heading = (0.0, 0.0)
-        self.commands.base_velocity.heading_control_stiffness = 0.0
+        self.commands.base_velocity.heading_control_stiffness = 1.5
         self.events.push_by_setting_velocity = None
         self.events.randomize_rigid_body_mass = None
         self.events.randomize_rigid_body_com = None

@@ -45,7 +45,7 @@ class CrabHexTeacherPPORunnerCfg(CrabHexParkourRslRlOnPolicyRunnerCfg, UnitreeGo
 class CrabHexFlatWalkPPORunnerCfg(CrabHexTeacherPPORunnerCfg):
     experiment_name = "crab_hex_flat_walk"
     max_iterations = 20000
-    clip_actions = 2.0
+    clip_actions = 1.0
     algorithm = ParkourRslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
         use_clipped_value_loss=True,

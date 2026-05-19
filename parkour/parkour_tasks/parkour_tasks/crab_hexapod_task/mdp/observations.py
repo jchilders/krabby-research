@@ -33,26 +33,30 @@ class CrabHexParkourObservations(ExtremeParkourObservations):
         history_length: int,
     ) -> torch.Tensor:
         terrain_names = self.parkour_event.env_per_terrain_name
-        env_idx_tensor = torch.tensor((terrain_names != "parkour_flat")).to(
-            dtype=torch.bool, device=self.device
-        )
-        invert_env_idx_tensor = torch.tensor((terrain_names == "parkour_flat")).to(
-            dtype=torch.bool, device=self.device
-        )
+        on_flat = torch.as_tensor(
+            terrain_names == "parkour_flat", dtype=torch.bool, device=self.device
+        ).reshape(self.num_envs)
+        invert_env_idx_tensor = on_flat.reshape(self.num_envs, 1)
+        env_idx_tensor = (~on_flat).reshape(self.num_envs, 1)
         roll, pitch, yaw = euler_xyz_from_quat(self.asset.data.root_quat_w)
         imu_obs = torch.stack((wrap_to_pi(roll), wrap_to_pi(pitch)), dim=1).to(self.device)
         if env.common_step_counter % 5 == 0:
-            self.delta_yaw = self.parkour_event.target_yaw - wrap_to_pi(yaw)
-            self.delta_next_yaw = self.parkour_event.next_target_yaw - wrap_to_pi(yaw)
+            self.delta_yaw = (self.parkour_event.target_yaw - wrap_to_pi(yaw)).reshape(self.num_envs)
+            self.delta_next_yaw = (self.parkour_event.next_target_yaw - wrap_to_pi(yaw)).reshape(
+                self.num_envs
+            )
             self.measured_heights = self._get_heights()
+        # Flat-walk: velocity command is straight ahead; parkour goal yaw biases crab/drift.
+        delta_yaw = torch.where(on_flat, torch.zeros_like(self.delta_yaw), self.delta_yaw)
+        delta_next_yaw = torch.where(on_flat, torch.zeros_like(self.delta_next_yaw), self.delta_next_yaw)
         commands = env.command_manager.get_command("base_velocity")
         obs_buf = torch.cat(
             (
                 self.asset.data.root_ang_vel_b * 0.25,
                 imu_obs,
-                0 * self.delta_yaw[:, None],
-                self.delta_yaw[:, None],
-                self.delta_next_yaw[:, None],
+                0 * delta_yaw[:, None],
+                delta_yaw[:, None],
+                delta_next_yaw[:, None],
                 0 * commands[:, 0:2],
                 commands[:, 0:1],
                 env_idx_tensor,

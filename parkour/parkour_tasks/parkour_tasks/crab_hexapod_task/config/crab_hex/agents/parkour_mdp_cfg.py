@@ -26,18 +26,18 @@ from parkour_tasks.extreme_parkour_task.config.go2.parkour_mdp_cfg import (
 
 @configclass
 class CrabHexFlatWalkActionsCfg:
-    """Aggressive flat-walk exploration: larger scale and ±2 raw clip (matches runner clip_actions)."""
+    """Flat-walk: scale 0.20 and ±1 raw clip (matches runner clip_actions)."""
 
     joint_pos = CrabHexDelayedJointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*"],
-        scale=0.35,
+        scale=0.20,
         use_default_offset=True,
         action_delay_steps=[1, 1],
         delay_update_global_steps=24 * 8000,
         history_length=1,
         use_delay=False,
-        clip={".*": (-2.0, 2.0)},
+        clip={".*": (-1.0, 1.0)},
     )
 
 
@@ -181,12 +181,17 @@ class CrabHexFlatWalkRewardsCfg:
     )
     track_ang_vel_z_exp = RewTerm(
         func=track_ang_vel_z_exp,
-        weight=1.2,
+        weight=1.0,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
+    )
+    penalty_lin_vel_y = RewTerm(
+        func=mdp_rewards.penalty_lin_vel_y_l2,
+        weight=-3.0,
+        params={"command_name": "base_velocity", "asset_cfg": SceneEntityCfg("robot")},
     )
     reward_forward_progress_along_command = RewTerm(
         func=mdp_rewards.reward_forward_progress_along_command,
-        weight=0.35,
+        weight=0.50,
         params={
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg("robot"),
@@ -222,7 +227,7 @@ class CrabHexFlatWalkRewardsCfg:
     )
     reward_feet_air_time_positive = RewTerm(
         func=mdp_rewards.reward_feet_air_time_positive,
-        weight=0.15,
+        weight=0.25,
         params={
             "command_name": "base_velocity",
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_Footpad"),
