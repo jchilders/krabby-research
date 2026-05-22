@@ -1,7 +1,9 @@
 """
 Interactive MCU menu. Run with: python -m firmware [--debug]
+Works over SSH / headless — uses termios + select, no X11 required.
 """
 import argparse
+import select
 import sys
 import tty
 import termios
@@ -21,32 +23,31 @@ RETRACT_KEYS = ["a", "s", "d", "f", "g", "h"]
 # analogWrite is 0-255 duty; 200 is ~78% -> ~18.8 V average from a 24 V rail. 255 is ~100% duty.
 JOG_PWM = 255
 
-_pressed = set()
+# Tracks the last time each key was seen; is_pressed() uses a 150ms recency
+# window so auto-repeat (≈33ms) keeps keys "held" while release lets them expire.
+_last_seen: dict[str, float] = {}
 _quit = False
+_HOLD_WINDOW = 0.15  # seconds
 _BOARD_ROLES = ("primary", "left   ", "right  ")  # padded for log column alignment
 
 
-def _on_press(key):
+def _read_keys(fd: int) -> None:
+    """Drain all bytes currently in stdin and refresh _last_seen timestamps."""
     global _quit
-    from pynput.keyboard import Key
-    if key == Key.esc:
-        _quit = True
-        return
-    try:
-        _pressed.add(key.char.lower())
-    except AttributeError:
-        _pressed.add(key)
+    while select.select([fd], [], [], 0)[0]:
+        ch = sys.stdin.buffer.read(1)
+        if not ch:
+            break
+        if ch == b"\x1b":
+            _quit = True
+        else:
+            c = ch.decode("utf-8", errors="ignore").lower()
+            if c:
+                _last_seen[c] = time.monotonic()
 
 
-def _on_release(key):
-    try:
-        _pressed.discard(key.char.lower())
-    except AttributeError:
-        _pressed.discard(key)
-
-
-def is_pressed(k):
-    return k in _pressed
+def is_pressed(k: str) -> bool:
+    return time.monotonic() - _last_seen.get(k, 0.0) < _HOLD_WINDOW
 
 
 def _log_jog(jog_cmds):
@@ -101,17 +102,12 @@ def main():
         cmd_update(args.channel, args.port)
         return
 
-    from pynput import keyboard as pynput_keyboard
-
     if args.debug:
         logger.setLevel(logging.DEBUG)
 
     mcu = KrabbyMCUSDK()
     if not mcu.connect():
         return
-
-    listener = pynput_keyboard.Listener(on_press=_on_press, on_release=_on_release)
-    listener.start()
 
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
@@ -128,6 +124,8 @@ def main():
         prev_jog = {}
 
         while True:
+            _read_keys(fd)
+
             if _quit:
                 logger.info("ESC — quitting")
                 break
@@ -185,7 +183,6 @@ def main():
     finally:
         termios.tcflush(fd, termios.TCIFLUSH)
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        listener.stop()
         mcu.close()
 
 

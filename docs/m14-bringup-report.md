@@ -53,7 +53,9 @@ krabby run --entrypoint nvidia-smi    # GPU visible (NVIDIA-SMI 540.4.0, CUDA 12
 krabby run --entrypoint ls -- /dev/input/  # /dev/input/* visible (gamepad passthrough)
 ```
 
-Pro Controller E2E (paired per `CONNECT_PRO_CONTROLLER.md`): controller drove joints through `krabby run` container. Verified previously on this hardware.
+Pro Controller device passthrough confirmed: `/dev/input/js0` is visible inside the container via `-v /dev:/dev`. GPU (`--runtime=nvidia`, NVIDIA-SMI 540.4.0) and serial devices (`/dev/ttyACM0`, `/dev/ttyUSB*`) also confirmed present inside container.
+
+**Partial — controller → joint movement not verified.** `krabby run` requires a `--checkpoint` argument (trained policy weights). No Krabby-specific checkpoint exists yet; training requires Isaac Lab (~30 h). The container starts correctly and all device passthrough is wired; the inference path itself is blocked on a trained model. Unit tests cover the docker command construction (correct flags, devices, ports).
 
 ---
 
@@ -111,7 +113,17 @@ Exactly one email delivered and one GitHub issue opened. Repeat polls of the sam
 
 ---
 
-## 7. Deferred items
+## 7. Gaps surfaced post-report, fixed on main
 
-- **AC4 Task 4 (browser teleop):** Blocked on M10 fleet portal, which is expected to complete after M14.
-- **`krabby firmware update mainline`:** `mainline-latest` tag will exist in ECR once `m14` merges to `main`.
+| Gap | Fix | Commit |
+|-----|-----|--------|
+| `krabby-firmware` interactive menu required X11 (`pynput`) — fails over SSH on headless Jetson | Replaced pynput with termios + select stdin loop; works over SSH | `df419b5` |
+| `pynput` added as dependency then removed | Reverted; `krabby-firmware` 0.2.13 published via `firmware-v0.2.13` tag | pending |
+
+---
+
+## 8. Deferred items
+
+- **Task 3 AC6 / Task 4 AC5 (controller → joints):** Device passthrough confirmed; end-to-end joint movement blocked on a trained Krabby policy checkpoint. No checkpoint exists yet — requires Isaac Lab training run (~30 h). Verified at the infrastructure level (unit tests, container flags, `/dev/input` passthrough).
+- **Task 4 AC4 (browser teleop):** Blocked on M10 fleet portal, expected to complete after M14.
+- **`krabby firmware update mainline` / `mainline-latest` ECR tag:** Pending resolution of `mainline` vs `main` branch naming in the locomotion CI workflow.
