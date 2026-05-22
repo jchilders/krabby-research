@@ -1,13 +1,15 @@
 """
 Interactive MCU menu. Run with: python -m firmware [--debug]
 """
+import argparse
 import sys
+import tty
+import termios
 import logging
 import time
+from typing import NoReturn
 
-from pynput import keyboard as pynput_keyboard
-
-from firmware.krabby_mcu import KrabbyMCUSDK, logger
+from firmware.krabby_mcu import KrabbyMCUSDK, parse_ver_reply, logger
 
 # Joint order per leg pair: LKL, LHL, LHY, RHY, RHL, RKL
 JOINTS_FRONT = ["FLKL", "FLHL", "FLHY", "FRHY", "FRHL", "FRKL"]
@@ -21,22 +23,24 @@ JOG_PWM = 255
 
 _pressed = set()
 _quit = False
+_BOARD_ROLES = ("primary", "left   ", "right  ")  # padded for log column alignment
 
 
 def _on_press(key):
     global _quit
-    if key == pynput_keyboard.Key.esc:
+    from pynput.keyboard import Key
+    if key == Key.esc:
         _quit = True
         return
     try:
-        _pressed.add(key.char)
+        _pressed.add(key.char.lower())
     except AttributeError:
         _pressed.add(key)
 
 
 def _on_release(key):
     try:
-        _pressed.discard(key.char)
+        _pressed.discard(key.char.lower())
     except AttributeError:
         _pressed.discard(key)
 
@@ -54,8 +58,52 @@ def _log_jog(jog_cmds):
         logger.info("JOG  (hold)")
 
 
+class _Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        print(f"krabby-firmware: {message}\n", file=sys.stderr)
+        self.print_help(sys.stderr)
+        sys.exit(2)
+
+
 def main():
-    if "--debug" in sys.argv:
+    parser = _Parser(
+        prog="krabby-firmware",
+        description="Krabby firmware tools. With no subcommand, launches the interactive MCU key-control menu.",
+    )
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging (interactive menu only)")
+    subparsers = parser.add_subparsers(dest="command")
+
+    subparsers.add_parser("help", help="Show this help message and exit.")
+    subparsers.add_parser("install", help="Set up host udev rules and serial permissions.")
+    subparsers.add_parser("show", help="List attached boards and their firmware versions.")
+    update_p = subparsers.add_parser("update", help="Flash firmware from S3 channel to board(s).")
+    update_p.add_argument("channel", nargs="?", default=None, metavar="CHANNEL")
+    update_p.add_argument("port", nargs="?", default=None, metavar="PORT")
+
+    args = parser.parse_args()
+
+    if args.command == "help":
+        parser.print_help()
+        return
+
+    if args.command == "install":
+        from firmware.install import run_install
+        run_install()
+        return
+
+    if args.command == "show":
+        from firmware.cli import cmd_show
+        cmd_show()
+        return
+
+    if args.command == "update":
+        from firmware.cli import cmd_update
+        cmd_update(args.channel, args.port)
+        return
+
+    from pynput import keyboard as pynput_keyboard
+
+    if args.debug:
         logger.setLevel(logging.DEBUG)
 
     mcu = KrabbyMCUSDK()
@@ -65,11 +113,16 @@ def main():
     listener = pynput_keyboard.Listener(on_press=_on_press, on_release=_on_release)
     listener.start()
 
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+
     try:
+        tty.setcbreak(fd)
+
         print("\n=== Krabby MCU — Direct key control (18 joints) ===")
         print("Extend: Q W E R T Y  |  Retract: A S D F G H")
         print("Hold 1: LEFT set  |  Hold 2: RIGHT set  |  Hold 1+2: all 18  |  No 1/2: FRONT")
-        print("0: Neutral (0.5)  |  9: Auto-calibrate  |  ESC: Quit")
+        print("0: Neutral (0.5)  |  9: Auto-calibrate  |  V: firmware version  |  ESC: Quit")
         print()
 
         prev_jog = {}
@@ -90,6 +143,17 @@ def main():
                 print("WARNING: This will move ALL limbs to find limits.")
                 mcu.send_command_calibrate()
                 time.sleep(0.5)
+                continue
+            if is_pressed("v"):
+                reply = mcu.read_version()
+                if boards := (parse_ver_reply(reply) if reply else None):
+                    for i, (v, b, c) in enumerate(boards):
+                        role = _BOARD_ROLES[i] if i < len(_BOARD_ROLES) else f"board{i}"
+                        if v != "-":
+                            logger.info("VER  %s  %s  %s  %s", role, v, b, c)
+                else:
+                    logger.warning("VER  no response from MCU")
+                time.sleep(0.3)
                 continue
 
             key1 = is_pressed("1")
@@ -119,6 +183,8 @@ def main():
     except KeyboardInterrupt:
         mcu.send_command_joints_hold()
     finally:
+        termios.tcflush(fd, termios.TCIFLUSH)
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         listener.stop()
         mcu.close()
 
