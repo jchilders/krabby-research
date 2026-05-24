@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 ECR_REPO = "public.ecr.aws/t7t7b3i3/krabby-locomotion"
-DEFAULT_TAG = "mainline-latest"
+DEFAULT_TAG = "main-latest"
 STATE_PATH = Path.home() / ".config" / "krabby" / "state.json"
 
 
