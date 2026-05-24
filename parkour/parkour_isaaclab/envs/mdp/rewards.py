@@ -350,3 +350,69 @@ def reward_stance_support_feet_when_forward(
     moving = torch.abs(cmd[:, 0]) > min_forward_speed_cmd
     has_support = num_feet.float() >= float(min_feet_loaded)
     return has_support.float() * moving.float()
+
+
+class PenaltyFootIdleWhenForward(ManagerTermBase):
+    """Penalize feet that stay airborne too long while commanding forward (hex duty cycle)."""
+
+    def __init__(self, cfg: RewardTermCfg, env: ParkourManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        sensor_cfg: SceneEntityCfg = cfg.params["sensor_cfg"]
+        self.contact_sensor = env.scene.sensors.get(sensor_cfg.name)
+        self.sensor_cfg = sensor_cfg
+        self.max_idle_steps = int(cfg.params["max_idle_steps"])
+        self.contact_force_threshold = float(cfg.params.get("contact_force_threshold", 0.1))
+        self.command_name = cfg.params["command_name"]
+        self.min_forward_speed_cmd = float(cfg.params.get("min_forward_speed_cmd", 0.12))
+        self.idle_steps = torch.zeros(env.num_envs, len(sensor_cfg.body_ids), device=self.device)
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        if env_ids is None:
+            env_ids = slice(None)
+        self.idle_steps[env_ids] = 0
+
+    def __call__(
+        self,
+        env: ParkourManagerBasedRLEnv,
+        command_name: str,
+        sensor_cfg: SceneEntityCfg,
+        max_idle_steps: int,
+        contact_force_threshold: float = 0.1,
+        min_forward_speed_cmd: float = 0.12,
+    ) -> torch.Tensor:
+        if self.contact_sensor is None:
+            return torch.zeros(env.num_envs, device=self.device)
+        net_forces = self.contact_sensor.data.net_forces_w_history[:, 0, self.sensor_cfg.body_ids]
+        in_contact = torch.norm(net_forces, dim=-1) > contact_force_threshold
+        self.idle_steps = torch.where(in_contact, torch.zeros_like(self.idle_steps), self.idle_steps + 1.0)
+        excess = torch.relu(self.idle_steps - float(max_idle_steps))
+        cmd = env.command_manager.get_command(command_name)
+        moving = torch.abs(cmd[:, 0]) > min_forward_speed_cmd
+        return torch.sum(excess, dim=1) * moving.float()
+
+
+def penalty_joint_deviation_when_in_contact(
+    env: ParkourManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    sensor_cfg: SceneEntityCfg,
+    contact_force_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Penalize deviation from default joint pose for loaded legs only."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    contact_sensor = env.scene.sensors.get(sensor_cfg.name)
+    if contact_sensor is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    joint_err = asset.data.joint_pos[:, asset_cfg.joint_ids] - asset.data.default_joint_pos[:, asset_cfg.joint_ids]
+    joint_sq = torch.square(joint_err)
+
+    net_forces = contact_sensor.data.net_forces_w_history[:, 0, sensor_cfg.body_ids]
+    in_contact = torch.norm(net_forces, dim=-1) > contact_force_threshold
+
+    num_joints = joint_sq.shape[1]
+    num_feet = in_contact.shape[1]
+    if num_joints != num_feet:
+        load_frac = in_contact.float().sum(dim=1) / float(num_feet)
+        return torch.sum(joint_sq, dim=1) * load_frac
+
+    return torch.sum(joint_sq * in_contact.float(), dim=1)

@@ -24,14 +24,32 @@ from parkour_tasks.extreme_parkour_task.config.go2.parkour_mdp_cfg import (
     StudentObservationsCfg,
 )
 
+# Leg order must match between tibia joints and footpads for stance-gated knee shaping.
+_CRAB_TIBIA_JOINT_NAMES = [
+    "FL_Femur_Tibia_RevoluteJoint",
+    "FR_Femur_Tibia_RevoluteJoint",
+    "ML_Femur_Tibia_RevoluteJoint",
+    "MR_Femur_Tibia_RevoluteJoint",
+    "RL_Femur_Tibia_RevoluteJoint",
+    "RR_Femur_Tibia_RevoluteJoint",
+]
+_CRAB_FOOT_BODY_NAMES = [
+    "FL_Footpad",
+    "FR_Footpad",
+    "ML_Footpad",
+    "MR_Footpad",
+    "RL_Footpad",
+    "RR_Footpad",
+]
+
 @configclass
 class CrabHexFlatWalkActionsCfg:
-    """Flat-walk: scale 0.20 and ±1 raw clip (matches runner clip_actions)."""
+    """Flat-walk: scale 0.24 and ±1 raw clip (matches runner clip_actions)."""
 
     joint_pos = CrabHexDelayedJointPositionActionCfg(
         asset_name="robot",
         joint_names=[".*"],
-        scale=0.20,
+        scale=0.24,
         use_default_offset=True,
         action_delay_steps=[1, 1],
         delay_update_global_steps=24 * 8000,
@@ -176,7 +194,7 @@ class CrabHexFlatWalkRewardsCfg:
 
     track_lin_vel_xy_exp = RewTerm(
         func=track_lin_vel_xy_exp,
-        weight=1.0,
+        weight=1.25,
         params={"command_name": "base_velocity", "std": math.sqrt(0.02)},
     )
     track_ang_vel_z_exp = RewTerm(
@@ -191,12 +209,12 @@ class CrabHexFlatWalkRewardsCfg:
     )
     reward_forward_progress_along_command = RewTerm(
         func=mdp_rewards.reward_forward_progress_along_command,
-        weight=0.50,
+        weight=0.60,
         params={
             "command_name": "base_velocity",
             "asset_cfg": SceneEntityCfg("robot"),
             "min_cmd_norm": 0.12,
-            "max_speed_scale": 1.65,
+            "max_speed_scale": 1.75,
         },
     )
     reward_orientation = RewTerm(
@@ -227,16 +245,48 @@ class CrabHexFlatWalkRewardsCfg:
     )
     reward_feet_air_time_positive = RewTerm(
         func=mdp_rewards.reward_feet_air_time_positive,
-        weight=0.25,
+        weight=0.40,
         params={
             "command_name": "base_velocity",
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_Footpad"),
             "threshold": 0.05,
         },
     )
+    penalty_tibia_deviation_in_stance = RewTerm(
+        func=mdp_rewards.penalty_joint_deviation_when_in_contact,
+        weight=-0.28,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=_CRAB_TIBIA_JOINT_NAMES,
+                preserve_order=True,
+            ),
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=_CRAB_FOOT_BODY_NAMES,
+                preserve_order=True,
+            ),
+            "contact_force_threshold": 0.1,
+        },
+    )
+    penalty_foot_idle_when_forward = RewTerm(
+        func=mdp_rewards.PenaltyFootIdleWhenForward,
+        weight=-0.12,
+        params={
+            "command_name": "base_velocity",
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=_CRAB_FOOT_BODY_NAMES,
+                preserve_order=True,
+            ),
+            "max_idle_steps": 60,
+            "contact_force_threshold": 0.1,
+            "min_forward_speed_cmd": 0.12,
+        },
+    )
     penalty_excess_feet_contact_forward = RewTerm(
         func=mdp_rewards.penalty_excess_feet_in_contact_forward,
-        weight=0.0,
+        weight=-0.20,
         params={
             "command_name": "base_velocity",
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_Footpad"),
