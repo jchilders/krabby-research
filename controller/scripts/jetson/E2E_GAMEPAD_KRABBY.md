@@ -36,12 +36,12 @@ The release image's default entrypoint (`hal.server.jetson.main`) requires `--ch
 
 ```bash
 # Clone the repo on the Jetson first if not present:
-git clone --depth=1 --branch m14 https://github.com/flliver/krabby-research.git /tmp/krabby-research
+git clone --depth=1 --branch main https://github.com/flliver/krabby-research.git /tmp/krabby-research
 
 krabby run \
   --entrypoint python3 \
-  -- -v /tmp/krabby-research:/workspace \
-  /workspace/controller/scripts/jetson/main_gamepad_only.py
+  --mount /tmp/krabby-research:/workspace \
+  -- /workspace/controller/scripts/jetson/main_gamepad_only.py
 ```
 
 > Note: `main_gamepad_only.py` is not included in the PyPI-installed packages; the workspace mount makes it available inside the container. All dependencies (`krabby-hal-server-jetson`, `krabby-controller`, etc.) are already installed in the image.

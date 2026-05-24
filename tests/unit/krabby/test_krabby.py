@@ -134,6 +134,29 @@ class TestRunCmd:
         # /dev:/dev exposes /dev/ttyACM*, /dev/ttyUSB*, /dev/input/js*, /dev/input/event*
         assert "/dev:/dev" in cmd
 
+    def test_extra_mounts_inserted_before_image(self, monkeypatch):
+        monkeypatch.setattr("krabby._docker.platform.machine", lambda: "x86_64")
+        cmd = run_cmd("myimage:tag", [], extra_mounts=["/tmp/repo:/workspace"])
+        img_idx = cmd.index("myimage:tag")
+        assert "-v" in cmd[:img_idx]
+        assert "/tmp/repo:/workspace" in cmd[:img_idx]
+
+    def test_multiple_extra_mounts(self, monkeypatch):
+        monkeypatch.setattr("krabby._docker.platform.machine", lambda: "x86_64")
+        cmd = run_cmd("myimage:tag", [], extra_mounts=["/a:/a", "/b:/b"])
+        img_idx = cmd.index("myimage:tag")
+        docker_flags = cmd[:img_idx]
+        v_indices = [i for i, x in enumerate(docker_flags) if x == "-v"]
+        mounts = [docker_flags[i + 1] for i in v_indices]
+        assert "/a:/a" in mounts
+        assert "/b:/b" in mounts
+
+    def test_no_extra_mounts_when_not_provided(self, monkeypatch):
+        monkeypatch.setattr("krabby._docker.platform.machine", lambda: "x86_64")
+        cmd_no_mounts = run_cmd("myimage:tag", [])
+        cmd_empty_mounts = run_cmd("myimage:tag", [], extra_mounts=[])
+        assert cmd_no_mounts == cmd_empty_mounts
+
 
 class TestFirmwareCmd:
     def test_entrypoint_is_krabby_firmware(self, monkeypatch):
