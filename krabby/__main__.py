@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-_VERSION = "0.1.3"
+_VERSION = "0.1.5"
 
 
 def main() -> None:
@@ -36,6 +36,11 @@ def main() -> None:
     p_firmware.add_argument("--image", metavar="REF", help="Image ref to use")
     p_firmware.add_argument("args", nargs=argparse.REMAINDER, help="Arguments forwarded to krabby-firmware")
 
+    # uno
+    p_uno = sub.add_parser("uno", help="Run the gamepad control-loop client inside the container")
+    p_uno.add_argument("--image", metavar="REF", help="Image ref to use")
+    p_uno.add_argument("args", nargs=argparse.REMAINDER, help="Extra args forwarded to krabby-uno")
+
     args = parser.parse_args()
 
     if args.command == "install":
@@ -53,6 +58,10 @@ def main() -> None:
     elif args.command == "firmware":
         from krabby.firmware import cmd_firmware
         cmd_firmware(firmware_args=args.args, image_ref=args.image)
+
+    elif args.command == "uno":
+        from krabby.uno import cmd_uno
+        cmd_uno(image_ref=args.image, extra_args=args.args)
 
     else:
         parser.print_help()

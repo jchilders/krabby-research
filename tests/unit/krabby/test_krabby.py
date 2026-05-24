@@ -64,7 +64,7 @@ class TestStateRoundtrip:
 # _docker: command construction
 # ---------------------------------------------------------------------------
 
-from krabby._docker import gpu_flags, serial_device_flags, run_cmd, firmware_cmd
+from krabby._docker import gpu_flags, serial_device_flags, run_cmd, firmware_cmd, uno_cmd
 
 
 class TestGpuFlags:
@@ -156,6 +156,29 @@ class TestRunCmd:
         cmd_no_mounts = run_cmd("myimage:tag", [])
         cmd_empty_mounts = run_cmd("myimage:tag", [], extra_mounts=[])
         assert cmd_no_mounts == cmd_empty_mounts
+
+
+class TestUnoCmd:
+    def test_entrypoint_is_krabby_uno(self):
+        cmd = uno_cmd("myimage:tag", [])
+        idx = cmd.index("--entrypoint")
+        assert cmd[idx + 1] == "krabby-uno"
+
+    def test_shares_krabby_container_network(self):
+        cmd = uno_cmd("myimage:tag", [])
+        assert "--network=container:krabby" in cmd
+
+    def test_dev_mount_for_gamepad_access(self):
+        cmd = uno_cmd("myimage:tag", [])
+        assert "/dev:/dev" in cmd
+
+    def test_extra_args_appended(self):
+        cmd = uno_cmd("myimage:tag", ["--device-id", "1"])
+        assert cmd[-2:] == ["--device-id", "1"]
+
+    def test_image_in_cmd(self):
+        cmd = uno_cmd("myimage:tag", [])
+        assert "myimage:tag" in cmd
 
 
 class TestFirmwareCmd:

@@ -72,6 +72,18 @@ def firmware_cmd(image_ref: str, firmware_args: list[str]) -> list[str]:
     ]
 
 
+def uno_cmd(image_ref: str, extra_args: list[str]) -> list[str]:
+    return [
+        "docker", "run", "--rm",
+        "--privileged",
+        "-v", "/dev:/dev",
+        "--network=container:krabby",
+        "--entrypoint", "krabby-uno",
+        image_ref,
+        *extra_args,
+    ]
+
+
 def _home() -> str:
     from pathlib import Path
     return str(Path.home())
