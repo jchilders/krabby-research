@@ -2,6 +2,10 @@ import logging
 import math
 import time
 
+import pytest
+
+pytest.importorskip("av")
+
 from hal.server.teleop_portal_signaling import _ControlLatencyReporter
 
 
