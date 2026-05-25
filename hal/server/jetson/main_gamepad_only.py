@@ -4,10 +4,14 @@ Runs the Jetson HAL server with TCP ZMQ endpoints so that a separate
 krabby-uno container (or any HAL client) can connect and send joint
 commands without requiring a model checkpoint.
 
+No observation loop — gamepad-only mode only needs get_joint_command()
+and apply_command(). Exits with non-zero if MCU hardware is not detected.
+
 Usage:
-    krabby-hal-server-gamepad-only [--control_rate HZ]
-                                   [--observation_bind ENDPOINT]
+    krabby-hal-server-gamepad-only [--observation_bind ENDPOINT]
                                    [--command_bind ENDPOINT]
+                                   [--mcu-port PORT]
+                                   [--mcu-baud BAUD]
 """
 
 import argparse
@@ -32,19 +36,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Jetson HAL server for gamepad-only operation (no inference checkpoint required)"
     )
-    parser.add_argument("--control_rate", type=float, default=100.0, help="Control loop rate in Hz")
-    parser.add_argument(
-        "--observation_bind",
-        type=str,
-        default="tcp://*:6001",
-        help="HAL observation bind endpoint (default: tcp://*:6001)",
-    )
-    parser.add_argument(
-        "--command_bind",
-        type=str,
-        default="tcp://*:6002",
-        help="HAL command bind endpoint (default: tcp://*:6002)",
-    )
+    parser.add_argument("--observation_bind", type=str, default="tcp://*:6001")
+    parser.add_argument("--command_bind", type=str, default="tcp://*:6002")
+    parser.add_argument("--mcu-port", type=str, default=None, help="Serial port for MCU (e.g. /dev/ttyACM0)")
+    parser.add_argument("--mcu-baud", type=int, default=115200)
     args = parser.parse_args()
 
     model_definition = PARKOUR_MODEL_OBSERVATION_DEFINITION
@@ -63,20 +58,23 @@ def main() -> None:
 
     hal_server = None
     try:
-        hal_server_config = HalServerConfig(
-            observation_bind=args.observation_bind,
-            command_bind=args.command_bind,
-        )
-
         hal_server = JetsonHalServer(
-            hal_server_config,
+            HalServerConfig(
+                observation_bind=args.observation_bind,
+                command_bind=args.command_bind,
+            ),
             observation_dimensions=observation_dimensions,
             action_dim=model_definition.action_dim,
             robot_definition=robot_definition,
+            mcu_port=args.mcu_port,
+            mcu_baud=args.mcu_baud,
+            mcu_auto_connect=True,
         )
         hal_server.initialize()
-        hal_server.initialize_sensors()
-        hal_server.initialize_actuators()
+
+        if hal_server._mcusdk is None or not hal_server._mcusdk.is_connected():
+            logger.error("MCU not available — check firmware and wiring. Exiting.")
+            sys.exit(1)
 
         logger.info(
             "HAL server started in gamepad-only mode "
@@ -85,43 +83,17 @@ def main() -> None:
             args.command_bind,
         )
 
-        period_s = 1.0 / args.control_rate
-        lag_warning_count = 0
+        while running:
+            command = hal_server.get_joint_command(timeout_ms=50)
+            if command is not None:
+                hal_server.apply_command(command)
+            time.sleep(0.001)
 
-        try:
-            while running:
-                loop_start_ns = time.time_ns()
-
-                hal_server.set_observation()
-                command = hal_server.get_joint_command(timeout_ms=1)
-                if command is not None:
-                    hal_server.apply_command(command)
-
-                loop_end_ns = time.time_ns()
-                loop_duration_s = (loop_end_ns - loop_start_ns) / 1e9
-                sleep_time = max(0.0, period_s - loop_duration_s)
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-                    lag_warning_count = 0
-                elif loop_duration_s > period_s * 1.1:
-                    lag_warning_count += 1
-                    if lag_warning_count == 1 or lag_warning_count % 100 == 0:
-                        logger.warning(
-                            "Loop unable to keep up! %.2fms > %.2fms target (count=%d)",
-                            loop_duration_s * 1000.0,
-                            period_s * 1000.0,
-                            lag_warning_count,
-                        )
-                else:
-                    lag_warning_count = 0
-
-        except KeyboardInterrupt:
-            logger.info("Interrupted by user")
-
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
     except Exception as e:
         logger.error("Failed to run gamepad-only HAL server: %s", e, exc_info=True)
         sys.exit(1)
-
     finally:
         if hal_server:
             hal_server.close()
