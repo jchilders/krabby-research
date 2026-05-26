@@ -6,9 +6,9 @@ The goal of this README is that anyone can clone the repo, create a Python env s
 The examples below assume:
 
 - `**$KRABBY_ROOT=/home/sanjay/Projects/krabby`**
-- `**krabby-research**` lives at `**$KRABBY_ROOT/krabby-research**`
+- `**krabby-research`** lives at `**$KRABBY_ROOT/krabby-research`**
 - **Isaac Lab** lives at `**$KRABBY_ROOT/IsaacLab`**
-- Your Isaac Lab conda env is called `**env_isaaclab**`
+- Your Isaac Lab conda env is called `**env_isaaclab`**
 
 Adjust paths and the conda env name if your layout is different.
 
@@ -57,7 +57,7 @@ export KRABBY_HEX_USD_PATH="$KRABBY_ROOT/krabby-research/assets/crab_simple.usda
 
 You can point `KRABBY_HEX_USD_PATH` at a flattened `.usd` export for deployment; the default authoring file is `crab_simple.usda`.
 
-**Spawn height:** The USD root `krabby` is offset **+1 m** in the file; `[_crab_simple_robot_cfg()](config/crab_hex/crab_hex_scene_cfg.py)` sets articulation spawn `z` from `KRABBY_HEX_SPAWN_Z` (default **`1.05`** m). Use the same value for train, play, and stance checks. If the robot **floats then slams**, **lower** slightly; if **hips scrape** or the root **interpenetrates**, **raise** in ~**0.02** m steps on flat ground.
+**Spawn height:** The USD root `krabby` is offset **+1 m** in the file; `[_crab_simple_robot_cfg()](config/crab_hex/crab_hex_scene_cfg.py)` sets articulation spawn `z` from `KRABBY_HEX_SPAWN_Z` (default `**1.05`** m). Use the same value for train, play, and stance checks. If the robot **floats then slams**, **lower** slightly; if **hips scrape** or the root **interpenetrates**, **raise** in ~**0.02** m steps on flat ground.
 
 **Default joint pose (rad):** body–hip yaw splay **±0.6** on front/rear legs, **±0.25** on middle legs (ML **+0.25**, MR **−0.25**); `Hip_Femur` **0.30**; `Femur_Tibia` left legs **−0.07**, right legs **+0.10**. Tune in `crab_hex_scene_cfg.py` if the passive stance is wrong.
 
@@ -74,20 +74,20 @@ You can point `KRABBY_HEX_USD_PATH` at a flattened `.usd` export for deployment;
   - `Isaac-Crab-Hex-Student-v0` → `CrabHexStudentEnvCfg`
 - **Scene / robot / sensors:**  
 `parkour_tasks/crab_hexapod_task/config/crab_hex/crab_hex_scene_cfg.py`  
-  - Loads `**crab_simple.usda`** by default (or `KRABBY_HEX_USD_PATH` if set); USD default prim `krabby` composes under `**{ENV_REGEX_NS}/Robot**`. Base **rigid** link is `**body`** under `**chassis**` (paths may appear as `.../Robot/krabby/chassis/body` or flattened under `Robot` depending on composition).
-  - `**contact_forces**` uses `**ParkourHexContactSensorCfg**` (see `crab_hexapod_task/sensors/parkour_hex_contact_sensor.py`) with `**prim_path="{ENV_REGEX_NS}/Robot/.*"**` so chassis and all leg links with `PhysxContactReportAPI` are aggregated (Go2 uses stock `**ContactSensorCfg**` on `**Robot/.***`).
+  - Loads `**crab_simple.usda`** by default (or `KRABBY_HEX_USD_PATH` if set); USD default prim `krabby` composes under `**{ENV_REGEX_NS}/Robot`**. Base rigid link is `**body`** under `**chassis`** (paths may appear as `.../Robot/krabby/chassis/body` or flattened under `Robot` depending on composition).
+  - `**contact_forces`** uses `**ParkourHexContactSensorCfg**` (see `crab_hexapod_task/sensors/parkour_hex_contact_sensor.py`) with `**prim_path="{ENV_REGEX_NS}/Robot/.*"**` so chassis and all leg links with `PhysxContactReportAPI` are aggregated (Go2 uses stock `**ContactSensorCfg**` on `**Robot/.***`).
   - Sets PhysX articulation solver (16 / 4 pos/vel iterations), `**enabled_self_collisions=True**` on the articulation root (same idea as Go2 parkour scene). If large-`num_envs` training FPS drops badly, you can set `**enabled_self_collisions=False**` in `_crab_simple_robot_cfg()` as a last resort. Reset pose, 18-DOF revolute actuators, height scanner and (student) depth camera on `**{ENV_REGEX_NS}/Robot/chassis/body**`
 - **Env configuration (teacher + student MDP):**  
 `parkour_tasks/crab_hexapod_task/config/crab_hex/crab_hex_env_cfg.py`  
   - **Defaults match Go2** `[UnitreeGo2TeacherParkourEnvCfg](../extreme_parkour_task/config/go2/parkour_teacher_cfg.py)` / `[UnitreeGo2StudentParkourEnvCfg](../extreme_parkour_task/config/go2/parkour_student_cfg.py)`: same `CommandsCfg`, `sim.dt`, domain randomization (push, friction, mass/COM noise), sensor periods, etc.  
-  - **Crab teacher-specific:** after `super().__post_init__()`, `CrabHexTeacherEnvCfg` sets `**sim.physx.enable_external_forces_every_iteration = True`** (TGS velocity stability), tightens `**commands.base_velocity.ranges.lin_vel_x**` to `**(0.45, 0.85)**` (Go2 default is `(0.3, 0.8)`), and wires event terms that target the chassis to `**body**` instead of Go2’s `**base**` (`SceneEntityCfg("robot", body_names="body")` for external wrench, mass, COM).  
-  - **Env counts:** teacher `**num_envs=6144`**, student `**num_envs=192**` (same as Go2 defaults).  
-  - **Optional easier train terrain:** set `**export KRABBY_HEX_TRAIN_EASY=1`** before `train.py` to use a lower difficulty band and **50%** `parkour_flat` (same mix idea as play-easy); teacher does **not** enable this by default.  
+  - **Crab teacher-specific:** after `super().__post_init__()`, `CrabHexTeacherEnvCfg` sets `**sim.physx.enable_external_forces_every_iteration = True`** (TGS velocity stability), tightens `**commands.base_velocity.ranges.lin_vel_x`** to `**(0.45, 0.85)`** (Go2 default is `(0.3, 0.8)`), and wires event terms that target the chassis to `**body**` instead of Go2’s `**base**` (`SceneEntityCfg("robot", body_names="body")` for external wrench, mass, COM).  
+  - **Env counts:** teacher `**num_envs=6144`**, student `**num_envs=192`** (same as Go2 defaults).  
+  - **Optional bridge train mode:** `**export KRABBY_HEX_TRAIN_EASY=1`** (~**82%** flat / **~18%** parkour, shallow narrow gaps, action scale **0.24** (same as flat-walk; do not raise until bridge policy re-adapts), LR **3e-5**, frozen terrain levels, minimal reward stack). When set, play inherits the same terrain mix.  
   - `CrabHexTeacherEnvCfgPLAY` is the **play/eval** variant:
     - Viewer follow-cam (`CRAB_HEX_VIEWER` in `crab_hex_env_cfg.py` — front 3/4, tracks `robot` root; same on `CrabHexTeacherEnvCfg`)  
     - Longer episodes (~60 s)  
     - Parkour + base velocity debug visualization  
-    - **Default terrain:** easier / flat-heavy mix (difficulty **0.15–0.55**, **50%** `parkour_flat`) unless `**export KRABBY_HEX_PLAY_HARD=1`**, which restores a harder band (**0.7–1.0**, no flat). You can still force easy with `**export KRABBY_HEX_PLAY_EASY=1`**.
+    - **Default terrain:** easier / flat-heavy mix (difficulty **0.15–0.55**, **50%** `parkour_flat`) unless `**export KRABBY_HEX_PLAY_HARD=1`**, which restores a harder band (0.7–1.0, no flat). You can still force easy with `**export KRABBY_HEX_PLAY_EASY=1`**.
 - **Rewards and actions for the hexapod:**  
 `parkour_tasks/crab_hexapod_task/config/crab_hex/agents/parkour_mdp_cfg.py`
   - `CrabHexRewardsCfg` matches **Go2 teacher** weights for the same terms and uses the scene `**contact_forces`** sensor (same pattern as Go2) for collision / feet rewards. Low-level math lives in `parkour_isaaclab/envs/mdp/rewards.py`.
@@ -99,7 +99,7 @@ You can point `KRABBY_HEX_USD_PATH` at a flattened `.usd` export for deployment;
   - **Terminations:** `CrabHexTerminationsCfg` — `total_terminates` (parkour timeout / goal / fall) plus `**crab_failure`** (tilt + hip ground contact); see `parkour_mdp_cfg.py` for thresholds.
   - **Actions:** shared Go2 `[ActionsCfg](../extreme_parkour_task/config/go2/parkour_mdp_cfg.py)` — delayed joint position with `joint_names=[".*"]`, scale **0.25**, clip **±4.8**; teacher vs student delay/history comes from each env’s `__post_init__` like Go2.
   - **Student rewards:** `[CrabHexStudentRewardsCfg](config/crab_hex/agents/parkour_mdp_cfg.py)` follows Go2 `[StudentRewardsCfg](../extreme_parkour_task/config/go2/parkour_mdp_cfg.py)`: a single `**reward_collision`** term with **weight 0**, using hex bodies on `contact_forces`.
-  - **Flat-walk rewards (stage 1):** `[CrabHexFlatWalkRewardsCfg](config/crab_hex/agents/parkour_mdp_cfg.py)` — walk before parkour (see [Appendix C](#appendix-c---2026-05-23-flat-walk-tuning-summary)). This pass finetunes gait quality on top of Appendix B: clearer alternating contacts, middle legs that step instead of idling, and stance tibiae held closer to **perpendicular** (near spawn knee defaults) under load.
+  - **Flat-walk rewards (stage 1):** `[CrabHexFlatWalkRewardsCfg](config/crab_hex/agents/parkour_mdp_cfg.py)` — walk before parkour (see [Appendix C](#appendix-c---2026-05-23-flat-walk-tuning-summary)). This pass finetunes gait quality on top of Appendix B: clearer alternating contacts, middle legs that step instead of idling, and stance tibiae held closer to **perpendicular** (near spaBody_Hipwn knee defaults) under load.
     - **Command tracking:** `track_lin_vel_xy_exp` (**+1.25**), `track_ang_vel_z_exp` (**+1.0**), `reward_forward_progress_along_command` (**+0.60**, `max_speed_scale` **1.75**).
     - **Actions:** `CrabHexFlatWalkActionsCfg` — joint scale **0.24**, raw clip **±1**.
     - **Stability:** `reward_orientation` (**-0.7**), `reward_lin_vel_z` (**-0.15**); `reward_ang_vel_xy`, `reward_dof_error` at **0**.
@@ -123,10 +123,10 @@ The **low-level** math for each reward term (errors, masks, exponents, etc.) is 
 
 On the current USD + spawn (**1.05** m), the bundled flat-walk policy (`model_6000.pt`) often shows:
 
-- **`Episode_Reward/track_lin_vel_xy_exp`** ≈ **0.9–1.0**.
-- **`Episode_Reward/reward_forward_progress_along_command`** ≈ **0.25–0.30**.
-- **`Train/mean_reward`** ≈ **34+** with **long episode length** (~980–990 steps).
-- **`Episode_Termination/crab_failure`** ≈ **4–6%**.
+- `**Episode_Reward/track_lin_vel_xy_exp`** ≈ **0.9–1.0**.
+- `**Episode_Reward/reward_forward_progress_along_command`** ≈ **0.25–0.30**.
+- `**Train/mean_reward`** ≈ **34+** with **long episode length** (~980–990 steps).
+- `**Episode_Termination/crab_failure`** ≈ **4–6%**.
 
 ### RSL-RL runner factory
 
@@ -135,10 +135,12 @@ On the current USD + spawn (**1.05** m), the bundled flat-walk policy (`model_60
 
 **Crab runner (committed):**
 
-| File | Purpose |
-|------|---------|
-| `scripts/rsl_rl/crab_on_policy_runner.py` | `OnPolicyRunnerCrabHex` → loads `CrabHexActorCriticRMA` |
-| `scripts/rsl_rl/modules/crab_actor_critic_with_encoder.py` | RMA policy with **clamped** Gaussian action std |
+
+| File                                                       | Purpose                                                 |
+| ---------------------------------------------------------- | ------------------------------------------------------- |
+| `scripts/rsl_rl/crab_on_policy_runner.py`                  | `OnPolicyRunnerCrabHex` → loads `CrabHexActorCriticRMA` |
+| `scripts/rsl_rl/modules/crab_actor_critic_with_encoder.py` | RMA policy with **clamped** Gaussian action std         |
+
 
 Go2 uses stock `OnPolicyRunnerWithExtractor` / `ActorCriticRMA` via the same factory.
 
@@ -146,11 +148,13 @@ Go2 uses stock `OnPolicyRunnerWithExtractor` / `ActorCriticRMA` via the same fac
 
 **Crab routing (`make_on_policy_runner`)** — uses `OnPolicyRunnerCrabHex` when any of:
 
-| Condition | Example |
-|-----------|---------|
-| `runner_class_name == "OnPolicyRunnerCrabHex"` | `crab_hex_rl_cfg.py` |
-| `policy.class_name == "CrabHexActorCriticRMA"` | Flat-walk / teacher / student |
-| `estimator.num_prop == 75` | `CrabHexParkourObservations` (Go2: **53**) |
+
+| Condition                                      | Example                                    |
+| ---------------------------------------------- | ------------------------------------------ |
+| `runner_class_name == "OnPolicyRunnerCrabHex"` | `crab_hex_rl_cfg.py`                       |
+| `policy.class_name == "CrabHexActorCriticRMA"` | Flat-walk / teacher / student              |
+| `estimator.num_prop == 75`                     | `CrabHexParkourObservations` (Go2: **53**) |
+
 
 **Related (committed):** `config/crab_hex/agents/crab_hex_rl_cfg.py`, `crab_hexapod_task/mdp/observations.py`, `modules/on_policy_runner_with_extractor.py`.
 
@@ -171,7 +175,7 @@ export PYTHONPATH="$KRABBY_ROOT/krabby-research/parkour/parkour_tasks:$KRABBY_RO
 
 **Where checkpoints are written:** `[parkour/scripts/rsl_rl/train.py](../../../scripts/rsl_rl/train.py)` sets the log root to `abspath("logs/rsl_rl/<experiment_name>")`, i.e. it is **relative to the shell’s current working directory**. There is no separate `--log_root` flag.
 
-- **Recommended (checkpoints under `krabby-research`):** `cd` into `**$KRABBY_ROOT/krabby-research/parkour`**, then run `**$KRABBY_ROOT/IsaacLab/isaaclab.sh**` with an **absolute** `-p` path to `train.py` / `play.py`. Artifacts land in `**krabby-research/parkour/logs/rsl_rl/...`**.
+- **Recommended (checkpoints under `krabby-research`):** `cd` into `**$KRABBY_ROOT/krabby-research/parkour`**, then run `**$KRABBY_ROOT/IsaacLab/isaaclab.sh`** with an absolute `-p` path to `train.py` / `play.py`. Artifacts land in `**krabby-research/parkour/logs/rsl_rl/...**`.
 - **Resume training** must use the **same** `cd` as the original run, because `--resume` / `--load_run` resolve under that directory’s `logs/rsl_rl/<experiment_name>/`. With `--load_run` + `--checkpoint model_XXXX.pt`, paths resolve under that run folder (bare filenames like `model_6000.pt` work when `cd` is `krabby-research/parkour`).
 - **Play** with an explicit `**--checkpoint`** uses that file path for inference; cwd does not change which weights load. You may still see a line like `Loading experiment from directory: ...` that reflects cwd-based `log_root_path`—when you pass `--checkpoint`, the run uses the checkpoint path you gave.
 
@@ -206,32 +210,28 @@ RUNS_DIR="$KRABBY_ROOT/krabby-research/parkour/parkour_tasks/parkour_tasks/crab_
 
 Replace paths with your run folder and `model_*.pt` for other checkpoints.
 
-**Stage 2a — parkour warm-up** (resume flat checkpoint; easier mixed terrain):
-
-Use an **absolute** `--checkpoint` path to the flat-walk run (flat and teacher use different `experiment_name` log folders):
+**Stage 2 — teacher bridge (`KRABBY_HEX_TRAIN_EASY=1`)** — resume flat-walk checkpoint:
 
 ```bash
+export KRABBY_ROOT=/home/sanjay/Projects/krabby
 export KRABBY_HEX_TRAIN_EASY=1
+conda activate env_isaaclab
+
+FLAT_CKPT="$KRABBY_ROOT/krabby-research/parkour/parkour_tasks/parkour_tasks/crab_hexapod_task/runs/2026-05-23_10-15-21/model_6000.pt"
+
 cd "$KRABBY_ROOT/krabby-research/parkour"
-FLAT_CKPT="$KRABBY_ROOT/krabby-research/parkour/logs/rsl_rl/crab_hex_flat_walk/<FLAT_WALK_TIMESTAMP>/model_2999.pt"
 "$KRABBY_ROOT/IsaacLab/isaaclab.sh" -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/train.py" \
   --task Isaac-Crab-Hex-Teacher-v0 \
   --headless --num_envs 256 --seed 1 \
   --resume --checkpoint "$FLAT_CKPT" \
-  --max_iterations 3000
+  --max_iterations 100
 ```
 
-**Stage 2b — full parkour** (unset easy flag; continue from stage-2a checkpoint):
+PPO on bridge: **learning rate `3e-5`**, **`--max_iterations 100`** from flat `6000` → final checkpoint **`model_6099.pt`**. Bundled baseline and settings: [Appendix D](#appendix-d---2026-05-25-teacher-bridge-baseline).
 
-```bash
-unset KRABBY_HEX_TRAIN_EASY
-cd "$KRABBY_ROOT/krabby-research/parkour"
-"$KRABBY_ROOT/IsaacLab/isaaclab.sh" -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/train.py" \
-  --task Isaac-Crab-Hex-Teacher-v0 \
-  --headless --num_envs 256 --seed 1 \
-  --resume --load_run <STAGE_2A_TIMESTAMP> --checkpoint model_2999.pt \
-  --max_iterations 7000
-```
+**Play bridge checkpoint** (bundled baseline): see [Appendix D](#appendix-d---2026-05-25-teacher-bridge-baseline) (“Run the bundled baseline”).
+
+**Stage 2b — full parkour** (unset easy flag; resume from Appendix D `model_6099.pt` — see [Appendix D](#appendix-d---2026-05-25-teacher-bridge-baseline)).
 
 **TensorBoard (stage 1):**
 
@@ -250,7 +250,7 @@ Prioritize `Episode_Reward/reward_forward_progress_along_command`, `Train/mean_r
 
 ### 3.1 Zero-agent stance check (no policy)
 
-[`parkour/scripts/zero_agent.py`](../../../scripts/zero_agent.py) runs any registered `parkour_tasks` env with **all-zero actions** (hold default joint targets from `crab_hex_scene_cfg.py`; no checkpoint). Use this to verify **spawn height**, **default pose**, and **`CRAB_HEX_VIEWER`** before training.
+`[parkour/scripts/zero_agent.py](../../../scripts/zero_agent.py)` runs any registered `parkour_tasks` env with **all-zero actions** (hold default joint targets from `crab_hex_scene_cfg.py`; no checkpoint). Use this to verify **spawn height**, **default pose**, and `**CRAB_HEX_VIEWER`** before training.
 
 **Recommended for a flat stance check** (easy terrain, hex camera, one env):
 
@@ -272,12 +272,14 @@ cd "$KRABBY_ROOT/krabby-research/parkour"
 
 ### 3.1a Crab verification scripts (headless)
 
-Optional checks in [`scripts/`](scripts/). Run from `krabby-research/parkour` via `isaaclab.sh -p` (same as `zero_agent.py`).
+Optional checks in `[scripts/](scripts/)`. Run from `krabby-research/parkour` via `isaaclab.sh -p` (same as `zero_agent.py`).
 
-| Script | What it does |
-|--------|----------------|
-| [`verify_crab_contact_physics.py`](scripts/verify_crab_contact_physics.py) | Spawns the flat-walk env, steps with zero actions, then prints a runtime audit: whether `.*_Footpad` bodies resolve on `contact_forces`, per-link masses (~**104 kg** total expected), foot contact flags, and friction/material notes. Writes JSON to `logs/rsl_rl/crab_hex_flat_walk/diagnostics/contact_physics_audit.json` by default (`--output` to override). Use after USD or spawn changes. |
-| [`verify_crab_joint_drive.py`](scripts/verify_crab_joint_drive.py) | Drives each of the **18** revolute joints one at a time (± action) and reports whether the joint moves (position delta, torque, velocity). Gravity off by default for a clean actuation test. Exits with code **1** if any joint fails. Use after actuator or joint limit changes in `crab_hex_scene_cfg.py`. |
+
+| Script                                                                     | What it does                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `[verify_crab_contact_physics.py](scripts/verify_crab_contact_physics.py)` | Spawns the flat-walk env, steps with zero actions, then prints a runtime audit: whether `.*_Footpad` bodies resolve on `contact_forces`, per-link masses (~**104 kg** total expected), foot contact flags, and friction/material notes. Writes JSON to `logs/rsl_rl/crab_hex_flat_walk/diagnostics/contact_physics_audit.json` by default (`--output` to override). Use after USD or spawn changes. |
+| `[verify_crab_joint_drive.py](scripts/verify_crab_joint_drive.py)`         | Drives each of the **18** revolute joints one at a time (± action) and reports whether the joint moves (position delta, torque, velocity). Gravity off by default for a clean actuation test. Exits with code **1** if any joint fails. Use after actuator or joint limit changes in `crab_hex_scene_cfg.py`.                                                                                       |
+
 
 ```bash
 cd "$KRABBY_ROOT/krabby-research/parkour"
@@ -320,7 +322,7 @@ Inside each timestamped folder you will see:
 
 **TensorBoard:** Run it with `**conda activate env_isaaclab`**. The default `(base)` Python often fails TensorBoard with `ModuleNotFoundError: No module named 'pkg_resources'`.
 
-Point `--logdir` at the parent `**logs/rsl_rl**` directory that matches **how you trained** (same rule as checkpoints: relative to the shell’s current working directory):
+Point `--logdir` at the parent `**logs/rsl_rl`** directory that matches **how you trained** (same rule as checkpoints: relative to the shell’s current working directory):
 
 ```bash
 conda activate env_isaaclab
@@ -332,7 +334,7 @@ tensorboard --logdir "$KRABBY_ROOT/krabby-research/parkour/logs/rsl_rl" --port 6
 
 Open **[http://localhost:6006/](http://localhost:6006/)** (or another `--port` if 6006 is in use). A single `--logdir` on `**logs/rsl_rl`** lists every experiment underneath (e.g. teacher and student runs). Scalars keep updating while training is running; quit TensorBoard with **Ctrl+C** in that terminal.
 
-In **Scalars**, search for `**mean_reward`** / `**Train/**` and `**Episode_Reward/**` (per-term curves such as `reward_tracking_goal_vel`, `reward_collision`, matching the training log).
+In **Scalars**, search for `**mean_reward`** / `**Train/`** and `**Episode_Reward/`** (per-term curves such as `reward_tracking_goal_vel`, `reward_collision`, matching the training log).
 
 You can stop a long run early and still use the last `model_<iter>.pt` that was saved.  
 To resume from a specific checkpoint (use the **same** `cd` as training so `--load_run` resolves correctly):
@@ -476,7 +478,7 @@ Training uses `**crab_simple.usda**` only; set `**KRABBY_HEX_USD_PATH**` only if
 - **Foot rubber at the feet:** Separate `*_Footpad` colliders with `FootRubber` for ground contact (not full-shank tibia collision).
 - **Stable stance:** Body–hip yaw splay **±0.6** on front and rear legs; spawn `z` **1.05** m (`KRABBY_HEX_SPAWN_Z`).
 - **Simpler flat-walk reward weights:** Small `CrabHexFlatWalkRewardsCfg` set for easier experimentation.
-- **Velocity in observations:** Base linear velocity (`root_lin_vel_xy`) included in proprioceptive observations. 
+- **Velocity in observations:** Base linear velocity (`root_lin_vel_xy`) included in proprioceptive observations.
 
 ### Appendix B - 2026-05-19 Flat-Walk Tuning Summary
 
@@ -493,6 +495,8 @@ It contains:
 - `crab_simple_2026-05-19_12-06-10.usda` - the USD snapshot used for this baseline.
 - `model_4000.pt` - the baseline flat-walk policy checkpoint.
 - `README.md` - short provenance and frozen flat-walk settings.
+
+*The artifacts in this folder may be deleted in a future cleanup: later runs (especially [Appendix C](#appendix-c---2026-05-23-flat-walk-tuning-summary)) supersede this baseline for training and play. Keep this bundle only if you want to compare run-to-run improvements against 2026-05-19.*
 
 Key changes and why they were made:
 
@@ -565,7 +569,7 @@ Key changes vs Appendix B (`2026-05-19_12-06-10`) and why:
   - `penalty_foot_idle_when_forward = -0.12` — discourages leaving a foot airborne too long (fixes idle middle-leg / tripod gaits).
   - `penalty_excess_feet_contact_forward = -0.20` — nudges toward alternating contacts while moving forward.
 - **Middle-leg splay:** ML/MR body–hip yaw **±0.25** (was **0**) so middle footpads reach the ground in zero-action stance and training.
-- **Resume path fix:** `train.py` resolves `--load_run` + `--checkpoint model_XXXX.pt` under `logs/rsl_rl/crab_hex_flat_walk/` (bare checkpoint names no longer fail with `FileNotFoundError`).
+- **Resume path fix:** `train.py` resolves `--load_run` + `--checkpoint model_XXXX.pt` under parkour/parkour_tasks/parkour_tasks/crab_hexapod_task/[README.md](http://README.md)`logs/rsl_rl/crab_hex_flat_walk/` (bare checkpoint names no longer fail with `FileNotFoundError`).
 
 Run the bundled baseline:
 
@@ -585,3 +589,68 @@ Reference TensorBoard metrics around bundled `model_6000.pt`:
 - `reward_forward_progress_along_command` ≈ **0.28**.
 - `Episode_Termination/crab_failure` ≈ **6%**.
 - `Train/mean_episode_length` ≈ **985** steps.
+
+### Appendix D - 2026-05-25 Teacher Bridge Baseline
+
+**Stage 2a:** resume [Appendix C](#appendix-c---2026-05-23-flat-walk-tuning-summary) `model_6000.pt` on easy mixed terrain (`KRABBY_HEX_TRAIN_EASY=1`), **100** PPO iterations, then play/eval before full parkour (stage 2b).
+
+Training log: `logs/rsl_rl/crab_hex_teacher/2026-05-25_22-26-06/`.
+
+Bundled artifacts:
+
+```text
+parkour_tasks/parkour_tasks/crab_hexapod_task/runs/2026-05-25_22-26-06/
+  model_6099.pt
+  README.md
+```
+
+#### What changed (code + training)
+
+- **`KRABBY_HEX_TRAIN_EASY=1`** on `CrabHexTeacherEnvCfg`: ~**82%** flat / ~**18%** shallow parkour, `freeze_terrain_levels=True`, shallow gaps (**0.05–0.12** m).
+- **`CrabHexTeacherBridgeRewardsCfg`:** forward velocity + progress; upright + linear pitch penalty; anti-stall; heading error (**-1.5**); flat speed / air-time aux; parkour yaw/goal rewards **0**.
+- **Actions:** joint scale **0.24** and clip **±1** (same as flat-walk); PPO **`clip_actions=1.0`**, **`learning_rate=3e-5`**.
+- **Commands:** `lin_vel_x = (0.45, 0.85)`, heading **0**.
+- **Actuators:** baseline PD in `crab_hex_scene_cfg.py` (no extra hip–femur gain multipliers); bridge training must use the same gains and scale as flat-walk.
+
+#### Metrics at `model_6099.pt` (TensorBoard)
+
+| Metric | Value |
+|--------|--------|
+| `Episode_Reward/track_lin_vel_xy_exp` | **~1.66** |
+| `Episode_Termination/crab_failure` | **~7%** |
+| `Train/mean_episode_length` | **~920** steps |
+| `Metrics/base_parkour/current_goal_idx` | **~3.27** |
+| `Metrics/base_velocity/error_vel_yaw` | **~1.85** |
+| `Train/mean_reward` | **~3.2** |
+
+#### Play (human eval)
+
+- **Stable forward walking** on flat + light parkour tiles; episodes last long enough to traverse.
+- **Some heading drift** (matches elevated `error_vel_yaw` in logs); no rapid leg thrash or immediate collapse.
+- **Not in scope:** full hard parkour — resume stage 2b with `unset KRABBY_HEX_TRAIN_EASY`.
+
+Run the bundled baseline:
+
+```bash
+export KRABBY_ROOT=/home/sanjay/Projects/krabby
+conda activate env_isaaclab
+RUNS_DIR="$KRABBY_ROOT/krabby-research/parkour/parkour_tasks/parkour_tasks/crab_hexapod_task/runs"
+
+"$RUNS_DIR/play_crab_hex_bridge_baseline.sh" \
+  "$RUNS_DIR/2026-05-23_10-15-21/crab_simple_2026-05-23_10-15-21.usda" \
+  "$RUNS_DIR/2026-05-25_22-26-06/model_6099.pt"
+```
+
+The script sets `KRABBY_HEX_USD_PATH`, `KRABBY_HEX_SPAWN_Z=1.05`, `KRABBY_HEX_TRAIN_EASY=1`, `PYTHONPATH`, and `Isaac-Crab-Hex-Teacher-Play-v0`.
+
+**Stage 2b resume (full teacher):**
+
+```bash
+unset KRABBY_HEX_TRAIN_EASY
+cd "$KRABBY_ROOT/krabby-research/parkour"
+"$KRABBY_ROOT/IsaacLab/isaaclab.sh" -p scripts/rsl_rl/train.py \
+  --task Isaac-Crab-Hex-Teacher-v0 --headless --num_envs 256 --seed 1 \
+  --resume --checkpoint "$RUNS_DIR/2026-05-25_22-26-06/model_6099.pt" \
+  --max_iterations 2000
+```
+

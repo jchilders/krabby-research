@@ -1,3 +1,5 @@
+import os
+
 from isaaclab.utils import configclass
 
 from parkour_tasks.crab_hexapod_task.config.crab_hex.agents.crab_hex_rl_cfg import (
@@ -39,6 +41,31 @@ class CrabHexTeacherPPORunnerCfg(CrabHexParkourRslRlOnPolicyRunnerCfg, UnitreeGo
         ),
     )
     estimator = CrabHexParkourRslRlEstimatorCfg(hidden_dims=[128, 64])
+    algorithm = ParkourRslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.01,
+        desired_kl=0.01,
+        num_learning_epochs=5,
+        num_mini_batches=16,
+        learning_rate=2.0e-4,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        max_grad_norm=1.0,
+        dagger_update_freq=20,
+        priv_reg_coef_schedual=[0.0, 0.1, 2000.0, 3000.0],
+    )
+
+    def __post_init__(self):
+        if os.environ.get("KRABBY_HEX_TRAIN_EASY", "").strip() == "1":
+            self.clip_actions = 1.0
+            # Lower LR on bridge to reduce policy collapse after flat-walk resume.
+            self.algorithm.learning_rate = 3.0e-5
+            self.save_interval = 100
+            # Default cap: flat model_6000 + 100 iters -> ~6100 (override with --max_iterations if needed).
+            self.max_iterations = 100
 
 
 @configclass

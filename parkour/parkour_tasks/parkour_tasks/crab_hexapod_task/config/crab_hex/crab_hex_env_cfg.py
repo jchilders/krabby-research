@@ -14,6 +14,7 @@ from parkour_tasks.crab_hexapod_task.config.crab_hex.agents.parkour_mdp_cfg impo
     CrabHexStudentObservationsCfg,
     CrabHexStudentRewardsCfg,
     CrabHexTeacherObservationsCfg,
+    CrabHexTeacherBridgeRewardsCfg,
     CrabHexTerminationsCfg,
     EventCfg,
     ParkourEventsCfg,
@@ -45,6 +46,55 @@ CRAB_HEX_VIEWER = ViewerCfg(
 # )
 
 
+def _crab_hex_train_easy_enabled() -> bool:
+    """True when flat-walk → teacher bridge mode is active (``KRABBY_HEX_TRAIN_EASY=1``)."""
+    return os.environ.get("KRABBY_HEX_TRAIN_EASY", "").strip() == "1"
+
+
+def _apply_crab_hex_bridge_actions_and_events(cfg, *, action_scale: float = 0.24) -> None:
+    """Flat-walk-compatible actions/events for the flat-walk → teacher bridge."""
+    cfg.actions.joint_pos.scale = action_scale
+    cfg.actions.joint_pos.clip = {".*": (-1.0, 1.0)}
+    cfg.actions.joint_pos.use_delay = False
+    cfg.actions.joint_pos.history_length = 1
+
+    cfg.events.push_by_setting_velocity = None
+    cfg.events.randomize_rigid_body_mass = None
+    cfg.events.randomize_rigid_body_com = None
+
+    cfg.terminations.crab_failure.params["contact_force_threshold"] = 800.0
+
+
+def _apply_crab_hex_easy_mixed_terrain(
+    tg, *, flat_proportion: float, difficulty_range: tuple[float, float]
+) -> None:
+    """``parkour_flat`` + easy parkour sub-terrains (e.g. 50/50 or 70/30)."""
+    tg.curriculum = False
+    tg.difficulty_range = difficulty_range
+    active = [k for k in tg.sub_terrains if k not in ("parkour_flat", "parkour_demo")]
+    n_other = len(active)
+    share = ((1.0 - flat_proportion) / n_other) if n_other else 0.0
+    for key, sub_terrain in tg.sub_terrains.items():
+        if key == "parkour_flat":
+            sub_terrain.proportion = flat_proportion
+        elif key == "parkour_demo":
+            sub_terrain.proportion = 0.0
+        else:
+            sub_terrain.proportion = share
+        sub_terrain.noise_range = (0.02, 0.02)
+
+
+def _apply_crab_hex_bridge_shallow_parkour_geometry(tg) -> None:
+    """Shallow, narrow gaps/pits for bridge (depth is not scaled by ``difficulty_range``)."""
+    if "parkour_gap" in tg.sub_terrains:
+        gap = tg.sub_terrains["parkour_gap"]
+        gap.gap_depth = (0.05, 0.12)
+        gap.gap_size = "0.08 + 0.35 * difficulty"
+        gap.half_valid_width = (0.9, 1.2)
+    if "parkour" in tg.sub_terrains:
+        tg.sub_terrains["parkour"].pit_depth = (0.05, 0.12)
+
+
 @configclass
 class CrabHexTeacherEnvCfg(UnitreeGo2TeacherParkourEnvCfg):
     viewer = CRAB_HEX_VIEWER
@@ -70,23 +120,22 @@ class CrabHexTeacherEnvCfg(UnitreeGo2TeacherParkourEnvCfg):
         if self.events.randomize_rigid_body_com is not None:
             self.events.randomize_rigid_body_com.params["asset_cfg"] = base_body_cfg
 
-        # Optional easier train terrain (curriculum): same mix as ``KRABBY_HEX_PLAY_EASY`` on PLAY.
-        train_easy = os.environ.get("KRABBY_HEX_TRAIN_EASY", "").strip().lower() in ("1", "true", "yes")
-        if train_easy:
+        # Teacher bridge: flat-walk-compatible actions/commands/events, ~82/18 flat/parkour mix.
+        if _crab_hex_train_easy_enabled():
+            _apply_crab_hex_bridge_actions_and_events(self)
+
+            self.commands.base_velocity.ranges.heading = (0.0, 0.0)
+            self.commands.base_velocity.heading_control_stiffness = 1.5
+            self.commands.base_velocity.ranges.lin_vel_x = (0.45, 0.85)
+
+            self.rewards = CrabHexTeacherBridgeRewardsCfg()
+            self.parkours.base_parkour.freeze_terrain_levels = True
             tg = getattr(self.scene.terrain, "terrain_generator", None) if self.scene.terrain else None
             if tg is not None:
-                tg.difficulty_range = (0.15, 0.55)
-                active = [k for k in tg.sub_terrains if k not in ("parkour_flat", "parkour_demo")]
-                n_other = len(active)
-                share = (0.5 / n_other) if n_other else 0.0
-                for key, sub_terrain in tg.sub_terrains.items():
-                    if key == "parkour_flat":
-                        sub_terrain.proportion = 0.5
-                    elif key == "parkour_demo":
-                        sub_terrain.proportion = 0.0
-                    else:
-                        sub_terrain.proportion = share
-                    sub_terrain.noise_range = (0.02, 0.02)
+                _apply_crab_hex_easy_mixed_terrain(
+                    tg, flat_proportion=0.825, difficulty_range=(0.08, 0.30)
+                )
+                _apply_crab_hex_bridge_shallow_parkour_geometry(tg)
 
 
 @configclass
@@ -149,6 +198,9 @@ class CrabHexTeacherEnvCfgPLAY(CrabHexTeacherEnvCfg):
         self.commands.base_velocity.debug_vis = True
         if self.scene.terrain is not None:
             self.scene.terrain.max_init_terrain_level = None
+        # Train-easy sets terrain in ``CrabHexTeacherEnvCfg``; do not override here.
+        if _crab_hex_train_easy_enabled():
+            return
         tg = getattr(self.scene.terrain, "terrain_generator", None) if self.scene.terrain else None
         if tg is not None:
             play_easy_flag = os.environ.get("KRABBY_HEX_PLAY_EASY", "").strip().lower() in ("1", "true", "yes")

@@ -110,6 +110,93 @@ def penalty_lin_vel_y_l2(
     return torch.square(vy) * (no_lateral_cmd & forward_cmd).float()
 
 
+def penalty_backward_along_command(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    min_forward_speed_cmd: float = 0.12,
+) -> torch.Tensor:
+    """Penalize backward body-frame velocity when a forward command is active."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    vx = asset.data.root_lin_vel_b[:, 0]
+    forward_cmd = cmd[:, 0] > min_forward_speed_cmd
+    backward = torch.relu(-vx)
+    return torch.square(backward) * forward_cmd.float()
+
+
+def penalty_body_heading_error_l2(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    min_forward_speed_cmd: float = 0.12,
+) -> torch.Tensor:
+    """Penalize chassis heading error vs the parkour heading target while moving forward."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    cmd_term = env.command_manager.get_term(command_name)
+    heading_target = cmd_term.heading_target
+    heading_error = torch.atan2(
+        torch.sin(heading_target - asset.data.heading_w),
+        torch.cos(heading_target - asset.data.heading_w),
+    )
+    forward_cmd = cmd[:, 0] > min_forward_speed_cmd
+    return torch.square(heading_error) * forward_cmd.float()
+
+
+def reward_body_hip_excursion_when_forward(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    min_forward_speed_cmd: float = 0.12,
+) -> torch.Tensor:
+    """Reward body-hip yaw motion from default while commanding forward (encourages splay use)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    joint_ids = asset_cfg.joint_ids
+    if joint_ids is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    excursion = torch.mean(
+        torch.abs(asset.data.joint_pos[:, joint_ids] - asset.data.default_joint_pos[:, joint_ids]),
+        dim=1,
+    )
+    forward_cmd = cmd[:, 0] > min_forward_speed_cmd
+    return excursion * forward_cmd.float()
+
+
+def reward_joint_excursion_when_forward(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    min_forward_speed_cmd: float = 0.12,
+) -> torch.Tensor:
+    """Reward joint motion from default while commanding forward (body-hip splay or hip–femur lift)."""
+    return reward_body_hip_excursion_when_forward(
+        env, command_name, asset_cfg, min_forward_speed_cmd=min_forward_speed_cmd
+    )
+
+
+def reward_body_hip_limit_usage_when_forward(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    hip_limit_rad: float = 1.309,
+    min_forward_speed_cmd: float = 0.12,
+) -> torch.Tensor:
+    """Reward fraction of body-hip yaw limit used (|q| / limit, capped at 1) while moving forward."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    joint_ids = asset_cfg.joint_ids
+    if joint_ids is None or hip_limit_rad <= 0.0:
+        return torch.zeros(env.num_envs, device=env.device)
+    usage = torch.mean(
+        torch.clamp(torch.abs(asset.data.joint_pos[:, joint_ids]) / hip_limit_rad, max=1.0),
+        dim=1,
+    )
+    forward_cmd = cmd[:, 0] > min_forward_speed_cmd
+    return usage * forward_cmd.float()
+
+
 class reward_action_rate(ManagerTermBase):
     def __init__(self, cfg: RewardTermCfg, env: ParkourManagerBasedRLEnv):
         super().__init__(cfg, env)
@@ -166,6 +253,14 @@ def reward_lin_vel_z(
     rew[(terrain_names !='parkour_flat')[:,-1]] *= 0.5
     return rew
 
+
+def _parkour_flat_mask(env: ParkourManagerBasedRLEnv, parkour_name: str) -> torch.Tensor:
+    parkour_event: ParkourEvent = env.parkour_manager.get_term(parkour_name)
+    terrain_names = parkour_event.env_per_terrain_name
+    on_flat = torch.as_tensor(terrain_names == "parkour_flat", device=env.device)
+    return on_flat[:, -1].float()
+
+
 def reward_orientation(
     env: ParkourManagerBasedRLEnv,   
     parkour_name:str, 
@@ -177,6 +272,94 @@ def reward_orientation(
     rew = torch.sum(torch.square(asset.data.projected_gravity_b[:, :2]), dim=1)
     rew[(terrain_names !='parkour_flat')[:,-1]] = 0.
     return rew
+
+
+def reward_orientation_upright(
+    env: ParkourManagerBasedRLEnv,
+    parkour_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize roll/pitch tilt on all terrains (teacher bridge mode)."""
+    del parkour_name
+    asset: Articulation = env.scene[asset_cfg.name]
+    return torch.sum(torch.square(asset.data.projected_gravity_b[:, :2]), dim=1)
+
+
+def penalty_base_pitch_forward_l2(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    min_forward_speed_cmd: float = 0.12,
+    max_pitch_rad: float = 0.17,
+) -> torch.Tensor:
+    """Penalize nose-down pitch above ``max_pitch_rad`` while commanding forward (bridge uses ~0.08 rad)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    _, pitch, _ = euler_xyz_from_quat(asset.data.root_quat_w)
+    forward_cmd = cmd[:, 0] > min_forward_speed_cmd
+    excess = torch.relu(pitch - max_pitch_rad)
+    return torch.square(excess) * forward_cmd.float()
+
+
+def penalty_base_pitch_forward_linear(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    min_forward_speed_cmd: float = 0.12,
+) -> torch.Tensor:
+    """Linear penalty on all nose-down pitch while commanding forward (no dead band; bridge mode)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    _, pitch, _ = euler_xyz_from_quat(asset.data.root_quat_w)
+    forward_cmd = cmd[:, 0] > min_forward_speed_cmd
+    return torch.relu(pitch) * forward_cmd.float()
+
+
+def reward_feet_air_time_on_flat(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    parkour_name: str,
+    threshold: float,
+) -> torch.Tensor:
+    """Swing bonus on ``parkour_flat`` only (encourages long strides on flat tiles)."""
+    rew = reward_feet_air_time_positive(env, command_name, sensor_cfg, threshold)
+    return rew * _parkour_flat_mask(env, parkour_name)
+
+
+def reward_forward_speed_on_flat(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    parkour_name: str,
+    min_forward_speed_cmd: float = 0.12,
+    target_speed: float = 0.55,
+    max_bonus_speed: float = 0.85,
+) -> torch.Tensor:
+    """Bonus for forward body speed above ``target_speed`` on flat terrain only."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    forward_cmd = cmd[:, 0] > min_forward_speed_cmd
+    vx = asset.data.root_lin_vel_b[:, 0]
+    bonus = torch.clamp(vx - target_speed, min=0.0, max=max_bonus_speed - target_speed)
+    return bonus * _parkour_flat_mask(env, parkour_name) * forward_cmd.float()
+
+
+def penalty_low_forward_speed_when_commanded(
+    env: ParkourManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    min_forward_speed_cmd: float = 0.12,
+    min_actual_speed: float = 0.35,
+) -> torch.Tensor:
+    """Linear penalty for forward speed below ``min_actual_speed`` while commanding forward (anti-stall)."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    cmd = env.command_manager.get_command(command_name)
+    forward_cmd = cmd[:, 0] > min_forward_speed_cmd
+    vx = asset.data.root_lin_vel_b[:, 0]
+    shortfall = torch.relu(min_actual_speed - vx)
+    return shortfall * forward_cmd.float()
+
 
 def reward_feet_stumble(
     env: ParkourManagerBasedRLEnv,        
@@ -213,6 +396,17 @@ def reward_tracking_goal_vel(
     rew_move = torch.nan_to_num(rew_move, nan=0.0, posinf=0.0, neginf=0.0)
     rew_move = torch.clamp(rew_move, -10.0, 10.0)
     return rew_move
+
+
+def reward_tracking_goal_vel_on_parkour(
+    env: ParkourManagerBasedRLEnv,
+    parkour_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Parkour waypoint velocity reward; zero on ``parkour_flat`` (use command velocity on flat)."""
+    rew = reward_tracking_goal_vel(env, parkour_name, asset_cfg)
+    return rew * (1.0 - _parkour_flat_mask(env, parkour_name))
+
 
 def reward_tracking_yaw(     
     env: ParkourManagerBasedRLEnv, 
