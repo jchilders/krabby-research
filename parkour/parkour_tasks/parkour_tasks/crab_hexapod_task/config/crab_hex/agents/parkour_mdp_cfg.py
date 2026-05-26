@@ -97,7 +97,7 @@ class CrabHexStudentObservationsCfg(StudentObservationsCfg):
 
 @configclass
 class CrabHexRewardsCfg:
-    """Parkour rewards aligned with Go2 ``TeacherRewardsCfg`` weights; contact terms use ``contact_forces``."""
+    """``KRABBY_HEX_TEACHER_MODE=full`` (default): Go2-style parkour — goal velocity primary."""
 
     reward_collision = RewTerm(
         func=mdp_rewards.reward_collision,
@@ -230,7 +230,7 @@ class CrabHexTeacherWarmupRewardsCfg(CrabHexRewardsCfg):
 
 @configclass
 class CrabHexTeacherBridgeRewardsCfg(CrabHexTeacherWarmupRewardsCfg):
-    """Teacher bridge: modest forward tracking, strong upright/pitch, anti-stall; no steering extras."""
+    """``KRABBY_HEX_TEACHER_MODE=bridge``: easy mixed walk — velocity/posture primary, parkour goal/yaw off."""
 
     reward_hip_pos = RewTerm(
         func=mdp_rewards.reward_hip_pos,
@@ -337,8 +337,85 @@ class CrabHexTeacherBridgeRewardsCfg(CrabHexTeacherWarmupRewardsCfg):
 
 
 @configclass
+class CrabHexStage2BPhase1RewardsCfg(CrabHexTeacherBridgeRewardsCfg):
+    """``KRABBY_HEX_TEACHER_MODE=2b1``: hybrid walk — bridge core + weak goal_vel (0.75) / yaw (0.2) aux."""
+
+    reward_tracking_goal_vel = RewTerm(
+        func=mdp_rewards.reward_tracking_goal_vel,
+        weight=0.75,
+        params={"asset_cfg": SceneEntityCfg("robot"), "parkour_name": "base_parkour"},
+    )
+    reward_tracking_yaw = RewTerm(
+        func=mdp_rewards.reward_tracking_yaw,
+        weight=0.2,
+        params={"asset_cfg": SceneEntityCfg("robot"), "parkour_name": "base_parkour"},
+    )
+    reward_hip_pos = RewTerm(
+        func=mdp_rewards.reward_hip_pos,
+        weight=-0.5,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_Body_Hip_RevoluteJoint"])},
+    )
+    reward_feet_stumble = RewTerm(
+        func=mdp_rewards.reward_feet_stumble,
+        weight=-1.0,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_Footpad")},
+    )
+    reward_lin_vel_z = RewTerm(
+        func=mdp_rewards.reward_lin_vel_z,
+        weight=-1.0,
+        params={"asset_cfg": SceneEntityCfg("robot"), "parkour_name": "base_parkour"},
+    )
+    reward_ang_vel_xy = RewTerm(
+        func=mdp_rewards.reward_ang_vel_xy,
+        weight=-0.05,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
+    reward_action_rate = RewTerm(
+        func=mdp_rewards.reward_action_rate,
+        weight=-0.1,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
+    reward_dof_error = RewTerm(
+        func=mdp_rewards.reward_dof_error,
+        weight=-0.04,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
+    reward_torques = RewTerm(
+        func=mdp_rewards.reward_torques,
+        weight=-0.00001,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
+    reward_dof_acc = RewTerm(
+        func=mdp_rewards.reward_dof_acc,
+        weight=-2.5e-7,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
+    reward_delta_torques = RewTerm(
+        func=mdp_rewards.reward_delta_torques,
+        weight=-1.0e-7,
+        params={"asset_cfg": SceneEntityCfg("robot")},
+    )
+
+
+@configclass
+class CrabHexStage2BPhase2RewardsCfg(CrabHexStage2BPhase1RewardsCfg):
+    """``KRABBY_HEX_TEACHER_MODE=2b2``: moderate mix — stronger goal_vel (1.25) / yaw (0.35) aux."""
+
+    reward_tracking_goal_vel = RewTerm(
+        func=mdp_rewards.reward_tracking_goal_vel,
+        weight=1.25,
+        params={"asset_cfg": SceneEntityCfg("robot"), "parkour_name": "base_parkour"},
+    )
+    reward_tracking_yaw = RewTerm(
+        func=mdp_rewards.reward_tracking_yaw,
+        weight=0.35,
+        params={"asset_cfg": SceneEntityCfg("robot"), "parkour_name": "base_parkour"},
+    )
+
+
+@configclass
 class CrabHexFlatWalkRewardsCfg:
-    """Flat-walk: velocity tracking + orientation + light gait shaping (forward progress, swing)."""
+    """Stage 1 **gait** rewards (``Isaac-Crab-Hex-Flat-Walk-v0``): speed + posture + footfall shaping; no parkour goals."""
 
     track_lin_vel_xy_exp = RewTerm(
         func=track_lin_vel_xy_exp,
@@ -517,7 +594,7 @@ class CrabHexTerminationsCfg:
     """Parkour episode term (timeout / goal / legacy fall) plus crab-specific early failure.
 
     Tune ``crab_failure.params``: ``limit_angle``, ``contact_force_threshold``, optional
-    ``minimum_root_height_z``, ``hip_contact_sensor_cfg``. Env: ``KRABBY_HEX_TRAIN_EASY`` / spawn documented in scene/env cfgs.
+    ``minimum_root_height_z``, ``hip_contact_sensor_cfg``. Env: ``KRABBY_HEX_TEACHER_MODE`` / spawn documented in scene/env cfgs.
     """
 
     total_terminates = DoneTerm(

@@ -25,7 +25,7 @@ fi
 
 export KRABBY_HEX_USD_PATH="$USD_PATH"
 export KRABBY_HEX_SPAWN_Z="${KRABBY_HEX_SPAWN_Z:-1.05}"
-export KRABBY_HEX_TRAIN_EASY=1
+export KRABBY_HEX_TEACHER_MODE=bridge
 export PYTHONPATH="$KRABBY_ROOT/krabby-research/parkour/parkour_tasks:$KRABBY_ROOT/krabby-research/parkour:${PYTHONPATH:-}"
 
 cd "$KRABBY_ROOT/krabby-research/parkour"
@@ -33,7 +33,7 @@ cd "$KRABBY_ROOT/krabby-research/parkour"
 echo "Playing crab hex teacher bridge baseline"
 echo "  USD:        $KRABBY_HEX_USD_PATH"
 echo "  Checkpoint: $CHECKPOINT_PATH"
-echo "  TRAIN_EASY: $KRABBY_HEX_TRAIN_EASY"
+echo "  TEACHER_MODE: $KRABBY_HEX_TEACHER_MODE"
 echo
 
 "$KRABBY_ROOT/IsaacLab/isaaclab.sh" -p "$KRABBY_ROOT/krabby-research/parkour/scripts/rsl_rl/play.py" \
