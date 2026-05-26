@@ -399,8 +399,18 @@ class CrabHexStage2BPhase1RewardsCfg(CrabHexTeacherBridgeRewardsCfg):
 
 @configclass
 class CrabHexStage2BPhase2RewardsCfg(CrabHexStage2BPhase1RewardsCfg):
-    """``KRABBY_HEX_TEACHER_MODE=2b2``: moderate mix — stronger goal_vel (1.25) / yaw (0.35) aux."""
+    """``KRABBY_HEX_TEACHER_MODE=2b2`` (v2 refine): same MDP; stronger clearance, softer stumble/edge."""
 
+    penalty_low_forward_speed_when_commanded = RewTerm(
+        func=mdp_rewards.penalty_low_forward_speed_when_commanded,
+        weight=-1.5,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot"),
+            "min_forward_speed_cmd": 0.12,
+            "min_actual_speed": 0.35,
+        },
+    )
     reward_tracking_goal_vel = RewTerm(
         func=mdp_rewards.reward_tracking_goal_vel,
         weight=1.25,
@@ -410,6 +420,54 @@ class CrabHexStage2BPhase2RewardsCfg(CrabHexStage2BPhase1RewardsCfg):
         func=mdp_rewards.reward_tracking_yaw,
         weight=0.35,
         params={"asset_cfg": SceneEntityCfg("robot"), "parkour_name": "base_parkour"},
+    )
+    reward_tracking_yaw_on_parkour = RewTerm(
+        func=mdp_rewards.reward_tracking_yaw_on_parkour,
+        weight=0.2,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "parkour_name": "base_parkour",
+            "command_name": "base_velocity",
+            "min_forward_speed_cmd": 0.12,
+        },
+    )
+    reward_collision = RewTerm(
+        func=mdp_rewards.reward_collision,
+        weight=-2.0,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["body", ".*_Hip", ".*_Femur"],
+            ),
+        },
+    )
+    reward_feet_edge = RewTerm(
+        func=mdp_rewards.reward_feet_edge,
+        weight=-0.8,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_Footpad"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_Footpad"),
+            "parkour_name": "base_parkour",
+        },
+    )
+    reward_feet_stumble = RewTerm(
+        func=mdp_rewards.reward_feet_stumble,
+        weight=-0.8,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_Footpad")},
+    )
+    reward_obstacle_clearance = RewTerm(
+        func=mdp_rewards.reward_obstacle_clearance,
+        weight=1.2,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_Footpad"),
+            "parkour_name": "base_parkour",
+            "command_name": "base_velocity",
+            "min_goal_progress": 0.15,
+            "min_forward_speed": 0.25,
+            "min_forward_speed_cmd": 0.12,
+            "max_tilt_gravity_xy_sq": 0.02,
+        },
     )
 
 

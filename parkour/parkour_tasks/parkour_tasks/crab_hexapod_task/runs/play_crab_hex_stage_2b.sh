@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Play stage-2b checkpoint (KRABBY_HEX_TEACHER_MODE=2b1 or 2b2).
-# Bundled 2b1 baseline: use play_crab_hex_2b1_baseline.sh + Appendix E paths instead.
+# Bundled baselines: play_crab_hex_2b1_baseline.sh (Appendix E), play_crab_hex_2b2_baseline.sh (Appendix F).
 # Usage: play_crab_hex_stage_2b.sh <2b1|2b2> <path-to-usda> <path-to-model.pt>
 set -euo pipefail
 

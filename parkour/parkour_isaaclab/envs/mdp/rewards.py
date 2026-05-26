@@ -375,6 +375,37 @@ def reward_feet_stumble(
     )
     return rew.float()
 
+
+def reward_obstacle_clearance(
+    env: ParkourManagerBasedRLEnv,
+    parkour_name: str,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    command_name: str = "base_velocity",
+    min_goal_progress: float = 0.15,
+    min_forward_speed: float = 0.25,
+    min_forward_speed_cmd: float = 0.12,
+    max_tilt_gravity_xy_sq: float = 0.02,
+) -> torch.Tensor:
+    """Bonus on parkour tiles for lift-and-cross: goal progress, forward speed, upright, no stumble."""
+    on_parkour = 1.0 - _parkour_flat_mask(env, parkour_name)
+    stumble = reward_feet_stumble(env, sensor_cfg)
+    asset: Articulation = env.scene[asset_cfg.name]
+    goal_prog = torch.clamp(
+        reward_tracking_goal_vel(env, parkour_name, asset_cfg),
+        min=0.0,
+    )
+    cmd = env.command_manager.get_command(command_name)
+    forward_cmd = cmd[:, 0] > min_forward_speed_cmd
+    vx = asset.data.root_lin_vel_b[:, 0]
+    tilt_sq = torch.sum(torch.square(asset.data.projected_gravity_b[:, :2]), dim=1)
+    progressing = (goal_prog >= min_goal_progress).float()
+    moving = ((vx >= min_forward_speed) & forward_cmd).float()
+    landed = (tilt_sq <= max_tilt_gravity_xy_sq).float()
+    no_stumble = (1.0 - stumble)
+    return on_parkour * no_stumble * progressing * moving * landed
+
+
 def reward_tracking_goal_vel(
     env: ParkourManagerBasedRLEnv, 
     parkour_name : str, 
@@ -419,6 +450,21 @@ def reward_tracking_yaw(
     yaw = torch.atan2(2*(q[:,0]*q[:,3] + q[:,1]*q[:,2]),
                     1 - 2*(q[:,2]**2 + q[:,3]**2))
     return torch.exp(-torch.abs((parkour_event.target_yaw - yaw)))
+
+
+def reward_tracking_yaw_on_parkour(
+    env: ParkourManagerBasedRLEnv,
+    parkour_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    command_name: str = "base_velocity",
+    min_forward_speed_cmd: float = 0.12,
+) -> torch.Tensor:
+    """Yaw-alignment bonus on parkour tiles while commanding forward (reduces sideways edge approach)."""
+    on_parkour = 1.0 - _parkour_flat_mask(env, parkour_name)
+    cmd = env.command_manager.get_command(command_name)
+    forward_cmd = cmd[:, 0] > min_forward_speed_cmd
+    yaw_align = reward_tracking_yaw(env, parkour_name, asset_cfg)
+    return on_parkour * yaw_align * forward_cmd.float()
 
 class reward_delta_torques(ManagerTermBase):
     def __init__(self, cfg: RewardTermCfg, env: ParkourManagerBasedRLEnv):

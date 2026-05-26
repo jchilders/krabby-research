@@ -78,11 +78,13 @@ CRAB_HEX_VIEWER = ViewerCfg(
 #   Resume: always from bridge ``model_6099`` (do not use ``full`` from 6099).
 #
 # --- 2b2 — “moderate mix + curriculum” ---
-#   Intent: Still bridge-lite actions (0.24, ±1), but harder terrain mix and
-#   terrain curriculum on; stronger parkour aux rewards.
-#   Terrain: ~50% flat, ~50% parkour sub-terrains; difficulty 0.15–0.55;
-#            terrain levels can change on reset.
-#   Rewards: ``CrabHexStage2BPhase2RewardsCfg`` — goal_vel 1.25, yaw 0.35.
+#   Intent: Resume 2b1 ``6198``; learn obstacle handling while keeping gait.
+#   Terrain: ~50% flat / ~50% parkour; curriculum on; difficulty 0.20–0.70;
+#            moderate gap/step/hurdle geometry (not full parkour defaults).
+#   Actions: scale 0.24, clip ±1 (unchanged).
+#   Rewards (2b2 v2 refine): goal_vel 1.25, yaw 0.35, yaw_on_parkour +0.2;
+#            stumble/edge −0.8, collision −2, clearance +1.2 (lift+cross+land),
+#            low-speed −1.5; resume bundled 2b1 6198 (~450 iters); stop ~6300–6400 in play.
 #
 # --- full (default) — “Go2-style parkour teacher” ---
 #   Intent: Full extreme-parkour teacher MDP (goal velocity primary).
@@ -129,13 +131,33 @@ def _apply_crab_hex_stage_2b_phase1_terrain(cfg) -> None:
         _apply_crab_hex_bridge_shallow_parkour_geometry(tg)
 
 
+def _apply_crab_hex_stage_2b_phase2_parkour_geometry(tg) -> None:
+    """Moderate parkour geometry for 2b2 (between bridge-shallow and full teacher)."""
+    if "parkour_gap" in tg.sub_terrains:
+        gap = tg.sub_terrains["parkour_gap"]
+        gap.gap_depth = (0.08, 0.18)
+        gap.gap_size = "0.10 + 0.45 * difficulty"
+        gap.half_valid_width = (0.85, 1.15)
+    if "parkour" in tg.sub_terrains:
+        stone = tg.sub_terrains["parkour"]
+        stone.pit_depth = (0.08, 0.18)
+        stone.incline_height = "0.20*difficulty"
+        stone.last_incline_height = "incline_height + 0.08 - 0.06*difficulty"
+    if "parkour_step" in tg.sub_terrains:
+        tg.sub_terrains["parkour_step"].step_height = "0.12 + 0.28*difficulty"
+    if "parkour_hurdle" in tg.sub_terrains:
+        tg.sub_terrains["parkour_hurdle"].hurdle_height_range = (
+            "0.12+0.10*difficulty, 0.16+0.20*difficulty"
+        )
+
+
 def _apply_crab_hex_stage_2b_phase2_terrain(cfg) -> None:
-    """Phase 2: curriculum on, moderate difficulty; still no terrain level freeze."""
+    """Phase 2: curriculum on, 50/50 mix, gently ramping obstacle difficulty."""
     cfg.parkours.base_parkour.freeze_terrain_levels = False
     tg = getattr(cfg.scene.terrain, "terrain_generator", None) if cfg.scene.terrain else None
     if tg is not None:
         tg.curriculum = True
-        tg.difficulty_range = (0.15, 0.55)
+        tg.difficulty_range = (0.20, 0.70)
         active = [k for k in tg.sub_terrains if k not in ("parkour_flat", "parkour_demo")]
         n_other = len(active)
         share = (0.5 / n_other) if n_other else 0.0
@@ -147,6 +169,7 @@ def _apply_crab_hex_stage_2b_phase2_terrain(cfg) -> None:
             else:
                 sub_terrain.proportion = share
             sub_terrain.noise_range = (0.02, 0.02)
+        _apply_crab_hex_stage_2b_phase2_parkour_geometry(tg)
 
 
 def _apply_crab_hex_bridge_actions_and_events(cfg, *, action_scale: float = 0.24) -> None:
