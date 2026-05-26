@@ -346,7 +346,10 @@ def start_hal_teleop_signaling_thread(
                         "teleop: catalog_id_for_track(%d) empty after validation; black until renegotiation",
                         track_index,
                     )
-                return HalRgbSnapshotVideoTrack(frame_getter=lambda c=cid: _rgb_copy(c))
+                return HalRgbSnapshotVideoTrack(
+                    frame_getter=lambda c=cid: _rgb_copy(c),
+                    catalog_id=cid or None,
+                )
 
             return factory
 
