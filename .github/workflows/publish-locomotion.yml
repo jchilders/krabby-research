@@ -80,6 +80,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Free disk space before verify
+        run: |
+          docker image prune -af
+          df -h
+
       - name: Verify production image
         run: |
           set -o pipefail
